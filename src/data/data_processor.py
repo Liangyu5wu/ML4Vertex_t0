@@ -19,6 +19,83 @@ class DataProcessor:
         """
         self.config = config
         
+        # Energy bin edges for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
+        self.energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+        
+    def get_energy_bin_index(self, energy: float) -> int:
+        """Get energy bin index for calibration parameter lookup."""
+        if energy < 1.0:
+            return 0  # Use first bin for energies < 1 GeV
+        
+        for i in range(len(self.energy_bins) - 1):
+            if self.energy_bins[i] <= energy < self.energy_bins[i + 1]:
+                return i
+        
+        return len(self.energy_bins) - 2  # Last bin for energies >= 10 GeV
+    
+    def apply_time_calibration(self, cell_sequences: List[List[List[float]]]) -> List[List[List[float]]]:
+        """
+        Apply detector time calibration to cell sequences.
+        
+        Args:
+            cell_sequences: Original cell sequences
+            
+        Returns:
+            Cell sequences with calibrated time
+        """
+        if not self.config.use_detector_params:
+            return cell_sequences
+        
+        # Get indices of required features
+        try:
+            barrel_idx = self.config.cell_features.index('Cell_Barrel')
+            layer_idx = self.config.cell_features.index('Cell_layer')
+            energy_idx = self.config.cell_features.index('Cell_e')
+            time_idx = self.config.cell_features.index('Cell_time_TOF_corrected')
+        except ValueError as e:
+            raise ValueError(f"Required feature not found for time calibration: {e}")
+        
+        # Create parameter lookup
+        param_lookup = {
+            (1, 1): self.config.emb1_params,  # Barrel, Layer 1
+            (1, 2): self.config.emb2_params,  # Barrel, Layer 2
+            (1, 3): self.config.emb3_params,  # Barrel, Layer 3
+            (0, 1): self.config.eme1_params,  # Endcap, Layer 1
+            (0, 2): self.config.eme2_params,  # Endcap, Layer 2
+            (0, 3): self.config.eme3_params,  # Endcap, Layer 3
+        }
+        
+        calibrated_sequences = []
+        
+        for sequence in cell_sequences:
+            calibrated_sequence = []
+            
+            for cell in sequence:
+                calibrated_cell = cell.copy()
+                
+                # Get cell properties
+                barrel = int(cell[barrel_idx])
+                layer = int(cell[layer_idx])
+                energy = cell[energy_idx]
+                time_tof = cell[time_idx]
+                
+                # Get calibration parameters
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                
+                # Get energy bin index and calibration value
+                energy_bin_idx = self.get_energy_bin_index(energy)
+                calibration_value = detector_params[energy_bin_idx]
+                
+                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
+                calibrated_time = time_tof - calibration_value
+                calibrated_cell[time_idx] = calibrated_time
+                
+                calibrated_sequence.append(calibrated_cell)
+            
+            calibrated_sequences.append(calibrated_sequence)
+        
+        return calibrated_sequences
+    
     def split_data(
         self, 
         cell_sequences: List[List[List[float]]], 
@@ -68,67 +145,6 @@ class DataProcessor:
                 (train_vertex, val_vertex, test_vertex),
                 (train_times, val_times, test_times))
     
-    def add_detector_params_to_cells(
-        self, 
-        cell_sequences: List[List[List[float]]]
-    ) -> List[List[List[float]]]:
-        """
-        Add detector calibration parameters to each cell based on its layer and barrel info.
-        
-        Args:
-            cell_sequences: Original cell sequences
-            
-        Returns:
-            Cell sequences with detector parameters added as additional features
-        """
-        if not self.config.use_detector_params:
-            return cell_sequences
-        
-        # Get indices of Cell_Barrel and Cell_layer in cell features
-        try:
-            barrel_idx = self.config.cell_features.index('Cell_Barrel')
-            layer_idx = self.config.cell_features.index('Cell_layer')
-        except ValueError:
-            raise ValueError("Cell_Barrel and Cell_layer must be in cell_features when using detector params")
-        
-        # Create parameter lookup
-        param_lookup = {
-            (1, 1): self.config.emb1_params,  # Barrel, Layer 1
-            (1, 2): self.config.emb2_params,  # Barrel, Layer 2
-            (1, 3): self.config.emb3_params,  # Barrel, Layer 3
-            (0, 1): self.config.eme1_params,  # Endcap, Layer 1
-            (0, 2): self.config.eme2_params,  # Endcap, Layer 2
-            (0, 3): self.config.eme3_params,  # Endcap, Layer 3
-        }
-        
-        enhanced_sequences = []
-        
-        for sequence in cell_sequences:
-            enhanced_sequence = []
-            
-            for cell in sequence:
-                # Get barrel and layer info
-                barrel = int(cell[barrel_idx])
-                layer = int(cell[layer_idx])
-                
-                # Get corresponding detector parameters
-                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)  # Default to zeros if not found
-                
-                # Add detector parameters to cell features
-                enhanced_cell = cell + detector_params
-                enhanced_sequence.append(enhanced_cell)
-            
-            enhanced_sequences.append(enhanced_sequence)
-        
-        return enhanced_sequences
-    
-    def get_enhanced_feature_dim(self) -> int:
-        """Get the feature dimension including detector parameters."""
-        base_dim = len(self.config.cell_features)
-        if self.config.use_detector_params:
-            return base_dim + 7  # Add 7 detector parameters per cell
-        return base_dim
-    
     def normalize_features(
         self,
         train_cells: List[List[List[float]]],
@@ -139,7 +155,7 @@ class DataProcessor:
         test_vertex: np.ndarray
     ) -> Tuple[Tuple[List, List, List], Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, Any]]:
         """
-        Normalize cell and vertex features.
+        Apply time calibration and normalize cell and vertex features.
         
         Args:
             train_cells, val_cells, test_cells: Cell sequences for each split
@@ -148,12 +164,12 @@ class DataProcessor:
         Returns:
             Tuple of normalized data and normalization parameters
         """
-        # Add detector parameters to cells if enabled
-        train_cells = self.add_detector_params_to_cells(train_cells)
-        val_cells = self.add_detector_params_to_cells(val_cells)
-        test_cells = self.add_detector_params_to_cells(test_cells)
+        # Apply time calibration first
+        train_cells = self.apply_time_calibration(train_cells)
+        val_cells = self.apply_time_calibration(val_cells)
+        test_cells = self.apply_time_calibration(test_cells)
         
-        # Normalize cell features (only original features, not detector params)
+        # Normalize cell features
         train_cells_norm, val_cells_norm, test_cells_norm, cell_norm_params = \
             self._normalize_cell_features(train_cells, val_cells, test_cells)
         
@@ -179,12 +195,11 @@ class DataProcessor:
         test_cells: List[List[List[float]]]
     ) -> Tuple[List, List, List, Dict[str, List]]:
         """Normalize cell features based on training data statistics."""
-        # Collect all training feature values (only for original features)
+        # Collect all training feature values
         all_train_values = [[] for _ in range(len(self.config.cell_features))]
         
         for sequence in train_cells:
             for cell in sequence:
-                # Only collect values for original features (not detector params)
                 for feat_idx in range(len(self.config.cell_features)):
                     if feat_idx < len(cell):
                         all_train_values[feat_idx].append(cell[feat_idx])
@@ -252,13 +267,12 @@ class DataProcessor:
             for cell in sequence:
                 normalized_cell = []
                 for feat_idx, value in enumerate(cell):
-                    if feat_idx < len(means):  # Only normalize original features
+                    if feat_idx < len(means):
                         if stds[feat_idx] != 1.0:
                             normalized_value = (value - means[feat_idx]) / stds[feat_idx]
                         else:
                             normalized_value = value
                     else:
-                        # Don't normalize detector parameters (keep original values)
                         normalized_value = value
                     normalized_cell.append(normalized_value)
                 normalized_sequence.append(normalized_cell)
@@ -276,7 +290,7 @@ class DataProcessor:
         Create padded TensorFlow dataset from sequences.
         
         Args:
-            cell_sequences: Variable-length cell sequences (already enhanced with detector params)
+            cell_sequences: Variable-length cell sequences (with calibrated time)
             vertex_features: Vertex feature arrays
             vertex_times: Target vertex times
             shuffle: Whether to shuffle the dataset
@@ -287,16 +301,16 @@ class DataProcessor:
         # Find maximum sequence length
         max_seq_len = max(len(seq) for seq in cell_sequences)
         
-        # Get enhanced feature dimension
-        enhanced_feature_dim = self.get_enhanced_feature_dim()
+        # Feature dimension is just the original cell features (no extra detector params)
+        feature_dim = len(self.config.cell_features)
         
         # Pad all sequences to max length
-        padded_cells = np.zeros((len(cell_sequences), max_seq_len, enhanced_feature_dim))
+        padded_cells = np.zeros((len(cell_sequences), max_seq_len, feature_dim))
         for i, seq in enumerate(cell_sequences):
             seq_len = len(seq)
             padded_cells[i, :seq_len, :] = seq
         
-        # Create TensorFlow dataset (no detector_params input needed anymore)
+        # Create TensorFlow dataset
         dataset = tf.data.Dataset.from_tensor_slices((
             {'cell_sequence': padded_cells, 'vertex_features': vertex_features},
             vertex_times
@@ -317,7 +331,7 @@ class DataProcessor:
         Create batches for prediction from variable-length sequences.
         
         Args:
-            cell_sequences: Variable-length cell sequences (already enhanced with detector params)
+            cell_sequences: Variable-length cell sequences (with calibrated time)
             vertex_features: Vertex feature arrays
             vertex_times: Target vertex times
             
@@ -328,8 +342,8 @@ class DataProcessor:
         lengths = [len(seq) for seq in cell_sequences]
         indices = np.argsort(lengths)
         
-        # Get enhanced feature dimension
-        enhanced_feature_dim = self.get_enhanced_feature_dim()
+        # Feature dimension is just the original cell features
+        feature_dim = len(self.config.cell_features)
         
         for i in range(0, len(indices), self.config.batch_size):
             batch_indices = indices[i:i+self.config.batch_size]
@@ -339,7 +353,7 @@ class DataProcessor:
             max_length = max(batch_lengths)
             
             # Pad sequences in this batch to max_length
-            batch_cells = np.zeros((len(batch_indices), max_length, enhanced_feature_dim))
+            batch_cells = np.zeros((len(batch_indices), max_length, feature_dim))
             batch_vertex = np.zeros((len(batch_indices), len(vertex_features[0])))
             batch_times = np.zeros(len(batch_indices))
             
@@ -355,5 +369,5 @@ class DataProcessor:
                 batch_vertex[j] = vertex_features[idx]
                 batch_times[j] = vertex_times[idx]
             
-            # Return batch inputs (no detector_params needed anymore)
+            # Return batch inputs
             yield {'cell_sequence': batch_cells, 'vertex_features': batch_vertex}, batch_times
