@@ -1,15 +1,15 @@
-# Fast experimental configuration for parameter sweeping
+# Fast testing configuration for development and debugging
 model_name: "transformer_fast_test"
 
-# Data parameters
+# Data parameters - minimal for fast testing
 data_dir: "../selected_h5/"
-num_files: 3
-max_cells: 10
+num_files: 5  # Reduced from 3 to 5 for better testing
+max_cells: 20  # Reduced from 10 to 20 for realistic testing
 min_cells: 1
 cell_selection_feature: "Cell_e"
 use_spatial_features: true
 
-# Detector calibration parameters (optional)
+# Detector calibration parameters - enabled for testing
 use_detector_params: true
 emb1_params: [48.5266, 37.56, 28.9393, 23.1505, 18.5468, 13.0141, 8.03724]
 emb2_params: [46.2244, 41.5079, 38.5544, 36.9812, 31.2718, 29.7469, 19.331]
@@ -22,37 +22,33 @@ eme3_params: [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008]
 use_cell_track_matching: true
 require_valid_cells: true
 additional_cell_filters: {}
-  # Cell_Barrel: 1 # Only barrel cells
 
 # Data split parameters
-test_size: 0.1
-val_split: 0.222222
+test_size: 0.2  # Smaller test set for faster processing
+val_split: 0.25  # 25% of test_size for validation
 random_state: 42
 
-# Model architecture parameters - Simplified
-d_model: 64
-num_heads: 8
-dff: 128
+# Model architecture parameters - small but functional
+d_model: 32  # Must be divisible by num_heads
+num_heads: 4  # Reduced for faster training
+dff: 64
 num_transformer_blocks: 2
 dropout_rate: 0.1
 
-# Dense layer parameters - Smaller network
+# Dense layer parameters - minimal network
 vertex_dense_units: 8
-final_dense_units: [32, 16, 8]
-final_dropout_rates: [0.1, 0.1, 0.05]
+final_dense_units: [16, 8]  # Simplified architecture
+final_dropout_rates: [0.1, 0.05]
 use_batch_norm: true
 
-# Training parameters - Faster training
-batch_size: 64
-epochs: 10
-learning_rate: 0.0005
+# Training parameters - fast training
+batch_size: 32  # Smaller batch for faster iterations
+epochs: 15  # Increased from 10 for meaningful training
+learning_rate: 0.001  # Higher LR for faster convergence
 lr_reduction_factor: 0.5
-early_stopping_patience: 10
-lr_patience: 5
+early_stopping_patience: 8
+lr_patience: 3
 min_lr: 0.0000001
-
-# Model save parameters
-models_base_dir: "../models"
 
 # Feature definitions
 spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
