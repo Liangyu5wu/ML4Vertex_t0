@@ -35,6 +35,11 @@ class TransformerConfig(BaseConfig):
     eme2_params: Optional[List[float]] = None
     eme3_params: Optional[List[float]] = None
     
+    # Calibration validation parameters
+    calibration_validation: bool = False
+    validation_detector_type: int = 1  # 1=barrel, 0=endcap
+    validation_layer: int = 1  # 1, 2, or 3
+    
     # Model name override
     model_name: str = "transformer_model"
     
