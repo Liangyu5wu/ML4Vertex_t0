@@ -18,6 +18,11 @@ eme1_params: [125.348, 102.888, 86.7558, 59.7355, 55.3299, 41.3032, 23.646]
 eme2_params: [272.149, 224.475, 173.443, 135.829, 113.05, 83.8009, 37.1829]
 eme3_params: [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008]
 
+# Calibration validation parameters
+calibration_validation: false
+validation_detector_type: 1  # 1=barrel, 0=endcap
+validation_layer: 1  # 1, 2, or 3
+
 # Cell filtering parameters
 use_cell_track_matching: true
 require_valid_cells: true
