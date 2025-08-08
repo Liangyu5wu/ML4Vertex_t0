@@ -28,12 +28,7 @@ class TransformerConfig(BaseConfig):
     
     # Detector calibration parameters
     use_detector_params: bool = False
-    emb1_params: Optional[List[float]] = None
-    emb2_params: Optional[List[float]] = None
-    emb3_params: Optional[List[float]] = None
-    eme1_params: Optional[List[float]] = None
-    eme2_params: Optional[List[float]] = None
-    eme3_params: Optional[List[float]] = None
+    calibration_data_file: str = "HStrackmatching_calibration.txt"
     
     # Calibration validation parameters
     calibration_validation: bool = False
