@@ -37,7 +37,7 @@ ML4Vertex_t0/
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Create virtual environment and install dependencies
-uv venv
+uv venv --python 3.9
 source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
