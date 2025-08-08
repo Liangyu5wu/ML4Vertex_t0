@@ -2,6 +2,7 @@
 
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict, Any
 from sklearn.model_selection import train_test_split
 from config.base_config import BaseConfig
@@ -96,6 +97,105 @@ class DataProcessor:
         
         return calibrated_sequences
     
+    def plot_calibration_validation(
+        self, 
+        original_sequences: List[List[List[float]]], 
+        calibrated_sequences: List[List[List[float]]]
+    ):
+        """
+        Plot calibration validation histograms for specified detector region.
+        
+        Args:
+            original_sequences: Original cell sequences before calibration
+            calibrated_sequences: Cell sequences after calibration
+        """
+        if not self.config.calibration_validation or not self.config.use_detector_params:
+            return
+        
+        # Get feature indices
+        try:
+            barrel_idx = self.config.cell_features.index('Cell_Barrel')
+            layer_idx = self.config.cell_features.index('Cell_layer')
+            energy_idx = self.config.cell_features.index('Cell_e')
+            time_idx = self.config.cell_features.index('Cell_time_TOF_corrected')
+        except ValueError as e:
+            print(f"Cannot create calibration validation plot: {e}")
+            return
+        
+        # Energy bin labels
+        energy_labels = ['1-1.5 GeV', '1.5-2 GeV', '2-3 GeV', '3-4 GeV', 
+                        '4-5 GeV', '5-10 GeV', '>10 GeV']
+        
+        # Collect data for specified detector region
+        original_data = [[] for _ in range(7)]  # 7 energy bins
+        calibrated_data = [[] for _ in range(7)]
+        
+        for seq_idx, (orig_seq, cal_seq) in enumerate(zip(original_sequences, calibrated_sequences)):
+            for cell_idx, (orig_cell, cal_cell) in enumerate(zip(orig_seq, cal_seq)):
+                barrel = int(orig_cell[barrel_idx])
+                layer = int(orig_cell[layer_idx])
+                energy = orig_cell[energy_idx]
+                
+                # Check if cell matches validation criteria
+                if (barrel == self.config.validation_detector_type and 
+                    layer == self.config.validation_layer):
+                    
+                    bin_idx = self.get_energy_bin_index(energy)
+                    original_data[bin_idx].append(orig_cell[time_idx])
+                    calibrated_data[bin_idx].append(cal_cell[time_idx])
+        
+        # Create plots
+        fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+        axes = axes.flatten()
+        
+        detector_name = f"{'Barrel' if self.config.validation_detector_type == 1 else 'Endcap'} Layer {self.config.validation_layer}"
+        fig.suptitle(f'Time Calibration Validation - {detector_name}', fontsize=14)
+        
+        for i in range(7):
+            ax = axes[i]
+            
+            orig_times = np.array(original_data[i])
+            cal_times = np.array(calibrated_data[i])
+            
+            if len(orig_times) == 0:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(f'{energy_labels[i]}\nN=0')
+                continue
+            
+            # Calculate statistics
+            orig_mean, orig_std = np.mean(orig_times), np.std(orig_times)
+            cal_mean, cal_std = np.mean(cal_times), np.std(cal_times)
+            
+            # Plot histograms
+            bins = np.linspace(min(np.min(orig_times), np.min(cal_times)),
+                              max(np.max(orig_times), np.max(cal_times)), 30)
+            
+            ax.hist(orig_times, bins=bins, alpha=0.6, color='blue', 
+                   label=f'Before: μ={orig_mean:.2f}, σ={orig_std:.2f}')
+            ax.hist(cal_times, bins=bins, alpha=0.6, color='red',
+                   label=f'After: μ={cal_mean:.2f}, σ={cal_std:.2f}')
+            
+            ax.set_title(f'{energy_labels[i]}\nN={len(orig_times)}')
+            ax.set_xlabel('Time [ns]')
+            ax.set_ylabel('Count')
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+        
+        # Remove empty subplot
+        fig.delaxes(axes[7])
+        
+        plt.tight_layout()
+        
+        # Save plot
+        plot_path = os.path.join(self.config.model_dir, "calibration_validation.png")
+        os.makedirs(self.config.model_dir, exist_ok=True)
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        print(f"Calibration validation plot saved to: {plot_path}")
+        print(f"Validation region: {detector_name}")
+    
+    
     def split_data(
         self, 
         cell_sequences: List[List[List[float]]], 
@@ -165,9 +265,19 @@ class DataProcessor:
             Tuple of normalized data and normalization parameters
         """
         # Apply time calibration first
+        original_cells_copy = [[[cell for cell in seq] for seq in split] 
+                              for split in [train_cells, val_cells, test_cells]]
+        
         train_cells = self.apply_time_calibration(train_cells)
         val_cells = self.apply_time_calibration(val_cells)
         test_cells = self.apply_time_calibration(test_cells)
+        
+        # Create calibration validation plot if enabled
+        if self.config.calibration_validation and self.config.use_detector_params:
+            print("Creating calibration validation plot...")
+            # Use training data for validation plot
+            self.plot_calibration_validation(original_cells_copy[0], train_cells)
+        
         
         # Normalize cell features
         train_cells_norm, val_cells_norm, test_cells_norm, cell_norm_params = \
