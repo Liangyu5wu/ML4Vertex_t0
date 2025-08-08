@@ -335,7 +335,7 @@ class Visualizer:
         # Determine bins
         min_val = min(np.min(y_true), np.min(y_pred))
         max_val = max(np.max(y_true), np.max(y_pred))
-        n_bins = int(np.ceil(np.log2(len(y_true))) + 1)
+        n_bins = int(np.ceil((max_val - min_val) / 10))
         bins = np.linspace(min_val, max_val, n_bins)
         
         # Plot histograms
