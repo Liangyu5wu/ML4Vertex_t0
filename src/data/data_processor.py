@@ -50,6 +50,9 @@ class DataProcessor:
         if not self.config.use_detector_params:
             return cell_sequences
         
+        # Load calibration data
+        calibration_data = self.config.load_calibration_data()
+        
         # Get indices of required features
         try:
             barrel_idx = self.config.cell_features.index('Cell_Barrel')
@@ -59,14 +62,14 @@ class DataProcessor:
         except ValueError as e:
             raise ValueError(f"Required feature not found for time calibration: {e}")
         
-        # Create parameter lookup
+        # Create parameter lookup using loaded data
         param_lookup = {
-            (1, 1): self.config.emb1_params,  # Barrel, Layer 1
-            (1, 2): self.config.emb2_params,  # Barrel, Layer 2
-            (1, 3): self.config.emb3_params,  # Barrel, Layer 3
-            (0, 1): self.config.eme1_params,  # Endcap, Layer 1
-            (0, 2): self.config.eme2_params,  # Endcap, Layer 2
-            (0, 3): self.config.eme3_params,  # Endcap, Layer 3
+            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
         }
         
         calibrated_sequences = []
@@ -217,14 +220,17 @@ class DataProcessor:
         Returns:
             Tuple of (traditional_t0, t0_errors)
         """
-        # Sigma lookup tables
+        # Load calibration data for sigma values
+        calibration_data = self.config.load_calibration_data()
+        
+        # Sigma lookup tables using loaded data
         sigma_lookup = {
-            (1, 1): [416.994, 293.206, 208.321, 148.768, 117.756, 106.804, 57.6545],  # EMB1
-            (1, 2): [2001.56, 1423.38, 1010.24, 720.392, 551.854, 357.594, 144.162], # EMB2
-            (1, 3): [1215.53, 880.826, 680.742, 468.689, 372.184, 279.134, 162.288], # EMB3
-            (0, 1): [855.662, 589.529, 435.052, 314.788, 252.453, 185.536, 76.5333], # EME1
-            (0, 2): [1708.6, 1243.34, 881.465, 627.823, 486.99, 311.032, 106.533],   # EME2
-            (0, 3): [1137.06, 803.044, 602.152, 403.393, 318.327, 210.827, 99.697]   # EME3
+            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
         }
         
         # Get feature indices
