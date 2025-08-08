@@ -1,0 +1,73 @@
+# Fast experimental configuration for parameter sweeping
+model_name: "transformer_fast_test"
+
+# Data parameters
+data_dir: "../selected_h5/"
+num_files: 3
+max_cells: 10
+min_cells: 1
+cell_selection_feature: "Cell_e"
+use_spatial_features: true
+
+# Detector calibration parameters (optional)
+use_detector_params: true
+emb1_params: [48.5266, 37.56, 28.9393, 23.1505, 18.5468, 13.0141, 8.03724]
+emb2_params: [46.2244, 41.5079, 38.5544, 36.9812, 31.2718, 29.7469, 19.331]
+emb3_params: [104.325, 106.119, 71.1017, 75.151, 51.2334, 48.2088, 46.6502]
+eme1_params: [125.348, 102.888, 86.7558, 59.7355, 55.3299, 41.3032, 23.646]
+eme2_params: [272.149, 224.475, 173.443, 135.829, 113.05, 83.8009, 37.1829]
+eme3_params: [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008]
+
+# Cell filtering parameters
+use_cell_track_matching: true
+require_valid_cells: true
+additional_cell_filters: {}
+  # Cell_Barrel: 1 # Only barrel cells
+
+# Data split parameters
+test_size: 0.1
+val_split: 0.222222
+random_state: 42
+
+# Model architecture parameters - Simplified
+d_model: 64
+num_heads: 8
+dff: 128
+num_transformer_blocks: 2
+dropout_rate: 0.1
+
+# Dense layer parameters - Smaller network
+vertex_dense_units: 8
+final_dense_units: [32, 16, 8]
+final_dropout_rates: [0.1, 0.1, 0.05]
+use_batch_norm: true
+
+# Training parameters - Faster training
+batch_size: 64
+epochs: 10
+learning_rate: 0.0005
+lr_reduction_factor: 0.5
+early_stopping_patience: 10
+lr_patience: 5
+min_lr: 0.0000001
+
+# Model save parameters
+models_base_dir: "../models"
+
+# Feature definitions
+spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
+vertex_spatial_features: ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
+all_cell_features:
+  - "Cell_x"
+  - "Cell_y" 
+  - "Cell_z"
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+  - "matched_track_pt"
+  - "matched_track_deltaR"
+skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
