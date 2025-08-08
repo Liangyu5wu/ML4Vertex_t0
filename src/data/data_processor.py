@@ -556,6 +556,12 @@ class DataProcessor:
             # Use training data for validation plot
             self.plot_calibration_validation(original_cells_copy[0], train_cells)
         
+        # Create baseline check plots if detector params are used
+        if self.config.use_detector_params:
+            print("Creating baseline check plots...")
+            # Use training data for baseline check
+            self.create_baseline_check_plots(train_cells, train_times)
+        
         
         # Normalize cell features
         train_cells_norm, val_cells_norm, test_cells_norm, cell_norm_params = \
