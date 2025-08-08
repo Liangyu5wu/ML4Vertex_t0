@@ -4,6 +4,8 @@ import os
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+from scipy import stats
+from scipy.optimize import curve_fit
 from typing import List, Tuple, Dict, Any
 from sklearn.model_selection import train_test_split
 from config.base_config import BaseConfig
@@ -195,6 +197,281 @@ class DataProcessor:
         
         print(f"Calibration validation plot saved to: {plot_path}")
         print(f"Validation region: {detector_name}")
+    
+    def gaussian_func(self, x, a, mu, sigma):
+        """Gaussian function for fitting."""
+        return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+    
+    def calculate_traditional_t0(
+        self, 
+        cell_sequences: List[List[List[float]]], 
+        vertex_times: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calculate traditional (non-ML) t0 for each event.
+        
+        Args:
+            cell_sequences: Calibrated cell sequences
+            vertex_times: True vertex times
+            
+        Returns:
+            Tuple of (traditional_t0, t0_errors)
+        """
+        # Sigma lookup tables
+        sigma_lookup = {
+            (1, 1): [416.994, 293.206, 208.321, 148.768, 117.756, 106.804, 57.6545],  # EMB1
+            (1, 2): [2001.56, 1423.38, 1010.24, 720.392, 551.854, 357.594, 144.162], # EMB2
+            (1, 3): [1215.53, 880.826, 680.742, 468.689, 372.184, 279.134, 162.288], # EMB3
+            (0, 1): [855.662, 589.529, 435.052, 314.788, 252.453, 185.536, 76.5333], # EME1
+            (0, 2): [1708.6, 1243.34, 881.465, 627.823, 486.99, 311.032, 106.533],   # EME2
+            (0, 3): [1137.06, 803.044, 602.152, 403.393, 318.327, 210.827, 99.697]   # EME3
+        }
+        
+        # Get feature indices
+        try:
+            barrel_idx = self.config.cell_features.index('Cell_Barrel')
+            layer_idx = self.config.cell_features.index('Cell_layer')
+            energy_idx = self.config.cell_features.index('Cell_e')
+            time_idx = self.config.cell_features.index('Cell_time_TOF_corrected')
+        except ValueError as e:
+            raise ValueError(f"Required feature not found for traditional t0 calculation: {e}")
+        
+        traditional_t0 = []
+        
+        for sequence in cell_sequences:
+            weighted_sum = 0.0
+            weight_sum = 0.0
+            
+            for cell in sequence:
+                barrel = int(cell[barrel_idx])
+                layer = int(cell[layer_idx])
+                energy = cell[energy_idx]
+                time = cell[time_idx]
+                
+                # Get sigma for this cell
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                energy_bin_idx = self.get_energy_bin_index(energy)
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * time
+                weight_sum += weight
+            
+            if weight_sum > 0:
+                t0 = weighted_sum / weight_sum
+            else:
+                t0 = 0.0
+            
+            traditional_t0.append(t0)
+        
+        traditional_t0 = np.array(traditional_t0)
+        t0_errors = traditional_t0 - vertex_times
+        
+        return traditional_t0, t0_errors
+    
+    def create_baseline_check_plots(
+        self, 
+        cell_sequences: List[List[List[float]]], 
+        vertex_times: np.ndarray
+    ):
+        """
+        Create baseline check plots using traditional t0 calculation.
+        
+        Args:
+            cell_sequences: Calibrated cell sequences
+            vertex_times: True vertex times
+        """
+        print("Creating baseline check plots...")
+        
+        # Calculate traditional t0
+        traditional_t0, t0_errors = self.calculate_traditional_t0(cell_sequences, vertex_times)
+        
+        # Create baseline_check directory
+        baseline_dir = os.path.join(self.config.model_dir, "baseline_check")
+        os.makedirs(baseline_dir, exist_ok=True)
+        
+        # Plot 1: Traditional t0 distribution
+        self._plot_traditional_t0_distribution(traditional_t0, baseline_dir)
+        
+        # Plot 2: t0 error distribution
+        self._plot_t0_error_distribution(t0_errors, baseline_dir)
+        
+        # Plot 3: Traditional t0 vs true t0 2D histogram
+        self._plot_t0_vs_true_2d(traditional_t0, vertex_times, baseline_dir)
+        
+        print(f"Baseline check plots saved to: {baseline_dir}")
+    
+    def _plot_traditional_t0_distribution(self, traditional_t0: np.ndarray, save_dir: str):
+        """Plot traditional t0 distribution with Gaussian fit."""
+        plt.figure(figsize=(10, 6))
+        
+        # Create histogram with bin width = 10
+        min_val, max_val = np.min(traditional_t0), np.max(traditional_t0)
+        n_bins = int(np.ceil((max_val - min_val) / 10))
+        bins = np.linspace(min_val, max_val, n_bins)
+        
+        counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
+        
+        # Calculate basic statistics
+        mean_all = np.mean(traditional_t0)
+        std_all = np.std(traditional_t0)
+        
+        # Gaussian fit on restricted range
+        fit_range = self.config.gaussian_fit_range
+        mask = (traditional_t0 >= -fit_range) & (traditional_t0 <= fit_range)
+        if np.sum(mask) > 10:  # Need enough points for fitting
+            fit_data = traditional_t0[mask]
+            try:
+                # Initial guess for Gaussian parameters
+                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
+                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+                
+                # Fit Gaussian
+                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
+                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
+                
+                fit_mean, fit_std = popt[1], abs(popt[2])
+                
+                # Plot fitted Gaussian
+                x_fit = np.linspace(-fit_range, fit_range, 200)
+                y_fit = self.gaussian_func(x_fit, *popt)
+                # Scale to match histogram
+                scale_factor = 10 * len(traditional_t0) / len(fit_data)
+                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2, 
+                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+                
+            except Exception:
+                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
+        else:
+            fit_mean, fit_std = mean_all, std_all
+        
+        plt.xlabel('Traditional t0 [ns]')
+        plt.ylabel('Count')
+        plt.title('Traditional t0 Distribution')
+        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
+                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'traditional_t0_distribution.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_t0_error_distribution(self, t0_errors: np.ndarray, save_dir: str):
+        """Plot t0 error distribution with Gaussian fit."""
+        plt.figure(figsize=(10, 6))
+        
+        # Create histogram with bin width = 10
+        min_val, max_val = np.min(t0_errors), np.max(t0_errors)
+        n_bins = int(np.ceil((max_val - min_val) / 10))
+        bins = np.linspace(min_val, max_val, n_bins)
+        
+        counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
+        
+        # Calculate basic statistics
+        mean_all = np.mean(t0_errors)
+        std_all = np.std(t0_errors)
+        
+        # Gaussian fit on restricted range
+        fit_range = self.config.gaussian_fit_range
+        mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
+        if np.sum(mask) > 10:
+            fit_data = t0_errors[mask]
+            try:
+                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
+                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+                
+                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
+                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
+                
+                fit_mean, fit_std = popt[1], abs(popt[2])
+                
+                # Plot fitted Gaussian
+                x_fit = np.linspace(-fit_range, fit_range, 200)
+                y_fit = self.gaussian_func(x_fit, *popt)
+                scale_factor = 10 * len(t0_errors) / len(fit_data)
+                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
+                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+                
+            except Exception:
+                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
+        else:
+            fit_mean, fit_std = mean_all, std_all
+        
+        plt.xlabel('Traditional t0 - True t0 [ns]')
+        plt.ylabel('Count')
+        plt.title('Traditional t0 Error Distribution')
+        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
+                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 't0_error_distribution.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_t0_vs_true_2d(self, traditional_t0: np.ndarray, vertex_times: np.ndarray, save_dir: str):
+        """Plot traditional t0 vs true t0 as 2D histogram."""
+        plt.figure(figsize=(10, 8))
+        
+        # Determine plot range
+        min_val = min(np.min(traditional_t0), np.min(vertex_times))
+        max_val = max(np.max(traditional_t0), np.max(vertex_times))
+        range_padding = (max_val - min_val) * 0.05
+        plot_min = min_val - range_padding
+        plot_max = max_val + range_padding
+        
+        # Create 2D histogram
+        bins = min(50, int(np.sqrt(len(traditional_t0))))
+        hist, xedges, yedges = np.histogram2d(
+            vertex_times, traditional_t0,
+            bins=bins,
+            range=[[plot_min, plot_max], [plot_min, plot_max]]
+        )
+        
+        im = plt.imshow(
+            hist.T,
+            origin='lower',
+            extent=[plot_min, plot_max, plot_min, plot_max],
+            cmap='Blues',
+            aspect='equal',
+            interpolation='bilinear'
+        )
+        
+        # Perfect prediction line
+        plt.plot([plot_min, plot_max], [plot_min, plot_max], 'r--', linewidth=2,
+                label='Perfect Prediction', alpha=0.8)
+        
+        # Calculate metrics
+        correlation = np.corrcoef(vertex_times, traditional_t0)[0, 1]
+        rmse = np.sqrt(np.mean((traditional_t0 - vertex_times) ** 2))
+        mae = np.mean(np.abs(traditional_t0 - vertex_times))
+        
+        plt.xlabel('True Vertex Time [ns]')
+        plt.ylabel('Traditional t0 [ns]')
+        plt.title('Traditional t0 vs True t0 (2D Histogram)')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, label='Count')
+        cbar.ax.tick_params(labelsize=9)
+        
+        # Add metrics text
+        metrics_text = f"Correlation = {correlation:.4f}\nRMSE = {rmse:.4f}\nMAE = {mae:.4f}\nN = {len(traditional_t0):,}"
+        plt.text(0.05, 0.95, metrics_text, transform=plt.gca().transAxes,
+                verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
+                fontsize=10)
+        
+        plt.axis('equal')
+        plt.xlim(plot_min, plot_max)
+        plt.ylim(plot_min, plot_max)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'traditional_t0_vs_true_2d.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+    
     
     
     def split_data(
