@@ -145,21 +145,27 @@ class TransformerConfig(BaseConfig):
         if not self.use_detector_params:
             return "Detector parameters: Disabled"
         
-        param_info = []
-        detector_params = {
-            'EMB1': self.emb1_params,
-            'EMB2': self.emb2_params, 
-            'EMB3': self.emb3_params,
-            'EME1': self.eme1_params,
-            'EME2': self.eme2_params,
-            'EME3': self.eme3_params
-        }
-        
-        for name, params in detector_params.items():
-            if params is not None:
-                param_info.append(f"{name}: [{params[0]:.2f}, ..., {params[-1]:.2f}]")
-        
-        return f"Detector parameters: Enabled\n  " + "\n  ".join(param_info)
+        try:
+            calibration_data = self.load_calibration_data()
+            param_info = []
+            
+            detector_params = {
+                'EMB1': calibration_data.get('EMB1_params'),
+                'EMB2': calibration_data.get('EMB2_params'), 
+                'EMB3': calibration_data.get('EMB3_params'),
+                'EME1': calibration_data.get('EME1_params'),
+                'EME2': calibration_data.get('EME2_params'),
+                'EME3': calibration_data.get('EME3_params')
+            }
+            
+            for name, params in detector_params.items():
+                if params is not None and len(params) > 0:
+                    param_info.append(f"{name}: [{params[0]:.2f}, ..., {params[-1]:.2f}]")
+            
+            return f"Detector parameters: Enabled (from {self.calibration_data_file})\n  " + "\n  ".join(param_info)
+            
+        except Exception as e:
+            return f"Detector parameters: Enabled (Error loading: {e})"
     
     def print_config(self):
         """Print configuration parameters in a formatted way."""
