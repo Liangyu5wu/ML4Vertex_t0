@@ -32,7 +32,7 @@ class TransformerModel:
         Build the transformer model architecture.
         
         Args:
-            feature_dim: Dimension of cell features (includes detector params if enabled)
+            feature_dim: Dimension of cell features (original cell features only)
             vertex_dim: Dimension of vertex features
             
         Returns:
@@ -42,7 +42,6 @@ class TransformerModel:
         self.config.validate_config()
         
         # Cell sequence input (variable length, will be padded during batching)
-        # Note: feature_dim now includes detector parameters (7 extra dims) if enabled
         cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_sequence')
         
         # Project cell features to d_model dimensions
@@ -89,7 +88,7 @@ class TransformerModel:
         # Output layer
         output = layers.Dense(1, name='vertex_time')(x)
         
-        # Create model (back to 2 inputs: cell_sequence and vertex_features)
+        # Create model
         model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
         
         # Compile model
