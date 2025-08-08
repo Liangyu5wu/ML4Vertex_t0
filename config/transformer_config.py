@@ -54,38 +54,62 @@ class TransformerConfig(BaseConfig):
         """Calculate maximum position for positional encoding."""
         return self.max_cells * 2  # Allow for larger sequences than expected
     
+    def load_calibration_data(self) -> Dict[str, List[float]]:
+        """Load calibration data from external file."""
+        calibration_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "calibration_data")
+        calibration_path = os.path.join(calibration_dir, self.calibration_data_file)
+        
+        if not os.path.exists(calibration_path):
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        return calibration_data
+    
     def validate_detector_params(self):
         """Validate detector calibration parameters."""
         if not self.use_detector_params:
             return  # No validation needed if detector params are disabled
         
-        detector_param_names = [
-            'emb1_params', 'emb2_params', 'emb3_params',
-            'eme1_params', 'eme2_params', 'eme3_params'
+        # Load calibration data
+        try:
+            calibration_data = self.load_calibration_data()
+        except Exception as e:
+            raise ValueError(f"Failed to load calibration data: {e}")
+        
+        # Check required detector parameter keys
+        required_params = [
+            'EMB1_params', 'EMB1_sigma', 'EMB2_params', 'EMB2_sigma', 'EMB3_params', 'EMB3_sigma',
+            'EME1_params', 'EME1_sigma', 'EME2_params', 'EME2_sigma', 'EME3_params', 'EME3_sigma'
         ]
         
         missing_params = []
         invalid_length_params = []
         
-        for param_name in detector_param_names:
-            param_value = getattr(self, param_name)
-            
-            if param_value is None:
+        for param_name in required_params:
+            if param_name not in calibration_data:
                 missing_params.append(param_name)
-            elif not isinstance(param_value, (list, tuple)):
-                raise ValueError(f"{param_name} must be a list or tuple, got {type(param_value)}")
-            elif len(param_value) != 7:
-                invalid_length_params.append(f"{param_name} (length: {len(param_value)})")
+            elif len(calibration_data[param_name]) != 7:
+                invalid_length_params.append(f"{param_name} (length: {len(calibration_data[param_name])})")
         
         if missing_params:
             raise ValueError(
-                f"use_detector_params=True requires all detector parameters to be specified. "
-                f"Missing: {', '.join(missing_params)}"
+                f"Missing required calibration parameters: {', '.join(missing_params)}"
             )
         
         if invalid_length_params:
             raise ValueError(
-                f"All detector parameter arrays must have exactly 7 elements. "
+                f"All calibration parameter arrays must have exactly 7 elements. "
                 f"Invalid lengths: {', '.join(invalid_length_params)}"
             )
         
@@ -97,7 +121,8 @@ class TransformerConfig(BaseConfig):
             raise ValueError("Cell_layer must be in all_cell_features when using detector params")
         
         print("Detector parameter validation passed.")
-        print(f"Using detector calibration with 6 parameter sets of 7 values each")
+        print(f"Loaded calibration data from: {self.calibration_data_file}")
+        print(f"Using detector calibration with 6 detector types, each with 7 energy bins")
     
     def validate_config(self):
         """Validate transformer-specific configuration."""
