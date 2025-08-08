@@ -5,7 +5,7 @@ A modular framework for training transformer-based models for vertex t0 predicti
 ## Project Structure
 
 ```
-project_root/
+ML4Vertex_t0/
 ├── config/                     # Configuration files
 │   ├── base_config.py         # Base configuration class
 │   ├── transformer_config.py  # Transformer-specific configuration
