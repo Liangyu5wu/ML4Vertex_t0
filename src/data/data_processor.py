@@ -536,7 +536,10 @@ class DataProcessor:
         test_cells: List[List[List[float]]],
         train_vertex: np.ndarray,
         val_vertex: np.ndarray,
-        test_vertex: np.ndarray
+        test_vertex: np.ndarray,
+        train_times: np.ndarray,
+        val_times: np.ndarray,
+        test_times: np.ndarray
     ) -> Tuple[Tuple[List, List, List], Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, Any]]:
         """
         Apply time calibration and normalize cell and vertex features.
