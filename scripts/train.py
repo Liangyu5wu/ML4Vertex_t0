@@ -151,7 +151,7 @@ def main():
             cell_sequences, vertex_features, vertex_times
         )
         
-        # Normalize features
+        # Normalize features (includes time calibration if enabled)
         (train_cells_norm, val_cells_norm, test_cells_norm), \
         (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
         norm_params = data_processor.normalize_features(
@@ -172,11 +172,8 @@ def main():
         print(f"\n4. Building model...")
         model = TransformerModel(config)
         
-        # Use enhanced feature dimension if detector params are enabled
-        if hasattr(data_processor, 'get_enhanced_feature_dim'):
-            feature_dim = data_processor.get_enhanced_feature_dim()
-        else:
-            feature_dim = len(config.cell_features)
+        # Use original cell features dimension (detector calibration is applied to time, not as extra features)
+        feature_dim = len(config.cell_features)
         
         keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
         
