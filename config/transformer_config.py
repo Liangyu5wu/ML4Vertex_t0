@@ -39,6 +39,7 @@ class TransformerConfig(BaseConfig):
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap
     validation_layer: int = 1  # 1, 2, or 3
+    gaussian_fit_range: float = 120  # Range for Gaussian fitting in baseline checks
     
     # Model name override
     model_name: str = "transformer_model"
