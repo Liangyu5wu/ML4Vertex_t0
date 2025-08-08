@@ -11,12 +11,7 @@ use_spatial_features: true
 
 # Detector calibration parameters - enabled for testing
 use_detector_params: true
-emb1_params: [48.5266, 37.56, 28.9393, 23.1505, 18.5468, 13.0141, 8.03724]
-emb2_params: [46.2244, 41.5079, 38.5544, 36.9812, 31.2718, 29.7469, 19.331]
-emb3_params: [104.325, 106.119, 71.1017, 75.151, 51.2334, 48.2088, 46.6502]
-eme1_params: [125.348, 102.888, 86.7558, 59.7355, 55.3299, 41.3032, 23.646]
-eme2_params: [272.149, 224.475, 173.443, 135.829, 113.05, 83.8009, 37.1829]
-eme3_params: [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008]
+calibration_data_file: "HStrackmatching_calibration.txt"
 
 # Calibration validation parameters - enabled for fast testing
 calibration_validation: true
