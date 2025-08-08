@@ -22,6 +22,7 @@ eme3_params: [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008]
 calibration_validation: true
 validation_detector_type: 1  # 1=barrel, 0=endcap  
 validation_layer: 2  # 1, 2, or 3
+gaussian_fit_range: 120  # Range for Gaussian fitting in baseline checks
 
 # Cell filtering parameters
 use_cell_track_matching: true
