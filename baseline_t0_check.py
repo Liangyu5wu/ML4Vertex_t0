@@ -255,15 +255,20 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
     
     traditional_t0 = []
     
-    for sequence in cell_sequences:
+    for event_idx, sequence in enumerate(cell_sequences):
         weighted_sum = 0.0
         weight_sum = 0.0
+        
+        # Collect cell times for debugging output
+        cell_times = []
         
         for cell in sequence:
             time = cell[0]         # Calibrated time
             energy = cell[1]       # Cell_e
             barrel = int(cell[2])  # Cell_Barrel
             layer = int(cell[3])   # Cell_layer
+            
+            cell_times.append(time)
             
             # Get sigma for this cell
             sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
@@ -282,11 +287,20 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
             t0 = 0.0
         
         traditional_t0.append(t0)
+        
+        # Print debug info for first n events
+        if event_idx < 10:  # Print first 10 events
+            print(f"\nEvent {event_idx}:")
+            print(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ns")
+            print(f"  Number of filtered cells: {len(cell_times)}")
+            print(f"  Calibrated cell times: {[f'{t:.4f}' for t in cell_times[:5]]}{'...' if len(cell_times) > 5 else ''}")
+            print(f"  Reconstructed vertex time: {t0:.4f} ns")
+            print(f"  Error (reco - truth): {t0 - vertex_times[event_idx]:.4f} ns")
     
     traditional_t0 = np.array(traditional_t0)
     t0_errors = traditional_t0 - vertex_times
     
-    print(f"Traditional t0 calculation completed for {len(traditional_t0)} events")
+    print(f"\nTraditional t0 calculation completed for {len(traditional_t0)} events")
     
     return traditional_t0, t0_errors
 
