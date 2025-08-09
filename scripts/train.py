@@ -83,6 +83,7 @@ def create_config(args):
         
         print(f"Loading configuration from: {args.config_file}")
         config = create_config_from_yaml(args.config_file)
+        print(f"DEBUG: After YAML load, use_spatial_features = {config.use_spatial_features}")
     else:
         # Priority 2: Use default configuration type
         print(f"Using default {args.config} configuration")
@@ -90,6 +91,7 @@ def create_config(args):
     
     # Priority 3: Override with command line arguments
     config.update_from_args(args)
+    print(f"DEBUG: After args update, use_spatial_features = {config.use_spatial_features}")
     
     return config
 
