@@ -86,7 +86,8 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False):
         (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
         norm_params = data_processor.normalize_features(
             train_cells, val_cells, test_cells,
-            train_vertex, val_vertex, test_vertex
+            train_vertex, val_vertex, test_vertex,
+            train_times, val_times, test_times
         )
         
         return (test_cells_norm, test_vertex_norm, test_times, data_processor)
