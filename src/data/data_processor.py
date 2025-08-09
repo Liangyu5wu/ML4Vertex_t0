@@ -313,10 +313,8 @@ class DataProcessor:
         """Plot traditional t0 distribution with Gaussian fit."""
         plt.figure(figsize=(10, 6))
         
-        # Create histogram with bin width = 10
-        min_val, max_val = np.min(traditional_t0), np.max(traditional_t0)
-        n_bins = int(np.ceil((max_val - min_val) / 10))
-        bins = np.linspace(min_val, max_val, n_bins)
+        # Create histogram with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
         
         counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
         
@@ -359,6 +357,7 @@ class DataProcessor:
         plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
                    f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
         plt.grid(True, alpha=0.3)
+        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 'traditional_t0_distribution.png'), dpi=300, bbox_inches='tight')
@@ -368,10 +367,8 @@ class DataProcessor:
         """Plot t0 error distribution with Gaussian fit."""
         plt.figure(figsize=(10, 6))
         
-        # Create histogram with bin width = 10
-        min_val, max_val = np.min(t0_errors), np.max(t0_errors)
-        n_bins = int(np.ceil((max_val - min_val) / 10))
-        bins = np.linspace(min_val, max_val, n_bins)
+        # Create histogram with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
         
         counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
         
@@ -411,6 +408,7 @@ class DataProcessor:
         plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
                    f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
         plt.grid(True, alpha=0.3)
+        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 't0_error_distribution.png'), dpi=300, bbox_inches='tight')
@@ -420,15 +418,11 @@ class DataProcessor:
         """Plot traditional t0 vs true t0 as 2D histogram."""
         plt.figure(figsize=(10, 8))
         
-        # Determine plot range
-        min_val = min(np.min(traditional_t0), np.min(vertex_times))
-        max_val = max(np.max(traditional_t0), np.max(vertex_times))
-        range_padding = (max_val - min_val) * 0.05
-        plot_min = min_val - range_padding
-        plot_max = max_val + range_padding
+        # Fixed plot range to ±2000
+        plot_min, plot_max = -2000, 2000
         
         # Create 2D histogram
-        bins = min(50, int(np.sqrt(len(traditional_t0))))
+        bins = 80  # 400 bins across 4000 range gives 50 bins per 1000 units
         hist, xedges, yedges = np.histogram2d(
             vertex_times, traditional_t0,
             bins=bins,
@@ -470,8 +464,7 @@ class DataProcessor:
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
                 fontsize=10)
         
-        plt.axis('equal')
-        plt.xlim(plot_min, plot_max)
+        plt.xlim(plot_min, plot_max)  # Limit both axes to ±2000
         plt.ylim(plot_min, plot_max)
         
         plt.tight_layout()
