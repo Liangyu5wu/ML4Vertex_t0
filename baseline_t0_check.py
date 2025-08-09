@@ -407,6 +407,40 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     print(f"Traditional t0 error distribution plot saved to: {save_path}")
 
 
+def plot_true_vertex_time_distribution(vertex_times: np.ndarray, save_path: str):
+    """Plot true vertex time distribution with statistics."""
+    plt.figure(figsize=(10, 6))
+    
+    # Create histogram with bin width = 10, limited to ±2000 range
+    bins = np.arange(-2000, 2010, 10)
+    
+    counts, bin_edges, _ = plt.hist(vertex_times, bins=bins, alpha=0.7, color='purple', edgecolor='black')
+    
+    # Calculate statistics
+    mean_val = np.mean(vertex_times)
+    std_val = np.std(vertex_times)
+    
+    # Add vertical lines for mean and ±1σ
+    plt.axvline(x=mean_val, color='red', linestyle='-', linewidth=2, 
+               label=f'Mean: {mean_val:.2f} ns')
+    plt.axvline(x=mean_val + std_val, color='red', linestyle=':', linewidth=2, 
+               label=f'+1σ: {std_val:.2f} ns')
+    plt.axvline(x=mean_val - std_val, color='red', linestyle=':', linewidth=2, 
+               label=f'-1σ')
+    
+    plt.xlabel('True Vertex Time [ns]')
+    plt.ylabel('Count')
+    plt.title('True Vertex Time Distribution')
+    plt.legend([f'Data: μ={mean_val:.2f}, σ={std_val:.2f}, N={len(vertex_times)}'])
+    plt.grid(True, alpha=0.3)
+    plt.xlim(-2000, 2000)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    print(f"True vertex time distribution plot saved to: {save_path}")
+
+
 def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save_path: str):
     """Plot traditional t0 vs true t0 as 2D histogram."""
     plt.figure(figsize=(10, 8))
@@ -515,6 +549,9 @@ def main():
     
     # Generate plots
     print("\nGenerating plots...")
+    
+    # Plot 0: True vertex time distribution
+    plot_true_vertex_time_distribution(vertex_times, output_dir / 'true_vertex_time_distribution.png')
     
     # Plot 1: Traditional t0 distribution
     plot_t0_distribution(traditional_t0, config, output_dir / 'traditional_t0_distribution.png')
