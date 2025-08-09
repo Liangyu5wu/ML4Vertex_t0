@@ -152,7 +152,7 @@ void process_file(const std::string &filename, float energyThreshold = 1.0, floa
     std::vector<float> *trackExtrapolatedPhi_EME2 = nullptr;
     std::vector<float> *trackExtrapolatedEta_EME3 = nullptr;
     std::vector<float> *trackExtrapolatedPhi_EME3 = nullptr;
-    std::vector<float> *TrackftagTruthOrigin = nullptr;
+    std::vector<int> *trackFtagTruthOriginLabel = nullptr;
 
     // Set branch addresses
     tree->SetBranchAddress("TruthVtx_time", &truthVtxTime);
@@ -189,7 +189,7 @@ void process_file(const std::string &filename, float energyThreshold = 1.0, floa
     tree->SetBranchAddress("Track_EME2_phi", &trackExtrapolatedPhi_EME2);
     tree->SetBranchAddress("Track_EME3_eta", &trackExtrapolatedEta_EME3);
     tree->SetBranchAddress("Track_EME3_phi", &trackExtrapolatedPhi_EME3);
-    tree->SetBranchAddress("Track_ftagTruthOrigin", &TrackftagTruthOrigin);
+    tree->SetBranchAddress("Track_truthVtx_idx", &trackTruthVtxIdx);
 
     Long64_t nEntries = tree->GetEntries();
     for (Long64_t entry = 0; entry < nEntries; ++entry) {
@@ -255,7 +255,9 @@ void process_file(const std::string &filename, float energyThreshold = 1.0, floa
                 float matched_track_pt = -999;
                 
                 for (size_t k = 0; k < trackPt->size(); ++k) {
-                    if (trackQuality->at(k) == 0) continue;
+                    // Apply Track_isGoodFromHS logic: trackQuality[i] && truthOrigin[i] != 0
+                    if (trackQuality->at(k) == 0) continue;  // trackQuality must be true (non-zero)
+                    if (trackFtagTruthOriginLabel->at(k) == 0) continue;  // truthOrigin must be non-zero
                     
                     float DeltaR = 999;
                     std::vector<float>* trackExtrapolatedEta = nullptr;
@@ -298,7 +300,7 @@ void process_file(const std::string &filename, float energyThreshold = 1.0, floa
                     
                     if (trackPt->at(k) > matched_track_pt) {
                         matched_track_pt = trackPt->at(k);
-                        matched_track_HS = (TrackftagTruthOrigin->at(k) != 0);
+                        matched_track_HS = true; // Already passed the isGoodFromHS check above
                     }
                 }
 
@@ -391,10 +393,10 @@ void simplified_vertex_t0_check(float energyThreshold = 1.0, float significancec
     std::cout << "Significance cut: " << significancecut << std::endl;
     std::cout << "Processing files " << startIndex << " to " << endIndex << std::endl;
 
-    const std::string path = "/fs/ddn/sdf/group/atlas/d/sanha/data_storage/upgrade/user.scheong.mc21_14TeV.601229.PhPy8EG_A14_ttbar_hdamp258p75_SingleLep.SuperNtuple.e8514_s4345_r15583.20250511_Output";
+    const std::string path = "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/SuperNtuple_mu200";
     for (int i = startIndex; i <= endIndex; ++i) {
         std::ostringstream filename;
-        filename << path << "/user.scheong.44627907.Output._" 
+        filename << path << "/user.scheong.43348828.Output._" 
                  << std::setw(6) << std::setfill('0') << i 
                  << ".SuperNtuple.root";
 
@@ -441,7 +443,7 @@ int main(int argc, char* argv[]) {
     float energyThreshold = 1.0;
     float significancecut = 4.0;
     int startIndex = 1;
-    int endIndex = 1;
+    int endIndex = 5;
     
     if (argc > 1) energyThreshold = std::atof(argv[1]);
     if (argc > 2) significancecut = std::atof(argv[2]);
