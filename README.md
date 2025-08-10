@@ -53,8 +53,8 @@ pip install tensorflow numpy h5py scikit-learn matplotlib seaborn pyyaml scipy
 
 ### Training
 ```bash
-# Basic training with YAML config
-python scripts/train.py --config-file config/configs/default.yaml
+# Basic fast training with YAML config
+python scripts/train.py --config-file config/configs/test_fast.yaml
 
 # With detector calibration (recommended)
 python scripts/train.py --config-file config/configs/experiment2.yaml
