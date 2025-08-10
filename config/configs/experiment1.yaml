@@ -1,9 +1,9 @@
 # Experimental configuration with detector calibration
-model_name: "transformer_calibrated_exp2"
+model_name: "transformer_calibrated_exp"
 
 # Data parameters
 data_dir: "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_old_files/"
-num_files: 50
+num_files: 42
 max_cells: 70
 min_cells: 1
 cell_selection_feature: "Cell_e"
@@ -44,11 +44,11 @@ final_dropout_rates: [0.1, 0.1, 0.05]
 use_batch_norm: true
 
 # Training parameters
-batch_size: 64
-epochs: 30
+batch_size: 128
+epochs: 100
 learning_rate: 0.0005
 lr_reduction_factor: 0.5
-early_stopping_patience: 10
+early_stopping_patience: 20
 lr_patience: 5
 min_lr: 0.0000001
 
