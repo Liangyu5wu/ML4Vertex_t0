@@ -10,10 +10,10 @@
 #SBATCH --mem-per-cpu=20g
 #SBATCH --time=10:00:00
 
-cd /sdf/data/atlas/u/liangyu/vertextiming/Vertex0/ml_algr
+cd /sdf/data/atlas/u/liangyu/vertextiming/Vertex0/ML4Vertex_t0
 source setup.sh
 
 python scripts/parameter_sweep.py \
-    --base-config config/configs/experiment2_fast.yaml \
+    --base-config config/configs/experiment1.yaml \
     --grid-type architecture \
     --max-experiments 400
