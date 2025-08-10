@@ -49,6 +49,14 @@ class DataLoader:
             track_matching_mask = event_cells['matched_track_HS'] == 1
             mask = mask & track_matching_mask
         
+        # Apply layer filtering - only keep cells with layers 1, 2, 3
+        # This ensures consistency with baseline t0 calculation requirements
+        if 'Cell_layer' in event_cells.dtype.names:
+            layer_mask = np.isin(event_cells['Cell_layer'], [1, 2, 3])
+            mask = mask & layer_mask
+        else:
+            print("Warning: Cell_layer not found in cell data. Layer filtering skipped.")
+        
         # Apply additional custom filters
         if self.config.additional_cell_filters:
             for filter_key, filter_value in self.config.additional_cell_filters.items():
