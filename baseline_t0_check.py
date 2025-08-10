@@ -2,6 +2,7 @@
 """
 Standalone script to reproduce non-ML vertex t0 reconstruction method.
 This script replicates the baseline_check functionality for validation.
+Modified to show complete cell times before and after calibration.
 """
 
 import os
@@ -116,12 +117,22 @@ def load_and_filter_data(config: SimpleConfig) -> Tuple[List, np.ndarray]:
                 if len(filtered_cells) < config.min_cells:
                     continue
                 
-                total_cells_after += len(filtered_cells)
+                # Additional layer filtering - only keep cells with layers 1, 2, 3
+                layer_filtered_cells = []
+                for cell in filtered_cells:
+                    if cell['Cell_layer'] in [1, 2, 3]:
+                        layer_filtered_cells.append(cell)
+                
+                # Skip events with no valid layer cells
+                if len(layer_filtered_cells) < config.min_cells:
+                    continue
+                
+                total_cells_after += len(layer_filtered_cells)
                 valid_events += 1
                 
                 # Convert to list format for processing
                 cell_sequence = []
-                for cell in filtered_cells:
+                for cell in layer_filtered_cells:
                     cell_features = [
                         cell['Cell_time_TOF_corrected'],
                         cell['Cell_e'],
@@ -179,7 +190,7 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
     Apply detector time calibration to cell sequences.
     
     Args:
-        cell_sequences: Original cell sequences
+        cell_sequences: Original cell sequences (already layer-filtered)
         config: Configuration with calibration data
         
     Returns:
@@ -187,7 +198,7 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
     """
     print("Applying time calibration...")
     
-    # Parameter lookup
+    # Parameter lookup - using 1-based layer indexing to match C++ get_mean function
     param_lookup = {
         (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
         (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
@@ -209,9 +220,9 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
             time_tof = cell[0]  # Cell_time_TOF_corrected
             energy = cell[1]    # Cell_e
             barrel = int(cell[2])  # Cell_Barrel
-            layer = int(cell[3])   # Cell_layer
+            layer = int(cell[3])   # Cell_layer (already 1, 2, 3)
             
-            # Get calibration parameters
+            # Get calibration parameters - use layer directly (no mapping needed)
             detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
             
             # Get energy bin index and calibration value
@@ -234,7 +245,7 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
     Calculate traditional (non-ML) t0 for each event using weighted average.
     
     Args:
-        cell_sequences: Calibrated cell sequences
+        cell_sequences: Calibrated cell sequences (already layer-filtered)
         vertex_times: True vertex times
         config: Configuration with calibration data
         
@@ -243,7 +254,7 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
     """
     print("Calculating traditional t0...")
     
-    # Sigma lookup tables
+    # Sigma lookup tables - using 1-based layer indexing to match C++ get_sigma function
     sigma_lookup = {
         (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
         (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
@@ -253,6 +264,16 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
     }
     
+    # Parameter lookup for getting original times - using 1-based layer indexing
+    param_lookup = {
+        (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_params'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_params'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_params'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_params'],  # Endcap, Layer 3
+    }
+    
     traditional_t0 = []
     
     for event_idx, sequence in enumerate(cell_sequences):
@@ -260,17 +281,25 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         weight_sum = 0.0
         
         # Collect cell times for debugging output
-        cell_times = []
+        calibrated_cell_times = []
+        original_cell_times = []
         
         for cell in sequence:
-            time = cell[0]         # Calibrated time
-            energy = cell[1]       # Cell_e
-            barrel = int(cell[2])  # Cell_Barrel
-            layer = int(cell[3])   # Cell_layer
+            calibrated_time = cell[0]  # Already calibrated time
+            energy = cell[1]           # Cell_e
+            barrel = int(cell[2])      # Cell_Barrel
+            layer = int(cell[3])       # Cell_layer (already 1, 2, 3)
             
-            cell_times.append(time)
+            calibrated_cell_times.append(calibrated_time)
             
-            # Get sigma for this cell
+            # Calculate original time (before calibration) - use layer directly
+            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+            energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
+            calibration_value = detector_params[energy_bin_idx]
+            original_time = calibrated_time + calibration_value  # Add back the calibration
+            original_cell_times.append(original_time)
+            
+            # Get sigma for this cell - use layer directly
             sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
             energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
             sigma = sigma_params[energy_bin_idx]
@@ -278,7 +307,7 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
             # Weight = 1/sigma^2
             weight = 1.0 / (sigma * sigma)
             
-            weighted_sum += weight * time
+            weighted_sum += weight * calibrated_time
             weight_sum += weight
         
         if weight_sum > 0:
@@ -292,8 +321,16 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         if event_idx < 10:  # Print first 10 events
             print(f"\nEvent {event_idx}:")
             print(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ns")
-            print(f"  Number of filtered cells: {len(cell_times)}")
-            print(f"  Calibrated cell times: {[f'{t:.4f}' for t in cell_times[:5]]}{'...' if len(cell_times) > 5 else ''}")
+            print(f"  Number of filtered cells: {len(calibrated_cell_times)}")
+            
+            # Print all original cell times (before calibration)
+            original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
+            print(f"  Original cell times (before calibration): {original_times_str} ns")
+            
+            # Print all calibrated cell times (after calibration)
+            calibrated_times_str = ", ".join([f'{t:.1f}' for t in calibrated_cell_times])
+            print(f"  Calibrated cell times (after calibration): {calibrated_times_str} ns")
+            
             print(f"  Reconstructed vertex time: {t0:.4f} ns")
             print(f"  Error (reco - truth): {t0 - vertex_times[event_idx]:.4f} ns")
     
