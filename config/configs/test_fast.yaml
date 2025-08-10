@@ -2,9 +2,9 @@
 model_name: "transformer_fast_test"
 
 # Data parameters - minimal for fast testing
-data_dir: "../selected_h5/"
+data_dir: "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_old_files/"
 num_files: 5  # Reduced from 3 to 5 for better testing
-max_cells: 20  # Reduced from 10 to 20 for realistic testing
+max_cells: 50  # Reduced from 10 to 20 for realistic testing
 min_cells: 1
 cell_selection_feature: "Cell_e"
 use_spatial_features: true
