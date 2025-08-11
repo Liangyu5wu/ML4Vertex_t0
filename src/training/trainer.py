@@ -43,7 +43,8 @@ class Trainer:
                 filepath=self.config.model_path,
                 monitor='val_loss',
                 save_best_only=True,
-                verbose=1
+                verbose=1,
+                save_format='h5'  # Explicitly use h5 format for better compatibility
             ),
             callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
