@@ -43,10 +43,17 @@ def load_config_and_model(model_dir):
         config = TransformerConfig.load_config(model_dir)
         print(f"Loaded configuration from: {model_dir}")
         
-        # Load model
-        model_path = os.path.join(model_dir, "model.keras")
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
+        # Load model - try both .h5 and .keras formats for backward compatibility
+        model_h5_path = os.path.join(model_dir, "model.h5")
+        model_keras_path = os.path.join(model_dir, "model.keras")
+        
+        model_path = None
+        if os.path.exists(model_h5_path):
+            model_path = model_h5_path
+        elif os.path.exists(model_keras_path):
+            model_path = model_keras_path
+        else:
+            raise FileNotFoundError(f"No model file found in {model_dir}. Expected model.h5 or model.keras")
         
         keras_model = TransformerModel.load_model(model_path)
         print(f"Loaded model from: {model_path}")
