@@ -3,7 +3,7 @@ model_name: "transformer_with_jets"
 
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
-num_files: 42
+num_files: 43
 max_cells: 70
 min_cells: 1
 cell_selection_feature: "Cell_e"
