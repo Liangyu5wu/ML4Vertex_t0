@@ -42,17 +42,17 @@ class BaseConfig:
     max_cells: int = 40
     min_cells: int = 3
     cell_selection_feature: str = 'Cell_e'
+    
+    # Feature selection parameters
     use_spatial_features: bool = False
+    use_track_features: bool = True   # NEW: Include track matching features
+    use_jet_features: bool = False    # NEW: Include jet matching features
     
     # Cell filtering parameters
+    require_valid_cells: bool = True
     use_cell_track_matching: bool = True
     use_cell_jet_matching: bool = False  # NEW: Enable cell-jet matching filter
-    require_valid_cells: bool = True
     additional_cell_filters: Dict[str, Any] = None
-    
-    # NEW: Jet feature parameters
-    use_jet_features: bool = False  # NEW: Include jet-related features
-    jet_features: List[str] = None  # NEW: List of jet features to include
     
     # Data split parameters
     test_size: float = 0.3
@@ -74,6 +74,8 @@ class BaseConfig:
     spatial_features: List[str] = None
     vertex_spatial_features: List[str] = None
     all_cell_features: List[str] = None
+    track_features: List[str] = None      # NEW: Track matching features
+    jet_features: List[str] = None        # NEW: Jet matching features
     skip_normalization: List[str] = None
     
     def __post_init__(self):
@@ -92,19 +94,19 @@ class BaseConfig:
             self.vertex_spatial_features = ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
             
         if self.all_cell_features is None:
+            # Base cell features (physical properties only)
             self.all_cell_features = [
                 'Cell_x', 'Cell_y', 'Cell_z', 'Cell_eta', 'Cell_phi', 'Cell_Barrel', 'Cell_layer',
-                'Cell_time_TOF_corrected', 'Cell_e', 'Cell_significance', 
-                'matched_track_pt', 'matched_track_deltaR'
+                'Cell_time_TOF_corrected', 'Cell_e', 'Cell_significance'
             ]
             
-        if self.skip_normalization is None:
-            self.skip_normalization = ['Cell_time_TOF_corrected', 'Cell_Barrel', 'Cell_layer']
+        # NEW: Initialize track and jet features separately
+        if self.track_features is None:
+            self.track_features = [
+                'matched_track_pt',
+                'matched_track_deltaR'
+            ]
             
-        if self.additional_cell_filters is None:
-            self.additional_cell_filters = {}
-            
-        # NEW: Initialize jet features
         if self.jet_features is None:
             self.jet_features = [
                 'matched_jet_pt',
@@ -114,25 +116,39 @@ class BaseConfig:
                 'matched_jet_deltaR'
             ]
     
+        if self.skip_normalization is None:
+            self.skip_normalization = ['Cell_time_TOF_corrected', 'Cell_Barrel', 'Cell_layer']
+            
+        if self.additional_cell_filters is None:
+            self.additional_cell_filters = {}
+    
     @property
     def cell_features(self) -> List[str]:
-        """Get cell features based on spatial feature usage and jet feature inclusion."""
-        # Start with base features
+        """Get cell features based on feature selection settings."""
+        # Start with base cell features
+        features = self.all_cell_features.copy()
+        
+        # Add spatial features if enabled
         if self.use_spatial_features:
-            # Include all features if spatial features are enabled
-            base_features = self.all_cell_features.copy()
+            # spatial features are already in all_cell_features, so no change needed
+            pass
         else:
-            # Exclude spatial features if spatial features are disabled
-            base_features = [f for f in self.all_cell_features if f not in self.spatial_features]
+            # Remove spatial features if disabled
+            features = [f for f in features if f not in self.spatial_features]
         
-        # NEW: Add jet features if enabled
+        # Add track features if enabled
+        if self.use_track_features:
+            for track_feature in self.track_features:
+                if track_feature not in features:
+                    features.append(track_feature)
+        
+        # Add jet features if enabled
         if self.use_jet_features:
-            # Add jet features that are not already in base features
             for jet_feature in self.jet_features:
-                if jet_feature not in base_features:
-                    base_features.append(jet_feature)
+                if jet_feature not in features:
+                    features.append(jet_feature)
         
-        return base_features
+        return features
     
     @property
     def model_dir(self) -> str:
@@ -311,13 +327,13 @@ class BaseConfig:
         categories = {
             "Data Parameters": [
                 'data_dir', 'num_files', 'max_cells', 'min_cells', 
-                'cell_selection_feature', 'use_spatial_features'
+                'cell_selection_feature'
+            ],
+            "Feature Selection Parameters": [
+                'use_spatial_features', 'use_track_features', 'use_jet_features'
             ],
             "Cell Filtering Parameters": [
-                'use_cell_track_matching', 'use_cell_jet_matching', 'require_valid_cells', 'additional_cell_filters'
-            ],
-            "Jet Feature Parameters": [  # NEW category
-                'use_jet_features', 'jet_features'
+                'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 'additional_cell_filters'
             ],
             "Training Parameters": [
                 'batch_size', 'epochs', 'early_stopping_patience', 
@@ -335,11 +351,6 @@ class BaseConfig:
                     value = getattr(self, param)
                     if param == 'additional_cell_filters':
                         print(f"  {param}: {dict(value) if value else '{}'}")
-                    elif param == 'jet_features':  # NEW: Special handling for jet features
-                        if self.use_jet_features:
-                            print(f"  {param}: {value}")
-                        else:
-                            print(f"  {param}: (disabled)")
                     else:
                         print(f"  {param}: {value}")
         
@@ -356,7 +367,12 @@ class BaseConfig:
         # Add feature information
         print(f"\nFeature Information:")
         print(f"  Total cell features: {len(self.cell_features)}")
-        print(f"  Cell features: {self.cell_features}")
+        print(f"  Base cell features: {self.all_cell_features}")
+        if self.use_track_features:
+            print(f"  Track features: {self.track_features}")
+        if self.use_jet_features:
+            print(f"  Jet features: {self.jet_features}")
+        print(f"  Final cell features: {self.cell_features}")
         
         # Add architecture parameters if they exist
         arch_params = ['d_model', 'num_heads', 'dff', 'num_transformer_blocks', 'dropout_rate']
@@ -387,14 +403,33 @@ class BaseConfig:
         # Path validations
         assert os.path.isabs(self.models_base_dir), "models_base_dir should be absolute path"
         
+        # NEW: Feature selection validations
+        if self.use_track_features and not self.track_features:
+            print("Warning: use_track_features is enabled but no track_features defined")
+        
+        if self.use_jet_features and not self.jet_features:
+            print("Warning: use_jet_features is enabled but no jet_features defined")
+        
+        # NEW: Track feature validations
+        if self.use_track_features:
+            available_track_features = ['matched_track_pt', 'matched_track_deltaR', 'matched_track_HS']
+            missing_track_features = []
+            for track_feature in self.track_features:
+                if track_feature not in available_track_features:
+                    missing_track_features.append(track_feature)
+            
+            if missing_track_features:
+                print(f"Warning: Unknown track features specified: {missing_track_features}")
+                print(f"Available track features: {available_track_features}")
+        
         # NEW: Jet feature validations
         if self.use_jet_features:
             # Validate that jet features are available in data
-            missing_jet_features = []
             available_jet_features = [
                 'cell_jet_matched', 'matched_jet_pt', 'matched_jet_eta', 
                 'matched_jet_phi', 'matched_jet_width', 'matched_jet_deltaR'
             ]
+            missing_jet_features = []
             for jet_feature in self.jet_features:
                 if jet_feature not in available_jet_features:
                     missing_jet_features.append(jet_feature)
@@ -407,15 +442,19 @@ class BaseConfig:
         if not self.require_valid_cells and not self.use_cell_track_matching and not self.use_cell_jet_matching and not self.additional_cell_filters:
             print("Warning: No cell filtering enabled. This may include low-quality cells.")
         
-        # NEW: Jet matching validation
+        # NEW: Matching filter validation
+        if self.use_cell_track_matching:
+            print("Note: Cell-track matching filter enabled. Ensure your data contains 'matched_track_HS' field.")
+        
         if self.use_cell_jet_matching:
             print("Note: Cell-jet matching filter enabled. Ensure your data contains 'cell_jet_matched' field.")
         
         # Check if additional_cell_filters contains valid keys
         if self.additional_cell_filters:
+            all_available_features = self.all_cell_features + self.track_features + self.jet_features
             for filter_key in self.additional_cell_filters.keys():
-                if filter_key not in self.all_cell_features and filter_key not in self.jet_features:
-                    print(f"Warning: Filter key '{filter_key}' not in all_cell_features or jet_features")
+                if filter_key not in all_available_features:
+                    print(f"Warning: Filter key '{filter_key}' not in available features")
         
         print("Configuration validation passed.")
         print(f"Using {len(self.cell_features)} out of {len(self.all_cell_features)} available features")
