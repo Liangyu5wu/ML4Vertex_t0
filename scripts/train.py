@@ -50,6 +50,8 @@ def parse_args():
                        help='Verbosity level (0, 1, 2)')
     parser.add_argument('--save-config', action='store_true',
                        help='Save final configuration to YAML file')
+    parser.add_argument('--skip-jet-validation', action='store_true',
+                       help='Skip jet features validation (use with caution)')
     
     return parser.parse_args()
 
@@ -112,6 +114,31 @@ def print_training_info(config):
     print(f"  Model path: {config.model_path}")
 
 
+def validate_jet_features_setup(config, data_loader, skip_validation=False):
+    """Validate jet features setup if enabled."""
+    if skip_validation:
+        print("Skipping jet features validation as requested.")
+        return True
+    
+    # Check if jet features or jet matching are enabled
+    if config.use_jet_features or config.use_cell_jet_matching:
+        print("\nValidating jet features setup...")
+        
+        # Check if data contains required jet fields
+        if not data_loader.validate_jet_features_in_dataset():
+            print("\nError: Jet features validation failed!")
+            print("Your configuration requires jet features, but the dataset doesn't contain them.")
+            print("\nPossible solutions:")
+            print("1. Use data processed with cell-jet matching (update your H5 files)")
+            print("2. Disable jet features in config: set use_jet_features=false and use_cell_jet_matching=false")
+            print("3. Use --skip-jet-validation flag (not recommended)")
+            return False
+        
+        print("✓ Jet features validation passed")
+    
+    return True
+
+
 def main():
     """Main training function."""
     args = parse_args()
@@ -129,6 +156,10 @@ def main():
         # Load data
         print(f"\n1. Loading and processing data...")
         data_loader = DataLoader(config)
+        
+        # NEW: Validate jet features setup
+        if not validate_jet_features_setup(config, data_loader, args.skip_jet_validation):
+            return 1
         
         try:
             cell_sequences, vertex_features, vertex_times, sequence_lengths = \
@@ -175,8 +206,12 @@ def main():
         print(f"\n4. Building model...")
         model = TransformerModel(config)
         
-        # Use original cell features dimension (detector calibration is applied to time, not as extra features)
+        # Use actual cell features dimension (includes jet features if enabled)
         feature_dim = len(config.cell_features)
+        print(f"Model input feature dimension: {feature_dim}")
+        
+        if config.use_jet_features:
+            print(f"Including jet features: {config.jet_features}")
         
         keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
         
@@ -217,6 +252,12 @@ def main():
             print(f"Model saved to: {config.model_path}")
             print(f"Configuration saved to: {config.model_dir}")
             print(f"Training history saved to: {config.model_dir}")
+            
+            # Print feature information
+            if config.use_jet_features:
+                print(f"\nJet features included: {config.jet_features}")
+            if config.use_cell_jet_matching:
+                print(f"Cell-jet matching filter applied during training")
             
             # Print evaluation command
             print(f"\nTo evaluate this model, run:")
