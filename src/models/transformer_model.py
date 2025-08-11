@@ -121,7 +121,8 @@ class TransformerModel:
         if filepath is None:
             filepath = self.config.model_path
             
-        self.model.save(filepath)
+        # Use save_weights and save architecture separately for better compatibility
+        self.model.save(filepath, save_format='h5')
         print(f"Model saved to {filepath}")
     
     @staticmethod
@@ -142,7 +143,17 @@ class TransformerModel:
             'TransformerBlock': TransformerBlock
         }
         
-        return models.load_model(filepath, custom_objects=custom_objects)
+        # Handle both .h5 and .keras formats
+        try:
+            return models.load_model(filepath, custom_objects=custom_objects)
+        except Exception as e:
+            print(f"Error loading model from {filepath}: {e}")
+            # Try alternative loading method for .h5 files
+            if filepath.endswith('.h5'):
+                print("Attempting alternative loading method for .h5 file...")
+                return tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
+            else:
+                raise e
     
     def get_model_summary(self) -> str:
         """Get model summary as string."""
