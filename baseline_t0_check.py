@@ -740,7 +740,7 @@ def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Enhanced baseline t0 reconstruction check with parallel track/jet analysis')
-    parser.add_argument('--data-dir', type=str, default='/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/',
+    parser.add_argument('--data-dir', type=str, default='../selected_h5_with_jets/',
                        help='Directory containing HDF5 data files')
     parser.add_argument('--num-files', type=int, default=5,
                        help='Number of files to process')
