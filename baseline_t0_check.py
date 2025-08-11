@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Standalone script to reproduce non-ML vertex t0 reconstruction method.
-This script replicates the baseline_check functionality for validation.
-Modified to show complete cell times before and after calibration.
+Enhanced baseline t0 reconstruction check with parallel cell-track and cell-jet matching analysis.
+This script performs both cell-track matching and cell-jet matching based t0 reconstruction
+using different calibration data sets and saves results in parallel subdirectories.
 """
 
 import os
@@ -18,7 +18,7 @@ from typing import List, Tuple, Dict
 class SimpleConfig:
     """Simplified configuration for baseline t0 reconstruction."""
     
-    def __init__(self):
+    def __init__(self, calibration_file: str = "HStrackmatching_calibration.txt"):
         # Data parameters
         self.data_dir = "../selected_h5/"
         self.num_files = 5
@@ -34,47 +34,52 @@ class SimpleConfig:
         # Gaussian fit range for plots
         self.gaussian_fit_range = 120
         
-        # Calibration data (from HStrackmatching_calibration.txt)
-        self.calibration_data = {
-            # Barrel Layer 1 (EMB1)
-            'EMB1_params': [48.5266, 37.56, 28.9393, 23.1505, 18.5468, 13.0141, 8.03724],
-            'EMB1_sigma': [416.994, 293.206, 208.321, 148.768, 117.756, 106.804, 57.6545],
-            
-            # Barrel Layer 2 (EMB2)
-            'EMB2_params': [46.2244, 41.5079, 38.5544, 36.9812, 31.2718, 29.7469, 19.331],
-            'EMB2_sigma': [2001.56, 1423.38, 1010.24, 720.392, 551.854, 357.594, 144.162],
-            
-            # Barrel Layer 3 (EMB3)
-            'EMB3_params': [104.325, 106.119, 71.1017, 75.151, 51.2334, 48.2088, 46.6502],
-            'EMB3_sigma': [1215.53, 880.826, 680.742, 468.689, 372.184, 279.134, 162.288],
-            
-            # Endcap Layer 1 (EME1)
-            'EME1_params': [125.348, 102.888, 86.7558, 59.7355, 55.3299, 41.3032, 23.646],
-            'EME1_sigma': [855.662, 589.529, 435.052, 314.788, 252.453, 185.536, 76.5333],
-            
-            # Endcap Layer 2 (EME2)
-            'EME2_params': [272.149, 224.475, 173.443, 135.829, 113.05, 83.8009, 37.1829],
-            'EME2_sigma': [1708.6, 1243.34, 881.465, 627.823, 486.99, 311.032, 106.533],
-            
-            # Endcap Layer 3 (EME3)
-            'EME3_params': [189.356, 140.293, 111.232, 86.8784, 69.0834, 60.5034, 38.5008],
-            'EME3_sigma': [1137.06, 803.044, 602.152, 403.393, 318.327, 210.827, 99.697]
-        }
+        # Calibration data file
+        self.calibration_file = calibration_file
+        self.calibration_data = self.load_calibration_data()
+        
+    def load_calibration_data(self) -> Dict[str, List[float]]:
+        """Load calibration data from external file."""
+        calibration_path = Path("calibration_data") / self.calibration_file
+        
+        if not calibration_path.exists():
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        print(f"Loaded calibration data from: {calibration_path}")
+        return calibration_data
 
 
-def load_and_filter_data(config: SimpleConfig) -> Tuple[List, np.ndarray]:
+def load_and_filter_data(config: SimpleConfig, matching_type: str = "track") -> Tuple[List, np.ndarray]:
     """
     Load and filter data from HDF5 files.
     
     Args:
         config: Configuration object
+        matching_type: "track" for cell-track matching, "jet" for cell-jet matching
         
     Returns:
         Tuple of (filtered_cell_sequences, vertex_times)
     """
     print(f"Loading data from {config.data_dir}")
     print(f"Number of files: {config.num_files}")
-    print(f"Cell filtering - Track matching: {config.use_cell_track_matching}, Valid cells: {config.require_valid_cells}")
+    print(f"Matching type: {matching_type}")
+    
+    if matching_type == "track":
+        print(f"Cell filtering - Track matching: {config.use_cell_track_matching}, Valid cells: {config.require_valid_cells}")
+    else:
+        print(f"Cell filtering - Jet matching: True, Valid cells: {config.require_valid_cells}")
     
     all_cell_sequences = []
     all_vertex_times = []
@@ -111,8 +116,11 @@ def load_and_filter_data(config: SimpleConfig) -> Tuple[List, np.ndarray]:
                 
                 total_cells_before += len(event_cells)
                 
-                # Apply filtering
-                filtered_cells = apply_cell_filtering(event_cells, config)
+                # Apply filtering based on matching type
+                if matching_type == "track":
+                    filtered_cells = apply_cell_track_filtering(event_cells, config)
+                else:  # jet matching
+                    filtered_cells = apply_cell_jet_filtering(event_cells, config)
                 
                 if len(filtered_cells) < config.min_cells:
                     continue
@@ -156,8 +164,8 @@ def load_and_filter_data(config: SimpleConfig) -> Tuple[List, np.ndarray]:
     return all_cell_sequences, np.array(all_vertex_times)
 
 
-def apply_cell_filtering(event_cells, config: SimpleConfig):
-    """Apply cell filtering based on configuration."""
+def apply_cell_track_filtering(event_cells, config: SimpleConfig):
+    """Apply cell-track matching filtering based on configuration."""
     mask = np.ones(len(event_cells), dtype=bool)
     
     # Apply valid cell filter
@@ -169,6 +177,22 @@ def apply_cell_filtering(event_cells, config: SimpleConfig):
     if config.use_cell_track_matching:
         track_matching_mask = event_cells['matched_track_HS'] == 1
         mask = mask & track_matching_mask
+    
+    return event_cells[mask]
+
+
+def apply_cell_jet_filtering(event_cells, config: SimpleConfig):
+    """Apply cell-jet matching filtering based on configuration."""
+    mask = np.ones(len(event_cells), dtype=bool)
+    
+    # Apply valid cell filter
+    if config.require_valid_cells:
+        valid_mask = event_cells['valid'] == True
+        mask = mask & valid_mask
+    
+    # Apply cell-jet matching filter
+    jet_matching_mask = event_cells['cell_jet_matched'] == True
+    mask = mask & jet_matching_mask
     
     return event_cells[mask]
 
@@ -198,7 +222,7 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
     """
     print("Applying time calibration...")
     
-    # Parameter lookup - using 1-based layer indexing to match C++ get_mean function
+    # Parameter lookup - using 1-based layer indexing
     param_lookup = {
         (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
         (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
@@ -222,7 +246,7 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
             barrel = int(cell[2])  # Cell_Barrel
             layer = int(cell[3])   # Cell_layer (already 1, 2, 3)
             
-            # Get calibration parameters - use layer directly (no mapping needed)
+            # Get calibration parameters - use layer directly
             detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
             
             # Get energy bin index and calibration value
@@ -240,7 +264,8 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
     return calibrated_sequences
 
 
-def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, config: SimpleConfig) -> Tuple[np.ndarray, np.ndarray]:
+def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, config: SimpleConfig, 
+                           matching_type: str = "track") -> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate traditional (non-ML) t0 for each event using weighted average.
     
@@ -248,13 +273,14 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         cell_sequences: Calibrated cell sequences (already layer-filtered)
         vertex_times: True vertex times
         config: Configuration with calibration data
+        matching_type: "track" or "jet" for output labeling
         
     Returns:
         Tuple of (traditional_t0, t0_errors)
     """
-    print("Calculating traditional t0...")
+    print(f"Calculating traditional t0 for {matching_type} matching...")
     
-    # Sigma lookup tables - using 1-based layer indexing to match C++ get_sigma function
+    # Sigma lookup tables - using 1-based layer indexing
     sigma_lookup = {
         (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
         (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
@@ -319,7 +345,7 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         
         # Print debug info for first n events
         if event_idx < 10:  # Print first 10 events
-            print(f"\nEvent {event_idx}:")
+            print(f"\n{matching_type.capitalize()} matching - Event {event_idx}:")
             print(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ns")
             print(f"  Number of filtered cells: {len(calibrated_cell_times)}")
             
@@ -337,7 +363,7 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
     traditional_t0 = np.array(traditional_t0)
     t0_errors = traditional_t0 - vertex_times
     
-    print(f"\nTraditional t0 calculation completed for {len(traditional_t0)} events")
+    print(f"\nTraditional t0 calculation completed for {len(traditional_t0)} events using {matching_type} matching")
     
     return traditional_t0, t0_errors
 
@@ -347,7 +373,7 @@ def gaussian_func(x, a, mu, sigma):
     return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
-def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_path: str):
+def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
     """Plot traditional t0 distribution with Gaussian fit."""
     plt.figure(figsize=(10, 6))
     
@@ -392,7 +418,7 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     
     plt.xlabel('Traditional t0 [ns]')
     plt.ylabel('Count')
-    plt.title('Traditional t0 Distribution')
+    plt.title(f'Traditional t0 Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
                f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
     plt.grid(True, alpha=0.3)
@@ -400,11 +426,11 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"Traditional t0 distribution plot saved to: {save_path}")
 
 
-def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_path: str):
+def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
     """Plot t0 error distribution with Gaussian fit."""
     plt.figure(figsize=(10, 6))
     
@@ -446,7 +472,7 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     
     plt.xlabel('Traditional t0 - True t0 [ns]')
     plt.ylabel('Count')
-    plt.title('Traditional t0 Error Distribution')
+    plt.title(f'Traditional t0 Error Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
                f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
     plt.grid(True, alpha=0.3)
@@ -454,11 +480,11 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"Traditional t0 error distribution plot saved to: {save_path}")
 
 
-def plot_true_vertex_time_distribution(vertex_times: np.ndarray, save_path: str):
+def plot_true_vertex_time_distribution(vertex_times: np.ndarray, save_path: str, matching_type: str):
     """Plot true vertex time distribution with statistics."""
     plt.figure(figsize=(10, 6))
     
@@ -481,18 +507,18 @@ def plot_true_vertex_time_distribution(vertex_times: np.ndarray, save_path: str)
     
     plt.xlabel('True Vertex Time [ns]')
     plt.ylabel('Count')
-    plt.title('True Vertex Time Distribution')
+    plt.title(f'True Vertex Time Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'Data: μ={mean_val:.2f}, σ={std_val:.2f}, N={len(vertex_times)}'])
     plt.grid(True, alpha=0.3)
     plt.xlim(-2000, 2000)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"True vertex time distribution plot saved to: {save_path}")
 
 
-def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save_path: str):
+def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save_path: str, matching_type: str):
     """Plot traditional t0 vs true t0 as 2D histogram."""
     plt.figure(figsize=(10, 8))
     
@@ -527,7 +553,7 @@ def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save
     
     plt.xlabel('True Vertex Time [ns]')
     plt.ylabel('Traditional t0 [ns]')
-    plt.title('Traditional t0 vs True t0 (2D Histogram)')
+    plt.title(f'Traditional t0 vs True t0 ({matching_type.capitalize()} Matching)')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
@@ -547,13 +573,173 @@ def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"Traditional t0 vs true 2D histogram saved to: {save_path}")
+
+
+def run_analysis(config: SimpleConfig, output_dir: Path, matching_type: str) -> Dict[str, float]:
+    """
+    Run complete analysis for either track or jet matching.
+    
+    Args:
+        config: Configuration object
+        output_dir: Output directory for this analysis
+        matching_type: "track" or "jet"
+        
+    Returns:
+        Dictionary with analysis results
+    """
+    print(f"\n{'='*60}")
+    print(f"{matching_type.upper()} MATCHING ANALYSIS")
+    print(f"{'='*60}")
+    print(f"Using calibration file: {config.calibration_file}")
+    
+    # Create output directory
+    output_dir.mkdir(exist_ok=True, parents=True)
+    
+    # Load and filter data
+    cell_sequences, vertex_times = load_and_filter_data(config, matching_type)
+    
+    if len(cell_sequences) == 0:
+        print(f"No valid events found for {matching_type} matching. Skipping.")
+        return {}
+    
+    # Apply time calibration
+    calibrated_sequences = apply_time_calibration(cell_sequences, config)
+    
+    # Calculate traditional t0
+    traditional_t0, t0_errors = calculate_traditional_t0(calibrated_sequences, vertex_times, config, matching_type)
+    
+    # Generate plots
+    print(f"\nGenerating plots for {matching_type} matching...")
+    
+    # Plot 0: True vertex time distribution
+    plot_true_vertex_time_distribution(
+        vertex_times, 
+        output_dir / 'true_vertex_time_distribution.png', 
+        matching_type
+    )
+    
+    # Plot 1: Traditional t0 distribution
+    plot_t0_distribution(
+        traditional_t0, 
+        config, 
+        output_dir / 'traditional_t0_distribution.png', 
+        matching_type
+    )
+    
+    # Plot 2: t0 error distribution
+    plot_error_distribution(
+        t0_errors, 
+        config, 
+        output_dir / 't0_error_distribution.png', 
+        matching_type
+    )
+    
+    # Plot 3: Traditional t0 vs true t0 2D histogram
+    plot_2d_histogram(
+        traditional_t0, 
+        vertex_times, 
+        output_dir / 'traditional_t0_vs_true_2d.png', 
+        matching_type
+    )
+    
+    # Calculate summary statistics
+    correlation = np.corrcoef(vertex_times, traditional_t0)[0, 1]
+    rmse = np.sqrt(np.mean((traditional_t0 - vertex_times) ** 2))
+    mae = np.mean(np.abs(traditional_t0 - vertex_times))
+    mean_error = np.mean(t0_errors)
+    std_error = np.std(t0_errors)
+    
+    results = {
+        'num_events': len(traditional_t0),
+        'correlation': correlation,
+        'rmse': rmse,
+        'mae': mae,
+        'mean_error': mean_error,
+        'std_error': std_error,
+        'mean_t0': np.mean(traditional_t0),
+        'std_t0': np.std(traditional_t0)
+    }
+    
+    print(f"\n{matching_type.capitalize()} matching analysis completed!")
+    print(f"Results saved to: {output_dir}")
+    print(f"Events processed: {results['num_events']}")
+    print(f"Correlation: {results['correlation']:.4f}")
+    print(f"RMSE: {results['rmse']:.4f}")
+    print(f"MAE: {results['mae']:.4f}")
+    
+    return results
+
+
+def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir: Path):
+    """Create a comparison summary of track vs jet matching results."""
+    summary_path = output_dir / 'comparison_summary.txt'
+    
+    with open(summary_path, 'w') as f:
+        f.write("BASELINE T0 RECONSTRUCTION COMPARISON SUMMARY\n")
+        f.write("="*50 + "\n\n")
+        
+        f.write("Analysis Overview:\n")
+        f.write("- Cell-Track Matching: Uses cells matched to hard-scatter tracks\n")
+        f.write("- Cell-Jet Matching: Uses cells matched to jets\n")
+        f.write("- Different calibration parameters used for each method\n\n")
+        
+        if track_results:
+            f.write("CELL-TRACK MATCHING RESULTS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"  Events processed: {track_results['num_events']}\n")
+            f.write(f"  Correlation: {track_results['correlation']:.4f}\n")
+            f.write(f"  RMSE: {track_results['rmse']:.4f} ns\n")
+            f.write(f"  MAE: {track_results['mae']:.4f} ns\n")
+            f.write(f"  Mean error: {track_results['mean_error']:.4f} ns\n")
+            f.write(f"  Error std: {track_results['std_error']:.4f} ns\n")
+            f.write(f"  Mean t0: {track_results['mean_t0']:.4f} ns\n")
+            f.write(f"  t0 std: {track_results['std_t0']:.4f} ns\n\n")
+        else:
+            f.write("CELL-TRACK MATCHING RESULTS: No valid events\n\n")
+        
+        if jet_results:
+            f.write("CELL-JET MATCHING RESULTS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"  Events processed: {jet_results['num_events']}\n")
+            f.write(f"  Correlation: {jet_results['correlation']:.4f}\n")
+            f.write(f"  RMSE: {jet_results['rmse']:.4f} ns\n")
+            f.write(f"  MAE: {jet_results['mae']:.4f} ns\n")
+            f.write(f"  Mean error: {jet_results['mean_error']:.4f} ns\n")
+            f.write(f"  Error std: {jet_results['std_error']:.4f} ns\n")
+            f.write(f"  Mean t0: {jet_results['mean_t0']:.4f} ns\n")
+            f.write(f"  t0 std: {jet_results['std_t0']:.4f} ns\n\n")
+        else:
+            f.write("CELL-JET MATCHING RESULTS: No valid events\n\n")
+        
+        if track_results and jet_results:
+            f.write("COMPARISON:\n")
+            f.write("-" * 30 + "\n")
+            corr_diff = jet_results['correlation'] - track_results['correlation']
+            rmse_diff = jet_results['rmse'] - track_results['rmse']
+            mae_diff = jet_results['mae'] - track_results['mae']
+            
+            f.write(f"  Correlation difference (jet - track): {corr_diff:+.4f}\n")
+            f.write(f"  RMSE difference (jet - track): {rmse_diff:+.4f} ns\n")
+            f.write(f"  MAE difference (jet - track): {mae_diff:+.4f} ns\n")
+            
+            if corr_diff > 0:
+                f.write("  → Jet matching shows better correlation\n")
+            else:
+                f.write("  → Track matching shows better correlation\n")
+                
+            if rmse_diff < 0:
+                f.write("  → Jet matching shows better RMSE\n")
+            else:
+                f.write("  → Track matching shows better RMSE\n")
+    
+    print(f"Comparison summary saved to: {summary_path}")
 
 
 def main():
     """Main function."""
-    parser = argparse.ArgumentParser(description='Baseline t0 reconstruction check')
+    parser = argparse.ArgumentParser(description='Enhanced baseline t0 reconstruction check with parallel track/jet analysis')
     parser.add_argument('--data-dir', type=str, default='../selected_h5/',
                        help='Directory containing HDF5 data files')
     parser.add_argument('--num-files', type=int, default=5,
@@ -566,58 +752,69 @@ def main():
                        help='Disable valid cells filter')
     parser.add_argument('--min-cells', type=int, default=1,
                        help='Minimum number of cells per event')
+    parser.add_argument('--skip-track', action='store_true',
+                       help='Skip cell-track matching analysis')
+    parser.add_argument('--skip-jet', action='store_true',
+                       help='Skip cell-jet matching analysis')
     
     args = parser.parse_args()
     
-    # Create configuration
-    config = SimpleConfig()
-    config.data_dir = args.data_dir
-    config.num_files = args.num_files
-    config.min_cells = args.min_cells
-    config.use_cell_track_matching = not args.no_track_matching
-    config.require_valid_cells = not args.no_valid_cells
-    
-    # Create output directory
+    # Create main output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
     
     print("="*60)
-    print("BASELINE T0 RECONSTRUCTION CHECK")
+    print("ENHANCED BASELINE T0 RECONSTRUCTION CHECK")
     print("="*60)
+    print("Performing parallel analysis of cell-track and cell-jet matching")
     
-    # Load and filter data
-    cell_sequences, vertex_times = load_and_filter_data(config)
+    results = {}
     
-    if len(cell_sequences) == 0:
-        print("No valid events found. Exiting.")
-        return
+    # Run cell-track matching analysis
+    if not args.skip_track:
+        track_config = SimpleConfig("HStrackmatching_calibration.txt")
+        track_config.data_dir = args.data_dir
+        track_config.num_files = args.num_files
+        track_config.min_cells = args.min_cells
+        track_config.use_cell_track_matching = not args.no_track_matching
+        track_config.require_valid_cells = not args.no_valid_cells
+        
+        track_output_dir = output_dir / "cell_track_results"
+        results['track'] = run_analysis(track_config, track_output_dir, "track")
+    else:
+        results['track'] = {}
+        print("\nSkipping cell-track matching analysis")
     
-    # Apply time calibration
-    calibrated_sequences = apply_time_calibration(cell_sequences, config)
+    # Run cell-jet matching analysis
+    if not args.skip_jet:
+        jet_config = SimpleConfig("cell_jet_calibration.txt")
+        jet_config.data_dir = args.data_dir
+        jet_config.num_files = args.num_files
+        jet_config.min_cells = args.min_cells
+        jet_config.require_valid_cells = not args.no_valid_cells
+        
+        jet_output_dir = output_dir / "cell_jet_results"
+        results['jet'] = run_analysis(jet_config, jet_output_dir, "jet")
+    else:
+        results['jet'] = {}
+        print("\nSkipping cell-jet matching analysis")
     
-    # Calculate traditional t0
-    traditional_t0, t0_errors = calculate_traditional_t0(calibrated_sequences, vertex_times, config)
-    
-    # Generate plots
-    print("\nGenerating plots...")
-    
-    # Plot 0: True vertex time distribution
-    plot_true_vertex_time_distribution(vertex_times, output_dir / 'true_vertex_time_distribution.png')
-    
-    # Plot 1: Traditional t0 distribution
-    plot_t0_distribution(traditional_t0, config, output_dir / 'traditional_t0_distribution.png')
-    
-    # Plot 2: t0 error distribution
-    plot_error_distribution(t0_errors, config, output_dir / 't0_error_distribution.png')
-    
-    # Plot 3: Traditional t0 vs true t0 2D histogram
-    plot_2d_histogram(traditional_t0, vertex_times, output_dir / 'traditional_t0_vs_true_2d.png')
+    # Create comparison summary
+    if results['track'] and results['jet']:
+        create_comparison_summary(results['track'], results['jet'], output_dir)
     
     print("\n" + "="*60)
-    print("BASELINE CHECK COMPLETED!")
+    print("ENHANCED BASELINE CHECK COMPLETED!")
     print("="*60)
     print(f"Results saved to: {output_dir}")
-    print(f"Processed {len(traditional_t0)} events from {config.num_files} files")
+    
+    if results['track']:
+        print(f"Cell-track results in: {output_dir / 'cell_track_results'}")
+    if results['jet']:
+        print(f"Cell-jet results in: {output_dir / 'cell_jet_results'}")
+    
+    if results['track'] and results['jet']:
+        print(f"Comparison summary: {output_dir / 'comparison_summary.txt'}")
 
 
 if __name__ == "__main__":
