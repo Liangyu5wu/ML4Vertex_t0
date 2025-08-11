@@ -6,16 +6,19 @@ A modular framework for training transformer-based models for vertex t0 predicti
 
 ```
 ML4Vertex_t0/
-├── config/                     # Configuration files
+├── config/                     # Configuration files and classes
+│   ├── __init__.py            # Configuration module exports
 │   ├── base_config.py         # Base configuration class
 │   ├── transformer_config.py  # Transformer-specific configuration
 │   └── configs/               # YAML configuration files
-│       ├── default.yaml       # Default model configuration
-│       ├── experiment2.yaml   # Main experimental setup
+│       ├── experiment_with_jets.yaml  # Jet matching experimental setup
+│       ├── experiment_nersc.yaml      # NERSC cluster configuration
 │       └── test_fast.yaml     # Fast testing configuration
 ├── calibration_data/          # External calibration data files
-│   └── HStrackmatching_calibration.txt # Detector calibration parameters
+│   ├── HStrackmatching_calibration.txt    # Cell-track matching calibration
+│   └── cell_jet_calibration.txt           # Cell-jet matching calibration 
 ├── src/                       # Source code
+│   ├── __init__.py            # Source package initialization
 │   ├── data/                  # Data loading and processing
 │   ├── models/                # Model architectures
 │   ├── training/              # Training utilities
@@ -26,8 +29,11 @@ ML4Vertex_t0/
 │   ├── parameter_sweep.py    # Hyperparameter optimization
 │   ├── run_sweep_experiments.py # Easy sweep interface
 │   └── analyze_sweep.py      # Sweep results analysis
-├── jobs/                     # SLURM job scripts
-├── models/                   # Saved models and results (external)
+├── jobs/                    # SLURM job submission scripts
+│   ├── model_V1.sh         # Basic training job
+│   ├── model_nersc.sh      # NERSC GPU cluster job
+│   ├── sweep_archi.sh      # Architecture parameter sweep
+│   └── sweepbatch.sh       # Training parameter sweep
 └── process_h5.py            # Data preprocessing utility
 ```
 
