@@ -1,0 +1,80 @@
+# Experimental configuration with cell-jet matching features
+model_name: "transformer_with_jets"
+
+# Data parameters
+data_dir: "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/"
+num_files: 42
+max_cells: 70
+min_cells: 1
+cell_selection_feature: "Cell_e"
+use_spatial_features: true
+
+# Detector calibration parameters
+use_detector_params: true
+calibration_data_file: "HStrackmatching_calibration.txt"
+
+# Calibration validation parameters
+calibration_validation: true
+validation_detector_type: 1  # 1=barrel, 0=endcap
+validation_layer: 1  # 1, 2, or 3
+gaussian_fit_range: 120  # Range for Gaussian fitting in baseline checks
+
+# Cell filtering parameters
+use_cell_track_matching: true   # Keep track matching
+use_cell_jet_matching: true     # NEW: Add jet matching (both filters applied)
+require_valid_cells: true
+additional_cell_filters: {}
+
+# NEW: Jet feature parameters
+use_jet_features: true          # NEW: Include jet features in model input
+jet_features:                   # NEW: Specify which jet features to use
+  - "matched_jet_pt"
+  - "matched_jet_eta"
+  - "matched_jet_phi"
+  - "matched_jet_width"
+  - "matched_jet_deltaR"
+
+# Data split parameters
+test_size: 0.1
+val_split: 0.222222
+random_state: 42
+
+# Model architecture parameters
+d_model: 64  # Must be divisible by num_heads
+num_heads: 8
+dff: 128
+num_transformer_blocks: 2
+dropout_rate: 0.1
+
+# Dense layer parameters
+vertex_dense_units: 8
+final_dense_units: [32, 16, 8]
+final_dropout_rates: [0.1, 0.1, 0.05]
+use_batch_norm: true
+
+# Training parameters
+batch_size: 128
+epochs: 100
+learning_rate: 0.0005
+lr_reduction_factor: 0.5
+early_stopping_patience: 20
+lr_patience: 5
+min_lr: 0.0000001
+
+# Feature definitions (expanded to include jet features)
+spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
+vertex_spatial_features: ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
+all_cell_features:
+  - "Cell_x"
+  - "Cell_y" 
+  - "Cell_z"
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+  - "matched_track_pt"
+  - "matched_track_deltaR"
+skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
