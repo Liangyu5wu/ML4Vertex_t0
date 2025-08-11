@@ -224,6 +224,19 @@ class ParameterSweep:
                 results['best_epoch'] = best_epoch
                 results['best_val_loss'] = float(history_data['val_loss'][best_epoch])
                 results['best_val_mae'] = float(history_data['val_mae'][best_epoch])
+            
+            # Check if model file exists (try both .h5 and .keras for compatibility)
+            model_h5_path = os.path.join(model_dir, "model.h5")
+            model_keras_path = os.path.join(model_dir, "model.keras")
+            
+            if os.path.exists(model_h5_path):
+                results['model_saved'] = True
+                results['model_path'] = model_h5_path
+            elif os.path.exists(model_keras_path):
+                results['model_saved'] = True
+                results['model_path'] = model_keras_path
+            else:
+                results['model_saved'] = False
                 
         except Exception as e:
             results['extraction_error'] = str(e)
