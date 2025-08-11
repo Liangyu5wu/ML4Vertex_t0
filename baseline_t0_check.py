@@ -20,7 +20,7 @@ class SimpleConfig:
     
     def __init__(self, calibration_file: str = "HStrackmatching_calibration.txt"):
         # Data parameters
-        self.data_dir = "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/"
+        self.data_dir = "../selected_h5_with_jets/"
         self.num_files = 5
         self.min_cells = 1
         
