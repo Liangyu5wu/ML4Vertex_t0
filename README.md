@@ -50,11 +50,6 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-### Using pip
-```bash
-pip install tensorflow numpy h5py scikit-learn matplotlib seaborn pyyaml scipy
-```
-
 ## Quick Start
 
 ### Training
@@ -63,18 +58,18 @@ pip install tensorflow numpy h5py scikit-learn matplotlib seaborn pyyaml scipy
 python scripts/train.py --config-file config/configs/test_fast.yaml
 
 # With detector calibration (recommended)
-python scripts/train.py --config-file config/configs/experiment2.yaml
+python scripts/train.py --config-file config/configs/experiment_with_jets.yaml
 
 # Override specific parameters
 python scripts/train.py \
-    --config-file config/configs/default.yaml \
+    --config-file config/configs/experiment_with_jets.yaml \
     --epochs 100 \
     --batch-size 32
 ```
 
 ### Evaluation
 ```bash
-python scripts/evaluate.py --model-dir models/my_model --load-data
+python scripts/evaluate.py --model-dir ../models/my_model --load-data
 ```
 
 ### Parameter Sweeps
@@ -84,7 +79,7 @@ python scripts/run_sweep_experiments.py
 
 # Direct sweep execution
 python scripts/parameter_sweep.py \
-    --base-config config/configs/experiment2.yaml \
+    --base-config config/configs/experiment_with_jets.yaml \
     --grid-type quick \
     --max-experiments 50
 
@@ -151,20 +146,6 @@ When `use_detector_params: true`, the framework automatically generates:
 - `t0_error_distribution.png` - Traditional method error distribution  
 - `traditional_t0_vs_true_2d.png` - Traditional vs true t0 comparison
 
-## Data Format
-
-HDF5 files with:
-- **HSvertex**: Vertex coordinates and target time
-- **cells**: Variable-length cell sequences per event
-- **tracks**: Track information for cell matching
-
-Required cell features:
-- Position: `Cell_x`, `Cell_y`, `Cell_z`
-- Energy: `Cell_e`, `Cell_significance`
-- Detector info: `Cell_Barrel`, `Cell_layer`
-- Time: `Cell_time_TOF_corrected`
-- Track matching: `matched_track_pt`, `matched_track_deltaR`
-
 ## Key Features
 
 - **YAML Configuration**: Easy parameter management
@@ -188,7 +169,7 @@ Transformer-based sequence model:
 
 ## Output Structure
 
-Results saved in `models/[model_name]/`:
+Results saved in `../models/[model_name]/`:
 - `model.keras`: Trained model
 - `config.yaml`: Configuration
 - `training_history.npz`: Training metrics
