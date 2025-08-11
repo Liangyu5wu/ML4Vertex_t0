@@ -54,7 +54,7 @@ use_batch_norm: true
 
 # Training parameters
 batch_size: 128
-epochs: 100
+epochs: 30
 learning_rate: 0.0005
 lr_reduction_factor: 0.5
 early_stopping_patience: 20
