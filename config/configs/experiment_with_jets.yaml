@@ -2,7 +2,7 @@
 model_name: "transformer_with_jets"
 
 # Data parameters
-data_dir: "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/"
+data_dir: "../selected_h5_with_jets/"
 num_files: 42
 max_cells: 70
 min_cells: 1
