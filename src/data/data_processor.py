@@ -1,4 +1,4 @@
-"""Data preprocessing and normalization utilities."""
+"""Data preprocessing and normalization utilities with enhanced labeling."""
 
 import os
 import numpy as np
@@ -25,6 +25,76 @@ class DataProcessor:
         
         # Energy bin edges for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
         self.energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+
+    def _get_calibration_info(self) -> str:
+        """Get calibration information string for labeling."""
+        if hasattr(self.config, 'calibration_data_file'):
+            # Extract meaningful name from calibration file
+            calibration_file = self.config.calibration_data_file
+            if 'cell_jet' in calibration_file.lower():
+                return "cell_jet_cal"
+            elif 'track' in calibration_file.lower():
+                return "cell_track_cal"
+            else:
+                # Remove extension and use base name
+                return calibration_file.replace('.txt', '').replace('_calibration', '_cal')
+        return "unknown_cal"
+    
+    def _get_filtering_info(self) -> str:
+        """Get filtering information string for labeling."""
+        filters = []
+        
+        if hasattr(self.config, 'use_cell_jet_matching') and self.config.use_cell_jet_matching:
+            filters.append("jet_matched")
+        
+        if hasattr(self.config, 'use_cell_track_matching') and self.config.use_cell_track_matching:
+            filters.append("track_matched")
+            
+        if hasattr(self.config, 'require_valid_cells') and self.config.require_valid_cells:
+            filters.append("valid_cells")
+        
+        if not filters:
+            return "no_filter"
+        
+        return "+".join(filters)
+    
+    def _get_label_suffix(self) -> str:
+        """Get combined label suffix for file naming."""
+        cal_info = self._get_calibration_info()
+        filter_info = self._get_filtering_info()
+        return f"{filter_info}_{cal_info}"
+    
+    def _get_display_labels(self) -> Tuple[str, str]:
+        """Get display-friendly labels for plots."""
+        # Calibration label
+        if hasattr(self.config, 'calibration_data_file'):
+            calibration_file = self.config.calibration_data_file
+            if 'cell_jet' in calibration_file.lower():
+                cal_label = "Cell-Jet Calibration"
+            elif 'track' in calibration_file.lower():
+                cal_label = "Cell-Track Calibration"
+            else:
+                cal_label = f"Calibration: {calibration_file}"
+        else:
+            cal_label = "Unknown Calibration"
+        
+        # Filtering label
+        filters = []
+        if hasattr(self.config, 'use_cell_jet_matching') and self.config.use_cell_jet_matching:
+            filters.append("Cell-Jet Matching")
+        
+        if hasattr(self.config, 'use_cell_track_matching') and self.config.use_cell_track_matching:
+            filters.append("Cell-Track Matching")
+            
+        if hasattr(self.config, 'require_valid_cells') and self.config.require_valid_cells:
+            filters.append("Valid Cells")
+        
+        if filters:
+            filter_label = " + ".join(filters)
+        else:
+            filter_label = "No Filtering"
+        
+        return cal_label, filter_label
         
     def get_energy_bin_index(self, energy: float) -> int:
         """Get energy bin index for calibration parameter lookup."""
@@ -150,12 +220,15 @@ class DataProcessor:
                     original_data[bin_idx].append(orig_cell[time_idx])
                     calibrated_data[bin_idx].append(cal_cell[time_idx])
         
+        # Get labels for title and annotation
+        cal_label, filter_label = self._get_display_labels()
+        
         # Create plots
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
         axes = axes.flatten()
         
         detector_name = f"{'Barrel' if self.config.validation_detector_type == 1 else 'Endcap'} Layer {self.config.validation_layer}"
-        fig.suptitle(f'Time Calibration Validation - {detector_name}', fontsize=14)
+        fig.suptitle(f'Time Calibration Validation - {detector_name}\n{cal_label} | {filter_label}', fontsize=14)
         
         for i in range(7):
             ax = axes[i]
@@ -192,14 +265,16 @@ class DataProcessor:
         
         plt.tight_layout()
         
-        # Save plot
-        plot_path = os.path.join(self.config.model_dir, "calibration_validation.png")
+        # Save plot with enhanced filename
+        label_suffix = self._get_label_suffix()
+        plot_path = os.path.join(self.config.model_dir, f"calibration_validation_{label_suffix}.png")
         os.makedirs(self.config.model_dir, exist_ok=True)
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.show()
         
         print(f"Calibration validation plot saved to: {plot_path}")
         print(f"Validation region: {detector_name}")
+        print(f"Using: {cal_label} | {filter_label}")
     
     def gaussian_func(self, x, a, mu, sigma):
         """Gaussian function for fitting."""
@@ -294,8 +369,9 @@ class DataProcessor:
         # Calculate traditional t0
         traditional_t0, t0_errors = self.calculate_traditional_t0(cell_sequences, vertex_times)
         
-        # Create baseline_check directory
-        baseline_dir = os.path.join(self.config.model_dir, "baseline_check")
+        # Create baseline_check directory with enhanced naming
+        label_suffix = self._get_label_suffix()
+        baseline_dir = os.path.join(self.config.model_dir, f"baseline_check_{label_suffix}")
         os.makedirs(baseline_dir, exist_ok=True)
         
         # Plot 1: Traditional t0 distribution
@@ -307,7 +383,9 @@ class DataProcessor:
         # Plot 3: Traditional t0 vs true t0 2D histogram
         self._plot_t0_vs_true_2d(traditional_t0, vertex_times, baseline_dir)
         
+        cal_label, filter_label = self._get_display_labels()
         print(f"Baseline check plots saved to: {baseline_dir}")
+        print(f"Using: {cal_label} | {filter_label}")
     
     def _plot_traditional_t0_distribution(self, traditional_t0: np.ndarray, save_dir: str):
         """Plot traditional t0 distribution with Gaussian fit."""
@@ -351,9 +429,12 @@ class DataProcessor:
         else:
             fit_mean, fit_std = mean_all, std_all
         
+        # Get labels for title and annotation
+        cal_label, filter_label = self._get_display_labels()
+        
         plt.xlabel('Traditional t0 [ns]')
         plt.ylabel('Count')
-        plt.title('Traditional t0 Distribution')
+        plt.title(f'Traditional t0 Distribution\n{cal_label} | {filter_label}')
         plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
                    f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
         plt.grid(True, alpha=0.3)
@@ -402,9 +483,12 @@ class DataProcessor:
         else:
             fit_mean, fit_std = mean_all, std_all
         
+        # Get labels for title
+        cal_label, filter_label = self._get_display_labels()
+        
         plt.xlabel('Traditional t0 - True t0 [ns]')
         plt.ylabel('Count')
-        plt.title('Traditional t0 Error Distribution')
+        plt.title(f'Traditional t0 Error Distribution\n{cal_label} | {filter_label}')
         plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
                    f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
         plt.grid(True, alpha=0.3)
@@ -447,9 +531,12 @@ class DataProcessor:
         rmse = np.sqrt(np.mean((traditional_t0 - vertex_times) ** 2))
         mae = np.mean(np.abs(traditional_t0 - vertex_times))
         
+        # Get labels for title
+        cal_label, filter_label = self._get_display_labels()
+        
         plt.xlabel('True Vertex Time [ns]')
         plt.ylabel('Traditional t0 [ns]')
-        plt.title('Traditional t0 vs True t0 (2D Histogram)')
+        plt.title(f'Traditional t0 vs True t0 (2D Histogram)\n{cal_label} | {filter_label}')
         plt.legend()
         plt.grid(True, alpha=0.3)
         
