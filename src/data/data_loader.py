@@ -49,6 +49,15 @@ class DataLoader:
             track_matching_mask = event_cells['matched_track_HS'] == 1
             mask = mask & track_matching_mask
         
+        # NEW: Apply cell-jet matching filter
+        if self.config.use_cell_jet_matching:
+            # Check if jet matching field exists in data
+            if 'cell_jet_matched' in event_cells.dtype.names:
+                jet_matching_mask = event_cells['cell_jet_matched'] == True
+                mask = mask & jet_matching_mask
+            else:
+                print("Warning: cell_jet_matched field not found in data. Jet matching filter skipped.")
+        
         # Apply layer filtering - only keep cells with layers 1, 2, 3
         # This ensures consistency with baseline t0 calculation requirements
         if 'Cell_layer' in event_cells.dtype.names:
@@ -82,6 +91,7 @@ class DataLoader:
             'total_cells': len(event_cells),
             'valid_cells': 0,
             'track_matched_cells': 0,
+            'jet_matched_cells': 0,  # NEW
             'final_filtered_cells': 0
         }
         
@@ -95,6 +105,10 @@ class DataLoader:
         # Count track-matched cells
         if 'matched_track_HS' in event_cells.dtype.names:
             stats['track_matched_cells'] = np.sum(event_cells['matched_track_HS'] == 1)
+        
+        # NEW: Count jet-matched cells
+        if 'cell_jet_matched' in event_cells.dtype.names:
+            stats['jet_matched_cells'] = np.sum(event_cells['cell_jet_matched'] == True)
         
         # Count cells after all filtering
         filtered_cells = self.apply_cell_filtering(event_cells)
@@ -134,15 +148,18 @@ class DataLoader:
             'total_cells_after_filtering': 0,
             'cells_removed_by_valid_filter': 0,
             'cells_removed_by_track_filter': 0,
+            'cells_removed_by_jet_filter': 0,  # NEW
             'cells_removed_by_additional_filters': 0
         }
         
         print(f"Cell filtering configuration:")
         print(f"  Require valid cells: {self.config.require_valid_cells}")
         print(f"  Use cell-track matching: {self.config.use_cell_track_matching}")
+        print(f"  Use cell-jet matching: {self.config.use_cell_jet_matching}")  # NEW
         print(f"  Additional filters: {self.config.additional_cell_filters}")
         print(f"  Filtering description: {self.config.get_cell_filtering_description()}")
         print(f"Using spatial features: {self.config.use_spatial_features}")
+        print(f"Using jet features: {self.config.use_jet_features}")  # NEW
         print(f"Cell features used: {self.config.cell_features}")
         print(f"Min cells required: {self.config.min_cells}, Max cells considered: {self.config.max_cells}")
         
@@ -263,7 +280,12 @@ class DataLoader:
                 if feature in sorted_cells.dtype.names:
                     cell_features_values.append(sorted_cells[feature][cell_idx])
                 else:
-                    print(f"Warning: Feature '{feature}' not found in cell data. Using 0.0 as default.")
+                    # NEW: Better error handling for missing features
+                    if self.config.use_jet_features and feature in self.config.jet_features:
+                        print(f"Warning: Jet feature '{feature}' not found in cell data. Using 0.0 as default.")
+                        print(f"Available fields: {list(sorted_cells.dtype.names)}")
+                    else:
+                        print(f"Warning: Feature '{feature}' not found in cell data. Using 0.0 as default.")
                     cell_features_values.append(0.0)
             sequence.append(cell_features_values)
         
@@ -300,6 +322,12 @@ class DataLoader:
         
         print(f"\nFiltering Configuration:")
         print(f"  {self.config.get_cell_filtering_description()}")
+        
+        # NEW: Add jet feature information
+        if self.config.use_jet_features:
+            print(f"\nJet Features:")
+            print(f"  Enabled jet features: {self.config.jet_features}")
+        
         print("="*60)
     
     def _print_sequence_statistics(self, sequence_lengths: np.ndarray):
@@ -321,3 +349,99 @@ class DataLoader:
         for length, count in sorted(zip(unique_lengths, counts), key=lambda x: x[1], reverse=True)[:5]:
             percentage = (count / len(sequence_lengths)) * 100
             print(f"    Length {length}: {count} events ({percentage:.1f}%)")
+    
+    def check_jet_features_availability(self, file_path: str) -> dict:
+        """
+        Check availability of jet features in a specific file.
+        
+        Args:
+            file_path: Path to HDF5 file to check
+            
+        Returns:
+            Dictionary with jet feature availability information
+        """
+        availability = {
+            'file_path': file_path,
+            'file_exists': False,
+            'has_cells_data': False,
+            'available_jet_fields': [],
+            'missing_jet_fields': [],
+            'jet_features_ready': False
+        }
+        
+        if not os.path.exists(file_path):
+            return availability
+        
+        availability['file_exists'] = True
+        
+        try:
+            with h5py.File(file_path, 'r') as f:
+                if 'cells' in f:
+                    availability['has_cells_data'] = True
+                    cells_data = f['cells']
+                    
+                    # Check first event's cell structure
+                    if len(cells_data) > 0:
+                        first_event_cells = cells_data[0]
+                        if len(first_event_cells) > 0:
+                            available_fields = list(first_event_cells.dtype.names)
+                            
+                            # Check for jet-related fields
+                            expected_jet_fields = [
+                                'cell_jet_matched', 'matched_jet_pt', 'matched_jet_eta',
+                                'matched_jet_phi', 'matched_jet_width', 'matched_jet_deltaR'
+                            ]
+                            
+                            for field in expected_jet_fields:
+                                if field in available_fields:
+                                    availability['available_jet_fields'].append(field)
+                                else:
+                                    availability['missing_jet_fields'].append(field)
+                            
+                            # Check if all required jet features are available
+                            if self.config.use_jet_features:
+                                required_jet_features = self.config.jet_features + ['cell_jet_matched']
+                                availability['jet_features_ready'] = all(
+                                    field in available_fields for field in required_jet_features
+                                )
+                            else:
+                                availability['jet_features_ready'] = True
+                                
+        except Exception as e:
+            print(f"Error checking jet features in {file_path}: {e}")
+        
+        return availability
+    
+    def validate_jet_features_in_dataset(self) -> bool:
+        """
+        Validate that jet features are available in the dataset.
+        
+        Returns:
+            True if jet features are available or not needed, False otherwise
+        """
+        if not self.config.use_jet_features and not self.config.use_cell_jet_matching:
+            return True
+        
+        print("Validating jet features availability in dataset...")
+        
+        file_paths = self.get_file_paths()[:3]  # Check first 3 files
+        
+        all_ready = True
+        for file_path in file_paths:
+            if os.path.exists(file_path):
+                availability = self.check_jet_features_availability(file_path)
+                
+                if not availability['jet_features_ready']:
+                    print(f"Warning: Jet features not ready in {file_path}")
+                    print(f"  Missing fields: {availability['missing_jet_fields']}")
+                    all_ready = False
+                else:
+                    print(f"✓ Jet features available in {os.path.basename(file_path)}")
+        
+        if not all_ready:
+            print("Error: Some files are missing required jet features.")
+            print("Please ensure your H5 files contain the enhanced cell-jet matching data.")
+            return False
+        
+        print("✓ Jet features validation passed")
+        return True
