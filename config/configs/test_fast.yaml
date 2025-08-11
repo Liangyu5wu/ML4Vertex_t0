@@ -1,13 +1,23 @@
 # Fast testing configuration for development and debugging
 model_name: "transformer_fast_test"
 
-# Data parameters - minimal for fast testing
+# Data parameters
 data_dir: "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_old_files/"
-num_files: 5  # Reduced from 3 to 5 for better testing
-max_cells: 50  # Reduced from 10 to 20 for realistic testing
+num_files: 5  # Reduced for fast testing
+max_cells: 50  # Reduced for faster processing
 min_cells: 1
 cell_selection_feature: "Cell_e"
+
+# Feature selection parameters
 use_spatial_features: true
+use_track_features: true        # Include track matching features
+use_jet_features: false         # Exclude jet matching features (old dataset format)
+
+# Cell filtering parameters
+require_valid_cells: true
+use_cell_track_matching: true   # Use track matching filter
+use_cell_jet_matching: false    # Disable jet matching filter (old dataset format)
+additional_cell_filters: {}
 
 # Detector calibration parameters - enabled for testing
 use_detector_params: true
@@ -18,11 +28,6 @@ calibration_validation: true
 validation_detector_type: 1  # 1=barrel, 0=endcap  
 validation_layer: 2  # 1, 2, or 3
 gaussian_fit_range: 120  # Range for Gaussian fitting in baseline checks
-
-# Cell filtering parameters
-use_cell_track_matching: true
-require_valid_cells: true
-additional_cell_filters: {}
 
 # Data split parameters
 test_size: 0.2  # Smaller test set for faster processing
@@ -65,6 +70,13 @@ all_cell_features:
   - "Cell_time_TOF_corrected"
   - "Cell_e"
   - "Cell_significance"
+track_features:
   - "matched_track_pt"
   - "matched_track_deltaR"
+jet_features:
+  - "matched_jet_pt"
+  - "matched_jet_eta"
+  - "matched_jet_phi"
+  - "matched_jet_width"
+  - "matched_jet_deltaR"
 skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
