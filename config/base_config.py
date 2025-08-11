@@ -158,7 +158,7 @@ class BaseConfig:
     @property
     def model_path(self) -> str:
         """Get model file path."""
-        return os.path.join(self.model_dir, "model.keras")
+        return os.path.join(self.model_dir, "model.h5")  # Changed from model.keras to model.h5
     
     @property
     def plots_dir(self) -> str:
