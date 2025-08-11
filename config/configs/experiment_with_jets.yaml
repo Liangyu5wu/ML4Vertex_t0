@@ -10,18 +10,18 @@ cell_selection_feature: "Cell_e"
 
 # Feature selection parameters
 use_spatial_features: true
-use_track_features: true        # Include track matching features
+use_track_features: false        # Include track matching features
 use_jet_features: true          # Include jet matching features
 
 # Cell filtering parameters
 require_valid_cells: true
-use_cell_track_matching: true   # Use track matching filter
-use_cell_jet_matching: true     # Use jet matching filter (both filters applied)
+use_cell_track_matching: false   # Use track matching filter
+use_cell_jet_matching: true      # Use jet matching filter (both filters applied)
 additional_cell_filters: {}
 
 # Detector calibration parameters
 use_detector_params: true
-calibration_data_file: "HStrackmatching_calibration.txt"
+calibration_data_file: "cell_jet_calibration.txt"
 
 # Calibration validation parameters
 calibration_validation: true
@@ -49,7 +49,7 @@ use_batch_norm: true
 
 # Training parameters
 batch_size: 128
-epochs: 100
+epochs: 30
 learning_rate: 0.0005
 lr_reduction_factor: 0.5
 early_stopping_patience: 20
