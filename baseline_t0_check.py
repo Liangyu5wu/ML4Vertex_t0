@@ -20,7 +20,7 @@ class SimpleConfig:
     
     def __init__(self, calibration_file: str = "HStrackmatching_calibration.txt"):
         # Data parameters
-        self.data_dir = "../selected_h5/"
+        self.data_dir = "/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/"
         self.num_files = 5
         self.min_cells = 1
         
@@ -740,7 +740,7 @@ def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Enhanced baseline t0 reconstruction check with parallel track/jet analysis')
-    parser.add_argument('--data-dir', type=str, default='../selected_h5/',
+    parser.add_argument('--data-dir', type=str, default='/fs/ddn/sdf/group/atlas/d/liangyu/jetML/datasets/h5/selected_h5_with_jets/',
                        help='Directory containing HDF5 data files')
     parser.add_argument('--num-files', type=int, default=5,
                        help='Number of files to process')
