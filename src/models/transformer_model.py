@@ -75,8 +75,14 @@ class TransformerModel:
             # Combine cell and vertex representations
             combined = layers.Concatenate()([cell_representation, vertex_dense])
         else:
-            # Skip vertex processing, use only cell representation
-            combined = cell_representation
+            # Create dummy connection: process vertex but multiply by 0
+            vertex_dense = layers.Dense(
+                self.config.vertex_dense_units, 
+                activation='relu'
+            )(vertex_inputs)
+            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_dense)
+            # Add zeros (no effect on result)
+            combined = layers.Add()([cell_representation, vertex_zeros])
         
         # Final prediction layers
         x = combined
