@@ -80,7 +80,9 @@ class TransformerModel:
                 self.config.vertex_dense_units, 
                 activation='relu'
             )(vertex_inputs)
-            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_dense)
+            # Project to same dimension as cell_representation
+            vertex_projected = layers.Dense(self.config.d_model)(vertex_dense)
+            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_projected)
             # Add zeros (no effect on result)
             combined = layers.Add()([cell_representation, vertex_zeros])
         
