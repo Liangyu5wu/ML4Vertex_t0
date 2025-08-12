@@ -308,14 +308,17 @@ class BaseConfig:
         
         for arg_name, config_attr in arg_mapping.items():
             if hasattr(args, arg_name) and getattr(args, arg_name) is not None:
-                # Special handling for use_spatial flag
+                arg_value = getattr(args, arg_name)
+                
+                # Special handling for use_spatial parameter
                 if arg_name == 'use_spatial':
-                    # Only set to True if the flag is explicitly provided
-                    # If not provided, keep the YAML value
-                    if getattr(args, arg_name):
+                    # Convert string to boolean
+                    if arg_value == 'true':
                         setattr(self, config_attr, True)
+                    elif arg_value == 'false':
+                        setattr(self, config_attr, False)
                 else:
-                    setattr(self, config_attr, getattr(args, arg_name))
+                    setattr(self, config_attr, arg_value)
     
     def print_config(self):
         """Print configuration parameters in a formatted way."""
