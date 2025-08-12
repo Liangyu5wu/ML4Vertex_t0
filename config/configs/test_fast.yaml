@@ -3,7 +3,7 @@ model_name: "transformer_fast_test"
 
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
-num_files: 5  # Reduced for fast testing
+num_files: 3  # Reduced for fast testing
 max_cells: 50  # Reduced for faster processing
 min_cells: 1
 cell_selection_feature: "Cell_e"
