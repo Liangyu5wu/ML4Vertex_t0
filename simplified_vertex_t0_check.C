@@ -401,9 +401,9 @@ int process_file(const std::string &filename, float energyThreshold = 1.0, float
 }
 
 void processmu200_reco_simplified(float energyThreshold = 1.0, float significancecut = 4.0, int fileIndex = 21, 
-                                 bool use_jet_matching = false, float deltaRThreshold = 0.3, 
+                                 bool use_jet_matching = true, float deltaRThreshold = 0.3, 
                                  float jetPtMin = 30.0, float jetPtMax = 100000.0) {
-    const std::string path = "../";
+    const std::string path = "..";
     std::ostringstream filename;
     filename << path << "/user.scheong.43348828.Output._" 
              << std::setw(6) << std::setfill('0') << fileIndex 
