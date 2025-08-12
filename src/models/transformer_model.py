@@ -140,18 +140,40 @@ class TransformerModel:
             'root_mean_squared_error': root_mean_squared_error,
             'PositionalEncoding': PositionalEncoding,
             'MultiHeadSelfAttention': MultiHeadSelfAttention,
-            'TransformerBlock': TransformerBlock
+            'TransformerBlock': TransformerBlock,
+            # Add standard metrics that might be saved as custom objects
+            'mse': tf.keras.losses.MeanSquaredError(),
+            'mae': tf.keras.metrics.MeanAbsoluteError(),
+            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric')
         }
         
         # Handle both .h5 and .keras formats
         try:
-            return models.load_model(filepath, custom_objects=custom_objects)
+            model = models.load_model(filepath, custom_objects=custom_objects)
+            print(f"Model loaded successfully with compilation intact.")
+            return model
         except Exception as e:
             print(f"Error loading model from {filepath}: {e}")
             # Try alternative loading method for .h5 files
             if filepath.endswith('.h5'):
                 print("Attempting alternative loading method for .h5 file...")
-                return tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
+                try:
+                    # Load without compilation first
+                    model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
+                    print("Model architecture loaded successfully. Re-compiling...")
+                    
+                    # Re-compile the model with the same configuration as training
+                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # Default learning rate
+                    model.compile(
+                        optimizer=optimizer,
+                        loss='mse',
+                        metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
+                    )
+                    print("Model re-compiled successfully.")
+                    return model
+                except Exception as e2:
+                    print(f"Alternative loading method also failed: {e2}")
+                    raise e2
             else:
                 raise e
     
