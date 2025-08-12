@@ -42,8 +42,8 @@ def parse_args():
                        help='Maximum number of cells per event')
     parser.add_argument('--min-cells', type=int, default=None,
                        help='Minimum number of cells per event')
-    parser.add_argument('--use-spatial', action='store_true', default=None,
-                   help='Use spatial features')
+    parser.add_argument('--use-spatial', type=str, choices=['true', 'false'], default=None,
+                       help='Use spatial features (true/false)')
     
     # Training options
     parser.add_argument('--verbose', type=int, default=1,
