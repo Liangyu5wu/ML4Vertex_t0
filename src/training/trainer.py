@@ -38,14 +38,30 @@ class Trainer:
                 patience=self.config.early_stopping_patience,
                 restore_best_weights=True,
                 verbose=1
-            ),
-            callbacks.ModelCheckpoint(
+            )
+        ]
+        
+        # ModelCheckpoint with version compatibility handling
+        try:
+            checkpoint = callbacks.ModelCheckpoint(
                 filepath=self.config.model_path,
                 monitor='val_loss',
                 save_best_only=True,
                 verbose=1,
-                save_format='h5'  # Explicitly use h5 format for better compatibility
-            ),
+                save_format='h5'
+            )
+        except TypeError:
+            # Fallback for versions that don't support save_format
+            checkpoint = callbacks.ModelCheckpoint(
+                filepath=self.config.model_path,
+                monitor='val_loss',
+                save_best_only=True,
+                verbose=1
+            )
+        
+        callbacks_list.append(checkpoint)
+        
+        callbacks_list.append(
             callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
                 factor=getattr(self.config, 'lr_reduction_factor', 0.5),
@@ -53,7 +69,7 @@ class Trainer:
                 min_lr=self.config.min_lr,
                 verbose=1
             )
-        ]
+        )
         
         return callbacks_list
     
