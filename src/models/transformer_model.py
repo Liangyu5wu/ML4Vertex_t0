@@ -62,15 +62,21 @@ class TransformerModel:
         # Global average pooling (automatically handles variable lengths)
         cell_representation = layers.GlobalAveragePooling1D()(x)
         
-        # Vertex features input
+        # Vertex features input (always present for interface consistency)
         vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
-        vertex_dense = layers.Dense(
-            self.config.vertex_dense_units, 
-            activation='relu'
-        )(vertex_inputs)
         
-        # Combine cell and vertex representations
-        combined = layers.Concatenate()([cell_representation, vertex_dense])
+        # Conditionally process vertex features
+        if self.config.use_spatial_features:
+            # Use vertex features normally
+            vertex_dense = layers.Dense(
+                self.config.vertex_dense_units, 
+                activation='relu'
+            )(vertex_inputs)
+            # Combine cell and vertex representations
+            combined = layers.Concatenate()([cell_representation, vertex_dense])
+        else:
+            # Skip vertex processing, use only cell representation
+            combined = cell_representation
         
         # Final prediction layers
         x = combined
@@ -88,7 +94,7 @@ class TransformerModel:
         # Output layer
         output = layers.Dense(1, name='vertex_time')(x)
         
-        # Create model
+        # Create model (always with both inputs for interface consistency)
         model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
         
         # Compile model
