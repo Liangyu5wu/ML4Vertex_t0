@@ -130,10 +130,10 @@ class ParameterSweep:
         }
     
     def print_sweep_info(self, parameter_grid, grid_type):
-        """Print parameter sweep information."""
-        print("\n" + "="*60)
+        """Print parameter sweep information with enhanced details for expanded grids."""
+        print("\n" + "="*70)
         print("PARAMETER SWEEP: {}".format(grid_type.upper()))
-        print("="*60)
+        print("="*70)
         print("Base config: {}".format(os.path.basename(self.base_config_path)))
         print("Output dir: {}".format(self.output_dir))
         
@@ -143,9 +143,42 @@ class ParameterSweep:
             print("  {}: {} ({} values)".format(param, values, len(values)))
             total_combinations *= len(values)
         
-        print("\nTotal combinations: {}".format(total_combinations))
-        estimated_hours = total_combinations * 120 / 3600  # 120s per experiment
-        print("Estimated time: ~{:.1f} hours".format(estimated_hours))
+        print("\nCombination Analysis:")
+        print("  Total combinations: {:,}".format(total_combinations))
+        
+        # Estimate valid combinations (rough approximation)
+        if grid_type == 'full':
+            # For the expanded full grid, expect ~60-70% valid combinations due to constraints
+            estimated_valid = int(total_combinations * 0.65)
+            print("  Estimated valid combinations: ~{:,} (after constraints)".format(estimated_valid))
+            print("  Common invalid cases:")
+            print("    - d_model not divisible by num_heads")
+            print("    - Very large model + very small batch size")
+            print("    - Extreme parameter combinations")
+        else:
+            estimated_valid = int(total_combinations * 0.85)
+            print("  Estimated valid combinations: ~{:,}".format(estimated_valid))
+        
+        # Time estimation with different scenarios
+        print("\nTime Estimation:")
+        avg_time_per_exp = 120  # seconds
+        fast_time_per_exp = 60   # for quick experiments
+        slow_time_per_exp = 300  # for large models
+        
+        if grid_type == 'quick':
+            estimated_hours = estimated_valid * fast_time_per_exp / 3600
+        elif grid_type == 'full':
+            estimated_hours = estimated_valid * slow_time_per_exp / 3600
+        else:
+            estimated_hours = estimated_valid * avg_time_per_exp / 3600
+        
+        print("  Estimated time: ~{:.1f} hours ({:.1f} days)".format(
+            estimated_hours, estimated_hours / 24))
+        
+        if estimated_hours > 48:
+            print("  ⚠️  WARNING: This is a very long sweep!")
+            print("  💡 Consider using --max-experiments to limit the scope")
+            print("  💡 Or use a smaller grid like 'quick' or 'architecture'")
         
         # Print sweep type information
         if 'use_attention_mask' in parameter_grid:
@@ -160,36 +193,78 @@ class ParameterSweep:
                 print("\n*** TRADITIONAL MODEL SWEEP ***")
                 print("This sweep uses traditional models only")
         else:
+            base_mask_setting = getattr(self.base_config, 'use_attention_mask', 'undefined')
             print("\n*** USING BASE CONFIG MASK SETTING ***")
-            print("Mask setting: {}".format(getattr(self.base_config, 'use_attention_mask', 'undefined')))
+            print("Mask setting: {}".format(base_mask_setting))
         
-        print("="*60)
+        # Special warnings for expanded grids
+        if grid_type == 'full':
+            print("\n🎯 EXPANDED FULL GRID FEATURES:")
+            print("  ✓ Extended d_model range: 16-512")
+            print("  ✓ Extended num_heads range: 1-32") 
+            print("  ✓ Extended learning_rate range: 1e-6 to 1e-3")
+            print("  ✓ New max_cells parameter: 40-100")
+            print("  ✓ Enhanced validation constraints")
+        
+        print("="*70)
     
     def validate_parameter_combination(self, params):
-        """Validate parameter combination including mask-specific rules."""
-        # d_model divisible by num_heads
-        if 'd_model' in params and 'num_heads' in params:
-            if params['d_model'] % params['num_heads'] != 0:
-                return False
-        
-        # Learning rate range
-        if 'learning_rate' in params:
-            if params['learning_rate'] > 1e-3 or params['learning_rate'] < 1e-6:
-                return False
-        
-        # Dropout rate range
-        if 'dropout_rate' in params:
-            if params['dropout_rate'] < 0 or params['dropout_rate'] > 0.5:
-                return False
-        
-        # Mask-specific validations
-        if 'use_attention_mask' in params:
-            # If using jet features, prefer mask-enabled models
-            if 'use_jet_features' in params and params['use_jet_features'] and not params['use_attention_mask']:
-                # Allow but warn - this combination is valid but not optimal
-                pass
-                
-        return True
+    """Validate parameter combination including mask-specific rules and expanded ranges."""
+    # d_model divisible by num_heads
+    if 'd_model' in params and 'num_heads' in params:
+        if params['d_model'] % params['num_heads'] != 0:
+            return False
+    
+    # Learning rate range validation
+    if 'learning_rate' in params:
+        if params['learning_rate'] > 2e-3 or params['learning_rate'] < 1e-7:
+            return False
+    
+    # Dropout rate range validation
+    if 'dropout_rate' in params:
+        if params['dropout_rate'] < 0 or params['dropout_rate'] > 0.5:
+            return False
+    
+    # Model size constraints - avoid extremely large models
+    if 'd_model' in params and 'num_transformer_blocks' in params:
+        # Limit very large configurations to prevent memory issues
+        if params['d_model'] >= 512 and params['num_transformer_blocks'] >= 5:
+            return False
+    
+    # Batch size and model size compatibility
+    if 'batch_size' in params and 'd_model' in params:
+        # Very small batch sizes with very large models may be unstable
+        if params['batch_size'] <= 8 and params['d_model'] >= 256:
+            return False
+    
+    # max_cells validation
+    if 'max_cells' in params:
+        if params['max_cells'] < 10 or params['max_cells'] > 200:
+            return False
+    
+    # num_heads edge case validation
+    if 'num_heads' in params:
+        if params['num_heads'] < 1 or params['num_heads'] > 64:
+            return False
+    
+    # Ensure num_transformer_blocks is reasonable
+    if 'num_transformer_blocks' in params:
+        if params['num_transformer_blocks'] < 1 or params['num_transformer_blocks'] > 8:
+            return False
+    
+    # vertex_dense_units validation
+    if 'vertex_dense_units' in params:
+        if params['vertex_dense_units'] < 1 or params['vertex_dense_units'] > 256:
+            return False
+    
+    # Mask-specific validations
+    if 'use_attention_mask' in params:
+        # If using jet features, prefer mask-enabled models (but allow both)
+        if 'use_jet_features' in params and params['use_jet_features'] and not params['use_attention_mask']:
+            # Allow but this combination may not be optimal
+            pass
+    
+    return True
     
     def generate_experiment_configs(self, parameter_grid):
         """Generate all valid parameter combinations."""
