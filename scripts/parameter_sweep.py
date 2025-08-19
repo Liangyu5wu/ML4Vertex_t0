@@ -114,10 +114,10 @@ class ParameterSweep:
                 'use_attention_mask': [True],  # Only mask models
                 'd_model': [32, 64, 128],
                 'num_heads': [4, 8, 16],
-                'num_transformer_blocks': [2, 3, 4],
+                'num_transformer_blocks': [2, 3],
                 'learning_rate': [1e-5, 1e-4, 1e-3],
                 'batch_size': [64, 128, 256],
-                'max_cells': [20, 40, 60],
+                'max_cells': [20, 60],
             },
             # NEW: Features comparison
             'features_comparison': {
