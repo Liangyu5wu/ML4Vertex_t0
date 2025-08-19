@@ -58,7 +58,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_config_from_yaml(yaml_path: str):
+def create_config_from_yaml(yaml_path):
     """Create configuration from YAML file."""
     try:
         # Try to create TransformerConfig from YAML
@@ -70,7 +70,7 @@ def create_config_from_yaml(yaml_path: str):
         return TransformerConfig()
 
 
-def create_config_default(config_type: str):
+def create_config_default(config_type):
     """Create default configuration based on type."""
     if config_type == 'transformer':
         return TransformerConfig()
