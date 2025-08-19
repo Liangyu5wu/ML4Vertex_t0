@@ -29,6 +29,9 @@ validation_detector_type: 1  # 1=barrel, 0=endcap
 validation_layer: 1  # 1, 2, or 3
 gaussian_fit_range: 120  # Range for Gaussian fitting in baseline checks
 
+# Model architecture parameters
+use_attention_mask: true
+
 # Data split parameters
 test_size: 0.2
 val_split: 0.222222
