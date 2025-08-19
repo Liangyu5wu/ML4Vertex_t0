@@ -1,4 +1,4 @@
-"""Transformer model implementation for vertex time prediction."""
+"""Transformer model implementation for vertex time prediction with mask support."""
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
@@ -14,8 +14,55 @@ def root_mean_squared_error(y_true, y_pred):
     return K.sqrt(K.mean(K.square(y_pred - y_true)))
 
 
+class MaskedGlobalAveragePooling1D(layers.Layer):
+    """Global average pooling with attention mask support."""
+    
+    def __init__(self, **kwargs):
+        """Initialize masked global average pooling layer."""
+        super(MaskedGlobalAveragePooling1D, self).__init__(**kwargs)
+    
+    def call(self, inputs, mask=None):
+        """
+        Apply masked global average pooling.
+        
+        Args:
+            inputs: Input tensor of shape (batch_size, seq_len, features)
+            mask: Attention mask of shape (batch_size, seq_len)
+                 True for valid positions, False for padding positions
+        
+        Returns:
+            Pooled tensor of shape (batch_size, features)
+        """
+        if mask is None:
+            # Fallback to standard global average pooling
+            return tf.reduce_mean(inputs, axis=1)
+        
+        # Convert mask to float and expand dimensions for broadcasting
+        mask = tf.cast(mask, tf.float32)  # (batch_size, seq_len)
+        mask = tf.expand_dims(mask, axis=-1)  # (batch_size, seq_len, 1)
+        
+        # Apply mask to inputs
+        masked_inputs = inputs * mask  # (batch_size, seq_len, features)
+        
+        # Calculate sum and count of valid positions
+        masked_sum = tf.reduce_sum(masked_inputs, axis=1)  # (batch_size, features)
+        mask_count = tf.reduce_sum(mask, axis=1)  # (batch_size, 1)
+        
+        # Avoid division by zero
+        mask_count = tf.maximum(mask_count, 1.0)
+        
+        # Calculate masked average
+        masked_average = masked_sum / mask_count  # (batch_size, features)
+        
+        return masked_average
+    
+    def get_config(self):
+        """Get layer configuration for serialization."""
+        return super().get_config()
+
+
 class TransformerModel:
-    """Transformer model for vertex time prediction."""
+    """Transformer model for vertex time prediction with mask support."""
     
     def __init__(self, config: TransformerConfig):
         """
@@ -29,11 +76,38 @@ class TransformerModel:
         
     def build_model(self, feature_dim: int, vertex_dim: int) -> tf.keras.Model:
         """
-        Build the transformer model architecture.
+        Build the transformer model architecture (backward compatibility).
         
         Args:
             feature_dim: Dimension of cell features (original cell features only)
             vertex_dim: Dimension of vertex features
+            
+        Returns:
+            Compiled Keras model
+        """
+        return self._build_model_internal(feature_dim, vertex_dim, use_mask=False)
+    
+    def build_model_with_mask(self, feature_dim: int, vertex_dim: int) -> tf.keras.Model:
+        """
+        Build the transformer model architecture with attention mask support.
+        
+        Args:
+            feature_dim: Dimension of cell features (original cell features only)
+            vertex_dim: Dimension of vertex features
+            
+        Returns:
+            Compiled Keras model with mask support
+        """
+        return self._build_model_internal(feature_dim, vertex_dim, use_mask=True)
+    
+    def _build_model_internal(self, feature_dim: int, vertex_dim: int, use_mask: bool = False) -> tf.keras.Model:
+        """
+        Internal method to build the transformer model architecture.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features
+            use_mask: Whether to use attention mask support
             
         Returns:
             Compiled Keras model
@@ -43,6 +117,17 @@ class TransformerModel:
         
         # Cell sequence input (variable length, will be padded during batching)
         cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_sequence')
+        
+        # Vertex features input (always present for interface consistency)
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
+        
+        # Attention mask input (only for masked version)
+        if use_mask:
+            mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
+            current_mask = mask_inputs
+        else:
+            mask_inputs = None
+            current_mask = None
         
         # Project cell features to d_model dimensions
         x = layers.Dense(self.config.d_model)(cell_inputs)
@@ -57,13 +142,13 @@ class TransformerModel:
                 self.config.num_heads, 
                 self.config.dff, 
                 rate=self.config.dropout_rate
-            )(x)
+            )(x, mask=current_mask)
         
-        # Global average pooling (automatically handles variable lengths)
-        cell_representation = layers.GlobalAveragePooling1D()(x)
-        
-        # Vertex features input (always present for interface consistency)
-        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
+        # Global average pooling (with or without mask)
+        if use_mask:
+            cell_representation = MaskedGlobalAveragePooling1D()(x, mask=current_mask)
+        else:
+            cell_representation = layers.GlobalAveragePooling1D()(x)
         
         # Conditionally process vertex features
         if self.config.use_spatial_features:
@@ -102,8 +187,11 @@ class TransformerModel:
         # Output layer
         output = layers.Dense(1, name='vertex_time')(x)
         
-        # Create model (always with both inputs for interface consistency)
-        model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
+        # Create model (inputs depend on whether mask is used)
+        if use_mask:
+            model = models.Model(inputs=[cell_inputs, vertex_inputs, mask_inputs], outputs=output)
+        else:
+            model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
         
         # Compile model
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
@@ -155,6 +243,7 @@ class TransformerModel:
             'PositionalEncoding': PositionalEncoding,
             'MultiHeadSelfAttention': MultiHeadSelfAttention,
             'TransformerBlock': TransformerBlock,
+            'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D,  # Add new layer
             # Add standard metrics that might be saved as custom objects
             'mse': tf.keras.losses.MeanSquaredError(),
             'mae': tf.keras.metrics.MeanAbsoluteError(),
