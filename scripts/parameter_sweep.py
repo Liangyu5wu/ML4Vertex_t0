@@ -112,12 +112,12 @@ class ParameterSweep:
             # NEW: Mask optimization - only for mask-enabled models
             'mask_optimization': {
                 'use_attention_mask': [True],  # Only mask models
-                'd_model': [32, 64, 128],
-                'num_heads': [4, 8, 16],
+                'd_model': [32, 64],
+                'num_heads': [4, 8],
                 'num_transformer_blocks': [2, 3],
                 'learning_rate': [1e-5, 1e-4, 1e-3],
-                'batch_size': [64, 128, 256],
-                'max_cells': [20, 60],
+                'batch_size': [128],
+                'max_cells': [40],
             },
             # NEW: Features comparison
             'features_comparison': {
