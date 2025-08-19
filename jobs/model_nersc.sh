@@ -74,6 +74,8 @@ echo "Time started: $(date)"
 
 python scripts/train.py --config-file config/configs/experiment_nersc.yaml
 
+python scripts/evaluate.py --model-dir /pscratch/sd/l/liangyu/vertextiming/models/transformer_with_jets
+
 echo "=========================================="
 echo "Job completed!"
 echo "End time: $(date)"
