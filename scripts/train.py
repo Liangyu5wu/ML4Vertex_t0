@@ -1,4 +1,4 @@
-"""Main training script for vertex time prediction models with YAML config support."""
+"""Main training script for vertex time prediction models with YAML config support and mask support."""
 
 # python scripts/train.py --config-file config/configs/experiment1.yaml
 
@@ -44,6 +44,8 @@ def parse_args():
                        help='Minimum number of cells per event')
     parser.add_argument('--use-spatial', type=str, choices=['true', 'false'], default=None,
                        help='Use spatial features (true/false)')
+    parser.add_argument('--use-attention-mask', type=str, choices=['true', 'false'], default=None,
+                       help='Use attention mask (true/false)')
     
     # Training options
     parser.add_argument('--verbose', type=int, default=1,
@@ -86,6 +88,7 @@ def create_config(args):
         print(f"Loading configuration from: {args.config_file}")
         config = create_config_from_yaml(args.config_file)
         print(f"DEBUG: After YAML load, use_spatial_features = {config.use_spatial_features}")
+        print(f"DEBUG: After YAML load, use_attention_mask = {config.use_attention_mask}")
     else:
         # Priority 2: Use default configuration type
         print(f"Using default {args.config} configuration")
@@ -94,6 +97,14 @@ def create_config(args):
     # Priority 3: Override with command line arguments
     config.update_from_args(args)
     print(f"DEBUG: After args update, use_spatial_features = {config.use_spatial_features}")
+    
+    # Handle attention mask argument
+    if args.use_attention_mask is not None:
+        if args.use_attention_mask == 'true':
+            config.use_attention_mask = True
+        elif args.use_attention_mask == 'false':
+            config.use_attention_mask = False
+        print(f"DEBUG: After args update, use_attention_mask = {config.use_attention_mask}")
     
     return config
 
@@ -112,6 +123,7 @@ def print_training_info(config):
     print(f"  Cell features: {len(config.cell_features)} features")
     print(f"  Model directory: {config.model_dir}")
     print(f"  Model path: {config.model_path}")
+    print(f"  Using attention mask: {config.use_attention_mask}")
 
 
 def validate_jet_features_setup(config, data_loader, skip_validation=False):
@@ -137,6 +149,51 @@ def validate_jet_features_setup(config, data_loader, skip_validation=False):
         print("✓ Jet features validation passed")
     
     return True
+
+
+def create_datasets_and_model(config, data_processor, train_cells_norm, val_cells_norm, 
+                             train_vertex_norm, val_vertex_norm, train_times, val_times):
+    """Create datasets and model based on mask configuration."""
+    
+    print(f"\n3. Creating TensorFlow datasets...")
+    print(f"Using attention mask: {config.use_attention_mask}")
+    
+    if config.use_attention_mask:
+        # Use mask-enabled versions
+        print("Creating datasets with attention mask support...")
+        train_dataset = data_processor.create_padded_dataset_with_mask(
+            train_cells_norm, train_vertex_norm, train_times, shuffle=True
+        )
+        val_dataset = data_processor.create_padded_dataset_with_mask(
+            val_cells_norm, val_vertex_norm, val_times, shuffle=False
+        )
+        
+        print(f"\n4. Building model with attention mask support...")
+        model = TransformerModel(config)
+        feature_dim = len(config.cell_features)
+        print(f"Model input feature dimension: {feature_dim}")
+        keras_model = model.build_model_with_mask(feature_dim, train_vertex_norm.shape[1])
+        
+    else:
+        # Use traditional versions (backward compatibility)
+        print("Creating datasets with traditional padding...")
+        train_dataset = data_processor.create_padded_dataset(
+            train_cells_norm, train_vertex_norm, train_times, shuffle=True
+        )
+        val_dataset = data_processor.create_padded_dataset(
+            val_cells_norm, val_vertex_norm, val_times, shuffle=False
+        )
+        
+        print(f"\n4. Building model with traditional architecture...")
+        model = TransformerModel(config)
+        feature_dim = len(config.cell_features)
+        print(f"Model input feature dimension: {feature_dim}")
+        keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
+    
+    if config.use_jet_features:
+        print(f"Including jet features: {config.jet_features}")
+    
+    return train_dataset, val_dataset, model, keras_model
 
 
 def main():
@@ -193,27 +250,11 @@ def main():
             train_times, val_times, test_times
         )
         
-        # Create datasets
-        print(f"\n3. Creating TensorFlow datasets...")
-        train_dataset = data_processor.create_padded_dataset(
-            train_cells_norm, train_vertex_norm, train_times, shuffle=True
+        # Create datasets and model based on mask configuration
+        train_dataset, val_dataset, model, keras_model = create_datasets_and_model(
+            config, data_processor, train_cells_norm, val_cells_norm,
+            train_vertex_norm, val_vertex_norm, train_times, val_times
         )
-        val_dataset = data_processor.create_padded_dataset(
-            val_cells_norm, val_vertex_norm, val_times, shuffle=False
-        )
-        
-        # Build model
-        print(f"\n4. Building model...")
-        model = TransformerModel(config)
-        
-        # Use actual cell features dimension (includes jet features if enabled)
-        feature_dim = len(config.cell_features)
-        print(f"Model input feature dimension: {feature_dim}")
-        
-        if config.use_jet_features:
-            print(f"Including jet features: {config.jet_features}")
-        
-        keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
         
         # Train model
         print(f"\n5. Training model...")
@@ -258,6 +299,13 @@ def main():
                 print(f"\nJet features included: {config.jet_features}")
             if config.use_cell_jet_matching:
                 print(f"Cell-jet matching filter applied during training")
+            
+            # Print mask information
+            if config.use_attention_mask:
+                print(f"✓ Attention mask enabled for improved performance")
+                print(f"✓ Smart padding applied (feature-specific values)")
+            else:
+                print(f"○ Traditional padding used (compatibility mode)")
             
             # Print evaluation command
             print(f"\nTo evaluate this model, run:")
