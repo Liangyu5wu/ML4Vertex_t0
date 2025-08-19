@@ -54,6 +54,9 @@ class BaseConfig:
     use_cell_jet_matching: bool = False  # NEW: Enable cell-jet matching filter
     additional_cell_filters: Dict[str, Any] = None
     
+    # Model architecture parameters
+    use_attention_mask: bool = True  # NEW: Enable attention mask support
+    
     # Data split parameters
     test_size: float = 0.3
     val_split: float = 1/3  # Fraction of test_size for validation
@@ -259,6 +262,7 @@ class BaseConfig:
         print(f"Model name: {instance.model_name}")
         print(f"Models directory: {instance.models_base_dir}")
         print(f"Cell filtering: {instance.get_cell_filtering_description()}")
+        print(f"Attention mask: {'enabled' if instance.use_attention_mask else 'disabled'}")
         
         return instance
     
@@ -337,6 +341,9 @@ class BaseConfig:
             ],
             "Cell Filtering Parameters": [
                 'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 'additional_cell_filters'
+            ],
+            "Model Architecture Parameters": [
+                'use_attention_mask'
             ],
             "Training Parameters": [
                 'batch_size', 'epochs', 'early_stopping_patience', 
@@ -463,3 +470,4 @@ class BaseConfig:
         print(f"Using {len(self.cell_features)} out of {len(self.all_cell_features)} available features")
         print(f"Cell filtering: {self.get_cell_filtering_description()}")
         print(f"External models directory: {self.models_base_dir}")
+        print(f"Attention mask: {'enabled' if self.use_attention_mask else 'disabled'}")
