@@ -1,4 +1,4 @@
-"""Parameter sweep script for transformer model hyperparameter optimization."""
+"""Parameter sweep script for transformer model hyperparameter optimization with mask support."""
 
 import os
 import sys
@@ -17,7 +17,7 @@ from config.transformer_config import TransformerConfig
 
 
 class ParameterSweep:
-    """Handle parameter sweep experiments for transformer model."""
+    """Handle parameter sweep experiments for transformer model with attention mask support."""
     
     def __init__(self, base_config_path: str, output_dir: str = None):
         """
@@ -34,7 +34,7 @@ class ParameterSweep:
             from config.base_config import get_external_dir
             results_base_dir = get_external_dir("results", "results")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.output_dir = os.path.join(results_base_dir, f"parameter_sweep_{timestamp}")
+            self.output_dir = os.path.join(results_base_dir, "parameter_sweep_{}".format(timestamp))
         else:
             self.output_dir = output_dir
             
@@ -51,8 +51,8 @@ class ParameterSweep:
         # Results storage
         self.results = []
         
-    def define_parameter_grids(self) -> Dict[str, Dict[str, List]]:
-        """Define all parameter grids."""
+    def define_parameter_grids(self):
+        """Define all parameter grids including mask support."""
         return {
             'quick': {
                 'd_model': [32, 64, 128],
@@ -98,30 +98,73 @@ class ParameterSweep:
                     [32, 16],
                     [64, 32]
                 ],
+            },
+            # NEW: Mask comparison experiments
+            'mask_comparison': {
+                'use_attention_mask': [True, False],
+                'd_model': [64, 128],
+                'num_heads': [4, 8],
+                'learning_rate': [5e-5, 1e-4],
+                'dropout_rate': [0.1, 0.2],
+            },
+            # NEW: Mask optimization - only for mask-enabled models
+            'mask_optimization': {
+                'use_attention_mask': [True],  # Only mask models
+                'd_model': [32, 64, 128, 256],
+                'num_heads': [2, 4, 8, 16],
+                'num_transformer_blocks': [2, 3, 4],
+                'learning_rate': [1e-5, 5e-5, 1e-4],
+                'batch_size': [32, 64, 128],
+            },
+            # NEW: Features comparison
+            'features_comparison': {
+                'use_attention_mask': [True],
+                'use_spatial_features': [True, False],
+                'use_jet_features': [True, False],
+                'use_cell_jet_matching': [True, False],
+                'd_model': [64, 128],
+                'learning_rate': [5e-5, 1e-4],
             }
         }
     
-    def print_sweep_info(self, parameter_grid: Dict[str, List], grid_type: str):
+    def print_sweep_info(self, parameter_grid, grid_type):
         """Print parameter sweep information."""
-        print(f"\n{'='*60}")
-        print(f"PARAMETER SWEEP: {grid_type.upper()}")
-        print(f"{'='*60}")
-        print(f"Base config: {os.path.basename(self.base_config_path)}")
-        print(f"Output dir: {self.output_dir}")
+        print("\n" + "="*60)
+        print("PARAMETER SWEEP: {}".format(grid_type.upper()))
+        print("="*60)
+        print("Base config: {}".format(os.path.basename(self.base_config_path)))
+        print("Output dir: {}".format(self.output_dir))
         
-        print(f"\nParameters to sweep:")
+        print("\nParameters to sweep:")
         total_combinations = 1
         for param, values in parameter_grid.items():
-            print(f"  {param}: {values} ({len(values)} values)")
+            print("  {}: {} ({} values)".format(param, values, len(values)))
             total_combinations *= len(values)
         
-        print(f"\nTotal combinations: {total_combinations}")
+        print("\nTotal combinations: {}".format(total_combinations))
         estimated_hours = total_combinations * 120 / 3600  # 120s per experiment
-        print(f"Estimated time: ~{estimated_hours:.1f} hours")
-        print(f"{'='*60}")
+        print("Estimated time: ~{:.1f} hours".format(estimated_hours))
+        
+        # Print sweep type information
+        if 'use_attention_mask' in parameter_grid:
+            mask_values = parameter_grid['use_attention_mask']
+            if len(set(mask_values)) > 1:
+                print("\n*** MASK COMPARISON SWEEP ***")
+                print("This sweep will compare mask-enabled vs traditional models")
+            elif mask_values[0]:
+                print("\n*** MASK-OPTIMIZED SWEEP ***")
+                print("This sweep focuses on optimizing mask-enabled models")
+            else:
+                print("\n*** TRADITIONAL MODEL SWEEP ***")
+                print("This sweep uses traditional models only")
+        else:
+            print("\n*** USING BASE CONFIG MASK SETTING ***")
+            print("Mask setting: {}".format(getattr(self.base_config, 'use_attention_mask', 'undefined')))
+        
+        print("="*60)
     
-    def validate_parameter_combination(self, params: Dict) -> bool:
-        """Validate parameter combination."""
+    def validate_parameter_combination(self, params):
+        """Validate parameter combination including mask-specific rules."""
         # d_model divisible by num_heads
         if 'd_model' in params and 'num_heads' in params:
             if params['d_model'] % params['num_heads'] != 0:
@@ -136,10 +179,17 @@ class ParameterSweep:
         if 'dropout_rate' in params:
             if params['dropout_rate'] < 0 or params['dropout_rate'] > 0.5:
                 return False
+        
+        # Mask-specific validations
+        if 'use_attention_mask' in params:
+            # If using jet features, prefer mask-enabled models
+            if 'use_jet_features' in params and params['use_jet_features'] and not params['use_attention_mask']:
+                # Allow but warn - this combination is valid but not optimal
+                pass
                 
         return True
     
-    def generate_experiment_configs(self, parameter_grid: Dict[str, List]) -> List[Dict]:
+    def generate_experiment_configs(self, parameter_grid):
         """Generate all valid parameter combinations."""
         param_names = list(parameter_grid.keys())
         param_values = list(parameter_grid.values())
@@ -149,13 +199,13 @@ class ParameterSweep:
         for i, combination in enumerate(combinations):
             config_dict = dict(zip(param_names, combination))
             if self.validate_parameter_combination(config_dict):
-                config_dict['experiment_id'] = f"exp_{i:04d}"
+                config_dict['experiment_id'] = "exp_{:04d}".format(i)
                 experiment_configs.append(config_dict)
         
-        print(f"Generated {len(experiment_configs)} valid configurations")
+        print("Generated {} valid configurations".format(len(experiment_configs)))
         return experiment_configs
     
-    def create_experiment_config(self, exp_id: str, params: Dict) -> str:
+    def create_experiment_config(self, exp_id, params):
         """Create configuration file for experiment."""
         config = TransformerConfig.from_yaml(self.base_config_path)
         
@@ -163,18 +213,24 @@ class ParameterSweep:
             if param_name != 'experiment_id' and hasattr(config, param_name):
                 setattr(config, param_name, param_value)
         
-        config.model_name = f"sweep_{exp_id}"
+        # Create descriptive model name including mask info
+        mask_suffix = ""
+        if 'use_attention_mask' in params:
+            mask_suffix = "_mask" if params['use_attention_mask'] else "_trad"
         
+        config.model_name = "sweep_{}{}".format(exp_id, mask_suffix)
+        
+        # Set default dff if not specified
         if 'dff' not in params:
             config.dff = config.d_model * 2
         
-        config_path = os.path.join(self.configs_dir, f"{exp_id}.yaml")
+        config_path = os.path.join(self.configs_dir, "{}.yaml".format(exp_id))
         config.save_yaml(config_path)
         return config_path
     
-    def run_single_experiment(self, exp_id: str, config_path: str) -> Dict:
+    def run_single_experiment(self, exp_id, config_path):
         """Run single experiment."""
-        print(f"Running {exp_id}...", end=" ")
+        print("Running {}...".format(exp_id), end=" ")
         start_time = time.time()
         
         try:
@@ -195,20 +251,40 @@ class ParameterSweep:
                 results = self.extract_training_results(exp_id)
                 results['status'] = 'success'
                 results['training_time'] = training_time
-                print(f"✓ {training_time:.1f}s")
+                print("✓ {:.1f}s".format(training_time))
             else:
                 results = {'status': 'failed', 'training_time': training_time}
-                print(f"✗ {training_time:.1f}s")
+                print("✗ {:.1f}s".format(training_time))
+                # Store error information for debugging
+                if result.stderr:
+                    results['error_stderr'] = result.stderr[:500]  # First 500 chars
+                if result.stdout:
+                    results['error_stdout'] = result.stdout[-500:]  # Last 500 chars
                 
         except Exception as e:
             results = {'status': 'error', 'error': str(e)}
-            print(f"✗ Error")
+            print("✗ Error")
         
         return results
     
-    def extract_training_results(self, exp_id: str) -> Dict:
+    def extract_training_results(self, exp_id):
         """Extract results from training."""
-        model_dir = os.path.join("models", f"sweep_{exp_id}")
+        mask_suffix = ""
+        # Try to determine mask suffix from experiment config
+        config_path = os.path.join(self.configs_dir, "{}.yaml".format(exp_id))
+        if os.path.exists(config_path):
+            try:
+                import yaml
+                with open(config_path, 'r') as f:
+                    config_data = yaml.safe_load(f)
+                if config_data.get('use_attention_mask', True):
+                    mask_suffix = "_mask"
+                else:
+                    mask_suffix = "_trad"
+            except:
+                pass
+        
+        model_dir = os.path.join("models", "sweep_{}{}".format(exp_id, mask_suffix))
         results = {}
         
         try:
@@ -224,6 +300,11 @@ class ParameterSweep:
                 results['best_epoch'] = best_epoch
                 results['best_val_loss'] = float(history_data['val_loss'][best_epoch])
                 results['best_val_mae'] = float(history_data['val_mae'][best_epoch])
+                
+                # Add RMSE if available
+                if 'val_root_mean_squared_error' in history_data:
+                    results['best_val_rmse'] = float(history_data['val_root_mean_squared_error'][best_epoch])
+                    results['final_val_rmse'] = float(history_data['val_root_mean_squared_error'][-1])
             
             # Check if model file exists (try both .h5 and .keras for compatibility)
             model_h5_path = os.path.join(model_dir, "model.h5")
@@ -243,12 +324,13 @@ class ParameterSweep:
         
         return results
     
-    def run_parameter_sweep(self, grid_type: str = 'quick', max_experiments: int = None):
+    def run_parameter_sweep(self, grid_type='quick', max_experiments=None):
         """Run parameter sweep."""
         grids = self.define_parameter_grids()
         
         if grid_type not in grids:
-            raise ValueError(f"Unknown grid type: {grid_type}")
+            available_grids = list(grids.keys())
+            raise ValueError("Unknown grid type: {}. Available: {}".format(grid_type, available_grids))
         
         parameter_grid = grids[grid_type]
         self.print_sweep_info(parameter_grid, grid_type)
@@ -257,17 +339,31 @@ class ParameterSweep:
         
         if max_experiments is not None:
             experiment_configs = experiment_configs[:max_experiments]
-            print(f"Limited to {len(experiment_configs)} experiments")
+            print("Limited to {} experiments".format(len(experiment_configs)))
         
         # Save experiment plan
         plan_path = os.path.join(self.output_dir, "experiment_plan.json")
         with open(plan_path, 'w') as f:
             json.dump(experiment_configs, f, indent=2)
         
+        # Save sweep metadata
+        metadata = {
+            'grid_type': grid_type,
+            'base_config': self.base_config_path,
+            'total_experiments': len(experiment_configs),
+            'max_experiments': max_experiments,
+            'timestamp': datetime.now().isoformat(),
+            'base_config_mask_setting': getattr(self.base_config, 'use_attention_mask', None)
+        }
+        metadata_path = os.path.join(self.output_dir, "sweep_metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
         # Run experiments
+        print("\nStarting experiments...")
         for i, config in enumerate(experiment_configs):
             exp_id = config['experiment_id']
-            print(f"[{i+1}/{len(experiment_configs)}] ", end="")
+            print("[{}/{}] ".format(i+1, len(experiment_configs)), end="")
             
             config_path = self.create_experiment_config(exp_id, config)
             results = self.run_single_experiment(exp_id, config_path)
@@ -275,37 +371,67 @@ class ParameterSweep:
             full_results = {**config, **results}
             self.results.append(full_results)
             
-            # Save results
+            # Save results after each experiment
             results_path = os.path.join(self.output_dir, "results.csv")
             df = pd.DataFrame(self.results)
             df.to_csv(results_path, index=False)
         
         # Print summary
         successful = sum(1 for r in self.results if r.get('status') == 'success')
-        print(f"\nSweep completed: {successful}/{len(self.results)} successful")
+        failed = sum(1 for r in self.results if r.get('status') == 'failed')
+        errors = sum(1 for r in self.results if r.get('status') == 'error')
+        
+        print("\nSweep completed: {}/{} successful, {} failed, {} errors".format(
+            successful, len(self.results), failed, errors))
         
         if successful > 0:
             df_success = pd.DataFrame([r for r in self.results if r.get('status') == 'success'])
             best = df_success.loc[df_success['best_val_loss'].idxmin()]
-            print(f"Best result: {best['experiment_id']} (val_loss: {best['best_val_loss']:.6f})")
+            print("Best result: {} (val_loss: {:.6f})".format(best['experiment_id'], best['best_val_loss']))
+            
+            # Print mask comparison if applicable
+            if 'use_attention_mask' in df_success.columns and len(df_success['use_attention_mask'].unique()) > 1:
+                print("\nMask vs Traditional Comparison:")
+                mask_results = df_success[df_success['use_attention_mask'] == True]
+                trad_results = df_success[df_success['use_attention_mask'] == False]
+                
+                if len(mask_results) > 0 and len(trad_results) > 0:
+                    mask_best = mask_results['best_val_loss'].min()
+                    trad_best = trad_results['best_val_loss'].min()
+                    print("  Best mask model: {:.6f}".format(mask_best))
+                    print("  Best traditional model: {:.6f}".format(trad_best))
+                    print("  Improvement: {:.2f}%".format((trad_best - mask_best) / trad_best * 100))
 
 
 def main():
     """Main function."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Run parameter sweep')
+    parser = argparse.ArgumentParser(description='Run parameter sweep with mask support')
     parser.add_argument('--base-config', type=str, required=True)
     parser.add_argument('--grid-type', type=str, default='quick',
-                       choices=['full', 'quick', 'architecture', 'training', 'regularization', 'dense_layers'])
+                       choices=['full', 'quick', 'architecture', 'training', 'regularization', 
+                               'dense_layers', 'mask_comparison', 'mask_optimization', 'features_comparison'])
     parser.add_argument('--max-experiments', type=int, default=None)
     parser.add_argument('--output-dir', type=str, default=None)
     
     args = parser.parse_args()
     
+    if not os.path.exists(args.base_config):
+        print("Error: Base config file not found: {}".format(args.base_config))
+        return 1
+    
     sweep = ParameterSweep(args.base_config, args.output_dir)
-    sweep.run_parameter_sweep(args.grid_type, args.max_experiments)
+    try:
+        sweep.run_parameter_sweep(args.grid_type, args.max_experiments)
+        return 0
+    except Exception as e:
+        print("Error during parameter sweep: {}".format(e))
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    exit_code = main()
+    sys.exit(exit_code)
