@@ -52,7 +52,7 @@ class ParameterSweep:
         self.results = []
         
     def define_parameter_grids(self):
-        """Define all parameter grids including mask support."""
+        """Define all parameter grids including mask support with expanded 'full' grid."""
         return {
             'quick': {
                 'd_model': [32, 64, 128],
@@ -61,13 +61,15 @@ class ParameterSweep:
                 'dropout_rate': [0.1, 0.2],
             },
             'full': {
-                'd_model': [32, 64, 128],
-                'num_heads': [2, 4, 8],
-                'num_transformer_blocks': [2, 3, 4],
-                'dropout_rate': [0.05, 0.1, 0.2],
-                'vertex_dense_units': [8, 16, 32],
-                'learning_rate': [1e-5, 5e-5, 1e-4, 2e-4],
-                'batch_size': [32, 64, 128],
+                # Expanded parameter ranges for comprehensive search
+                'd_model': [16, 32, 64, 128, 256, 512],                    # Expanded from [32, 64, 128]
+                'num_heads': [1, 2, 4, 8, 16, 32],                        # Expanded from [2, 4, 8]
+                'num_transformer_blocks': [1, 2, 3, 4, 5, 6],             # Expanded from [2, 3, 4]
+                'dropout_rate': [0.0, 0.05, 0.1, 0.15, 0.2, 0.3],        # Expanded from [0.05, 0.1, 0.2]
+                'vertex_dense_units': [4, 8, 16, 32, 64, 128],            # Expanded from [8, 16, 32]
+                'learning_rate': [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3],  # Expanded from [1e-5, 5e-5, 1e-4, 2e-4]
+                'batch_size': [8, 16, 32, 64, 128, 256],                  # Expanded from [32, 64, 128]
+                'max_cells': [40, 60, 80, 100],                           # New parameter
             },
             'architecture': {
                 'd_model': [32, 64, 128, 256],
