@@ -1,4 +1,4 @@
-"""Model evaluation utilities."""
+"""Model evaluation utilities with mask support."""
 
 import numpy as np
 import tensorflow as tf
@@ -10,7 +10,7 @@ from src.data.data_processor import DataProcessor
 
 
 class Evaluator:
-    """Handle model evaluation and metrics computation."""
+    """Handle model evaluation and metrics computation with mask support."""
     
     def __init__(self, config: BaseConfig):
         """
@@ -20,6 +20,33 @@ class Evaluator:
             config: Configuration object
         """
         self.config = config
+        
+    def _detect_model_type(self, model: tf.keras.Model) -> bool:
+        """
+        Detect if model uses attention mask by checking input count.
+        
+        Args:
+            model: Keras model to analyze
+            
+        Returns:
+            True if model uses attention mask, False otherwise
+        """
+        # Check number of inputs
+        if hasattr(model, 'input'):
+            if isinstance(model.input, list):
+                num_inputs = len(model.input)
+            else:
+                num_inputs = 1
+        else:
+            # Fallback: check input spec
+            num_inputs = len(model.input_spec) if hasattr(model, 'input_spec') and model.input_spec else 2
+        
+        # Traditional model: [cell_sequence, vertex_features] = 2 inputs
+        # Mask model: [cell_sequence, vertex_features, attention_mask] = 3 inputs
+        uses_mask = (num_inputs == 3)
+        
+        print(f"Model detected: {'Mask-enabled' if uses_mask else 'Traditional'} ({num_inputs} inputs)")
+        return uses_mask
         
     def evaluate_model(
         self,
@@ -64,7 +91,7 @@ class Evaluator:
         data_processor: DataProcessor
     ) -> Tuple[np.ndarray, Dict[str, float]]:
         """
-        Make predictions and compute detailed evaluation metrics.
+        Make predictions and compute detailed evaluation metrics with automatic mask support.
         
         Args:
             model: Trained model
@@ -78,26 +105,76 @@ class Evaluator:
         """
         print("Making predictions on test data...")
         
-        # Make predictions in batches
+        # Detect model type
+        uses_mask = self._detect_model_type(model)
+        
+        # Make predictions in batches using appropriate method
         y_pred_list = []
         y_true_list = []
         
-        for batch_data, batch_true in data_processor.create_prediction_batches(
-            cell_sequences, vertex_features, vertex_times
-        ):
+        if uses_mask:
+            print("Using mask-enabled prediction batches...")
+            batch_iterator = data_processor.create_prediction_batches_with_mask(
+                cell_sequences, vertex_features, vertex_times
+            )
+        else:
+            print("Using traditional prediction batches...")
+            batch_iterator = data_processor.create_prediction_batches(
+                cell_sequences, vertex_features, vertex_times
+            )
+        
+        batch_count = 0
+        for batch_data, batch_true in batch_iterator:
+            # Predict for this batch
             batch_pred = model.predict(batch_data, verbose=0)
             y_pred_list.extend(batch_pred.flatten())
             y_true_list.extend(batch_true.flatten())
+            batch_count += 1
         
         y_pred = np.array(y_pred_list)
         y_true = np.array(y_true_list)
         
-        print(f"Predictions completed. Test set size: {len(y_true)}")
+        print(f"Predictions completed. Test set size: {len(y_true)} (processed in {batch_count} batches)")
         
         # Compute detailed metrics
         metrics = self.compute_metrics(y_true, y_pred)
         
         return y_pred, metrics
+    
+    def create_test_dataset_for_evaluation(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        data_processor: DataProcessor,
+        model: tf.keras.Model
+    ) -> tf.data.Dataset:
+        """
+        Create test dataset for model evaluation with automatic mask support.
+        
+        Args:
+            cell_sequences: Test cell sequences
+            vertex_features: Test vertex features
+            vertex_times: True vertex times
+            data_processor: Data processor
+            model: Model to determine type
+            
+        Returns:
+            Test dataset compatible with the model
+        """
+        # Detect model type
+        uses_mask = self._detect_model_type(model)
+        
+        if uses_mask:
+            print("Creating test dataset with mask support...")
+            return data_processor.create_padded_dataset_with_mask(
+                cell_sequences, vertex_features, vertex_times, shuffle=False
+            )
+        else:
+            print("Creating traditional test dataset...")
+            return data_processor.create_padded_dataset(
+                cell_sequences, vertex_features, vertex_times, shuffle=False
+            )
     
     def compute_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
         """
