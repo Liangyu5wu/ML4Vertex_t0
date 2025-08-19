@@ -242,13 +242,13 @@ def show_sweep_menu():
 
 def main():
     """Main function with enhanced interface."""
-    base_config = "config/configs/experiment_with_jets.yaml"
+    base_config = "config/configs/experiment_nersc.yaml"
     
     # Check if base config exists, try alternatives
     if not os.path.exists(base_config):
         alternatives = [
+            "config/configs/experiment_with_jets.yaml",
             "config/configs/test_fast.yaml",
-            "config/configs/experiment_nersc.yaml",
             "config/configs/experiment2_fast.yaml"
         ]
         
