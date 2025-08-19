@@ -79,8 +79,7 @@ echo "Time started: $(date)"
 # Run the parameter sweep
 python scripts/parameter_sweep.py \
     --base-config config/configs/experiment_nersc.yaml \
-    --grid-type mask_optimization \
-    --max-experiments 100
+    --grid-type mask_optimization
 
 # Check if sweep completed successfully
 if [ $? -eq 0 ]; then
