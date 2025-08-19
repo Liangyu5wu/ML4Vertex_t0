@@ -1,4 +1,4 @@
-"""Data preprocessing and normalization utilities with enhanced labeling."""
+"""Data preprocessing and normalization utilities with enhanced labeling and mask support."""
 
 import os
 import numpy as np
@@ -25,6 +25,106 @@ class DataProcessor:
         
         # Energy bin edges for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
         self.energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+
+    def get_padding_values(self) -> Dict[str, float]:
+        """
+        Get padding values for different cell features.
+        
+        Returns:
+            Dictionary mapping feature names to their padding values
+        """
+        padding_values = {
+            # Time feature - use 0 (no contribution to prediction)
+            'Cell_time_TOF_corrected': 0.0,
+            
+            # Energy features - use 0 (no energy)
+            'Cell_e': 0.0,
+            'Cell_significance': 0.0,
+            
+            # Position features - use 0 (origin position)
+            'Cell_x': 0.0, 
+            'Cell_y': 0.0, 
+            'Cell_z': 0.0,
+            'Cell_eta': 0.0, 
+            'Cell_phi': 0.0,
+            
+            # Classification features - use invalid identifiers
+            'Cell_Barrel': -1,  # Neither barrel nor endcap
+            'Cell_layer': 0,    # Invalid layer (valid values are 1,2,3)
+            
+            # Track matching features - use invalid values
+            'matched_track_pt': -1.0,
+            'matched_track_deltaR': -1.0,
+            
+            # Jet matching features - use invalid values
+            'matched_jet_pt': -1.0,
+            'matched_jet_eta': -999.0,
+            'matched_jet_phi': -999.0,
+            'matched_jet_width': -1.0,
+            'matched_jet_deltaR': -1.0,
+        }
+        
+        return padding_values
+
+    def create_attention_mask(self, cell_sequences: List[List[List[float]]], max_seq_len: int) -> np.ndarray:
+        """
+        Create attention mask for padded sequences.
+        
+        Args:
+            cell_sequences: Original variable-length cell sequences
+            max_seq_len: Maximum sequence length after padding
+            
+        Returns:
+            Attention mask array of shape (num_sequences, max_seq_len)
+            True for valid positions, False for padding positions
+        """
+        num_sequences = len(cell_sequences)
+        mask = np.zeros((num_sequences, max_seq_len), dtype=bool)
+        
+        for i, seq in enumerate(cell_sequences):
+            seq_len = len(seq)
+            mask[i, :seq_len] = True  # Mark valid positions as True
+            
+        return mask
+
+    def apply_smart_padding(
+        self, 
+        cell_sequences: List[List[List[float]]], 
+        max_seq_len: int,
+        feature_dim: int
+    ) -> np.ndarray:
+        """
+        Apply smart padding using feature-specific padding values.
+        
+        Args:
+            cell_sequences: Original variable-length cell sequences
+            max_seq_len: Maximum sequence length after padding
+            feature_dim: Number of features per cell
+            
+        Returns:
+            Padded cell sequences array
+        """
+        num_sequences = len(cell_sequences)
+        padded_cells = np.zeros((num_sequences, max_seq_len, feature_dim))
+        
+        # Get padding values
+        padding_values = self.get_padding_values()
+        
+        for i, seq in enumerate(cell_sequences):
+            seq_len = len(seq)
+            
+            # Fill in actual sequence data
+            if seq_len > 0:
+                padded_cells[i, :seq_len, :] = seq
+            
+            # Apply smart padding for remaining positions
+            for pos in range(seq_len, max_seq_len):
+                for feat_idx, feature_name in enumerate(self.config.cell_features):
+                    if feat_idx < feature_dim:
+                        padding_value = padding_values.get(feature_name, 0.0)
+                        padded_cells[i, pos, feat_idx] = padding_value
+        
+        return padded_cells
 
     def _get_calibration_info(self) -> str:
         """Get calibration information string for labeling."""
@@ -770,7 +870,7 @@ class DataProcessor:
         shuffle: bool = True
     ) -> tf.data.Dataset:
         """
-        Create padded TensorFlow dataset from sequences.
+        Create padded TensorFlow dataset from sequences (backward compatibility).
         
         Args:
             cell_sequences: Variable-length cell sequences (with calibrated time)
@@ -787,7 +887,7 @@ class DataProcessor:
         # Feature dimension is just the original cell features (no extra detector params)
         feature_dim = len(self.config.cell_features)
         
-        # Pad all sequences to max length
+        # Pad all sequences to max length (using old method for compatibility)
         padded_cells = np.zeros((len(cell_sequences), max_seq_len, feature_dim))
         for i, seq in enumerate(cell_sequences):
             seq_len = len(seq)
@@ -804,6 +904,52 @@ class DataProcessor:
         
         return dataset.batch(self.config.batch_size).prefetch(tf.data.AUTOTUNE)
     
+    def create_padded_dataset_with_mask(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        shuffle: bool = True
+    ) -> tf.data.Dataset:
+        """
+        Create padded TensorFlow dataset with attention mask support.
+        
+        Args:
+            cell_sequences: Variable-length cell sequences (with calibrated time)
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            shuffle: Whether to shuffle the dataset
+            
+        Returns:
+            Batched and prefetched TensorFlow dataset with mask
+        """
+        # Find maximum sequence length
+        max_seq_len = max(len(seq) for seq in cell_sequences)
+        
+        # Feature dimension is just the original cell features
+        feature_dim = len(self.config.cell_features)
+        
+        # Apply smart padding using feature-specific values
+        padded_cells = self.apply_smart_padding(cell_sequences, max_seq_len, feature_dim)
+        
+        # Create attention mask
+        attention_mask = self.create_attention_mask(cell_sequences, max_seq_len)
+        
+        # Create TensorFlow dataset with mask
+        dataset = tf.data.Dataset.from_tensor_slices((
+            {
+                'cell_sequence': padded_cells, 
+                'vertex_features': vertex_features,
+                'attention_mask': attention_mask
+            },
+            vertex_times
+        ))
+        
+        if shuffle:
+            dataset = dataset.shuffle(buffer_size=10000)
+        
+        return dataset.batch(self.config.batch_size).prefetch(tf.data.AUTOTUNE)
+    
     def create_prediction_batches(
         self,
         cell_sequences: List[List[List[float]]],
@@ -811,7 +957,7 @@ class DataProcessor:
         vertex_times: np.ndarray
     ):
         """
-        Create batches for prediction from variable-length sequences.
+        Create batches for prediction from variable-length sequences (backward compatibility).
         
         Args:
             cell_sequences: Variable-length cell sequences (with calibrated time)
@@ -835,7 +981,7 @@ class DataProcessor:
             batch_lengths = [lengths[idx] for idx in batch_indices]
             max_length = max(batch_lengths)
             
-            # Pad sequences in this batch to max_length
+            # Pad sequences in this batch to max_length (using zeros for compatibility)
             batch_cells = np.zeros((len(batch_indices), max_length, feature_dim))
             batch_vertex = np.zeros((len(batch_indices), len(vertex_features[0])))
             batch_times = np.zeros(len(batch_indices))
@@ -854,3 +1000,58 @@ class DataProcessor:
             
             # Return batch inputs
             yield {'cell_sequence': batch_cells, 'vertex_features': batch_vertex}, batch_times
+    
+    def create_prediction_batches_with_mask(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray
+    ):
+        """
+        Create batches for prediction with attention mask support.
+        
+        Args:
+            cell_sequences: Variable-length cell sequences (with calibrated time)
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            
+        Yields:
+            Batches of data for prediction with mask
+        """
+        # Sort by sequence length for more efficient batching
+        lengths = [len(seq) for seq in cell_sequences]
+        indices = np.argsort(lengths)
+        
+        # Feature dimension is just the original cell features
+        feature_dim = len(self.config.cell_features)
+        
+        for i in range(0, len(indices), self.config.batch_size):
+            batch_indices = indices[i:i+self.config.batch_size]
+            
+            # Find max length in this batch
+            batch_lengths = [lengths[idx] for idx in batch_indices]
+            max_length = max(batch_lengths)
+            
+            # Create batch sequences for smart padding
+            batch_sequences = [cell_sequences[idx] for idx in batch_indices]
+            
+            # Apply smart padding
+            batch_cells = self.apply_smart_padding(batch_sequences, max_length, feature_dim)
+            
+            # Create attention mask for this batch
+            batch_mask = self.create_attention_mask(batch_sequences, max_length)
+            
+            # Prepare other batch data
+            batch_vertex = np.zeros((len(batch_indices), len(vertex_features[0])))
+            batch_times = np.zeros(len(batch_indices))
+            
+            for j, idx in enumerate(batch_indices):
+                batch_vertex[j] = vertex_features[idx]
+                batch_times[j] = vertex_times[idx]
+            
+            # Return batch inputs with mask
+            yield {
+                'cell_sequence': batch_cells, 
+                'vertex_features': batch_vertex,
+                'attention_mask': batch_mask
+            }, batch_times
