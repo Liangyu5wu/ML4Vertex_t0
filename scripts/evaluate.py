@@ -1,4 +1,4 @@
-"""Main evaluation script for vertex time prediction models."""
+"""Main evaluation script for vertex time prediction models with mask support."""
 
 # python scripts/evaluate.py --model-dir models/transformer_simple_experiment --load-data
 
@@ -58,11 +58,37 @@ def load_config_and_model(model_dir):
         keras_model = TransformerModel.load_model(model_path)
         print(f"Loaded model from: {model_path}")
         
+        # Display model type information
+        print_model_info(keras_model)
+        
         return config, keras_model
         
     except Exception as e:
         print(f"Error loading model or config: {e}")
         raise
+
+
+def print_model_info(model):
+    """Print information about the loaded model."""
+    # Detect model type
+    if hasattr(model, 'input'):
+        if isinstance(model.input, list):
+            num_inputs = len(model.input)
+            input_names = [inp.name for inp in model.input]
+        else:
+            num_inputs = 1
+            input_names = [model.input.name]
+    else:
+        num_inputs = 2  # Fallback
+        input_names = ["unknown"]
+    
+    print(f"\nModel Information:")
+    print(f"  Type: {'Mask-enabled' if num_inputs == 3 else 'Traditional'}")
+    print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
+    
+    # Check for attention mask parameter in config if possible
+    if hasattr(model, '_config') and hasattr(model._config, 'use_attention_mask'):
+        print(f"  Attention mask configured: {model._config.use_attention_mask}")
 
 
 def load_or_reuse_data(config, data_dir_override=None, load_data=False):
@@ -107,6 +133,18 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False):
         return load_or_reuse_data(config, data_dir_override, load_data=True)
 
 
+def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor):
+    """Create test dataset automatically based on model type."""
+    print("\n3. Creating test dataset for evaluation...")
+    
+    # Use the new automatic dataset creation method
+    test_dataset = evaluator.create_test_dataset_for_evaluation(
+        test_cells_norm, test_vertex_norm, test_times, data_processor, model
+    )
+    
+    return test_dataset
+
+
 def main():
     """Main evaluation function."""
     args = parse_args()
@@ -136,19 +174,20 @@ def main():
         print(f"Test data loaded: {len(test_times)} samples")
         
         # Initialize evaluator
-        print("\n3. Evaluating model...")
+        print("\n3. Initializing evaluator...")
         evaluator = Evaluator(config)
         
-        # Create test dataset for Keras evaluation
-        test_dataset = data_processor.create_padded_dataset(
-            test_cells_norm, test_vertex_norm, test_times, shuffle=False
+        # Create test dataset automatically based on model type
+        test_dataset = create_test_dataset_automatically(
+            evaluator, keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor
         )
         
         # Evaluate using Keras
+        print("\n4. Evaluating model...")
         keras_metrics = evaluator.evaluate_model(keras_model, test_dataset, args.verbose)
         
         # Make predictions and compute detailed metrics
-        print("\n4. Computing detailed metrics...")
+        print("\n5. Computing detailed metrics...")
         y_pred, detailed_metrics = evaluator.predict_and_evaluate(
             keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor
         )
@@ -164,7 +203,7 @@ def main():
         
         # Create visualizations
         if args.create_plots:
-            print("\n5. Creating evaluation plots...")
+            print("\n6. Creating evaluation plots...")
             visualizer = Visualizer(config)
             
             # Load training history if available
@@ -179,8 +218,29 @@ def main():
                 test_times, y_pred, detailed_metrics, training_history
             )
         
-        print(f"\nEvaluation completed successfully!")
+        # Print summary
+        print(f"\n" + "="*60)
+        print("EVALUATION COMPLETED SUCCESSFULLY!")
+        print("="*60)
         print(f"Results saved to: {config.model_dir}")
+        
+        # Print model and configuration info
+        if hasattr(config, 'use_attention_mask'):
+            mask_status = "enabled" if config.use_attention_mask else "disabled"
+            print(f"Attention mask: {mask_status}")
+        
+        if hasattr(config, 'use_jet_features') and config.use_jet_features:
+            print(f"Jet features: included ({config.jet_features})")
+            
+        if hasattr(config, 'use_cell_jet_matching') and config.use_cell_jet_matching:
+            print(f"Cell-jet matching: applied during training")
+        
+        # Print performance summary
+        print(f"\nPerformance Summary:")
+        print(f"  RMSE: {detailed_metrics['rmse']:.4f}")
+        print(f"  MAE: {detailed_metrics['mae']:.4f}")
+        print(f"  R²: {detailed_metrics['r_squared']:.4f}")
+        print(f"  Correlation: {detailed_metrics['correlation']:.4f}")
         
         return 0
         
