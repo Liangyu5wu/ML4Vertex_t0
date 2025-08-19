@@ -1,4 +1,4 @@
-"""Transformer layer implementations."""
+"""Transformer layer implementations with attention mask support."""
 
 import tensorflow as tf
 from tensorflow.keras import layers
@@ -37,7 +37,7 @@ class PositionalEncoding(layers.Layer):
 
 
 class MultiHeadSelfAttention(layers.Layer):
-    """Multi-head self-attention layer."""
+    """Multi-head self-attention layer with mask support."""
     
     def __init__(self, d_model: int, num_heads: int, **kwargs):
         """
@@ -66,7 +66,14 @@ class MultiHeadSelfAttention(layers.Layer):
         return tf.transpose(x, perm=[0, 2, 1, 3])
     
     def call(self, inputs, mask=None):
-        """Apply multi-head self-attention."""
+        """
+        Apply multi-head self-attention.
+        
+        Args:
+            inputs: Input tensor of shape (batch_size, seq_len, d_model)
+            mask: Optional attention mask of shape (batch_size, seq_len)
+                 True/1 for valid positions, False/0 for padding positions
+        """
         batch_size = tf.shape(inputs)[0]
         
         q = self.wq(inputs)
@@ -84,9 +91,14 @@ class MultiHeadSelfAttention(layers.Layer):
         
         # Apply mask if provided
         if mask is not None:
+            # Convert mask to float and expand dimensions for broadcasting
+            # mask shape: (batch_size, seq_len) -> (batch_size, 1, 1, seq_len)
             mask = tf.cast(mask, tf.float32)
             mask = mask[:, tf.newaxis, tf.newaxis, :]
-            scaled_attention_logits += (mask * -1e9)
+            
+            # Apply mask by adding large negative values to masked positions
+            # This ensures they get near-zero attention weights after softmax
+            scaled_attention_logits += (1.0 - mask) * -1e9
         
         attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)
         output = tf.matmul(attention_weights, v)
@@ -139,7 +151,14 @@ class TransformerBlock(layers.Layer):
         self.dropout2 = layers.Dropout(rate)
     
     def call(self, inputs, training=None, mask=None):
-        """Apply transformer block operations."""
+        """
+        Apply transformer block operations.
+        
+        Args:
+            inputs: Input tensor of shape (batch_size, seq_len, d_model)
+            training: Training mode flag
+            mask: Optional attention mask of shape (batch_size, seq_len)
+        """
         attn_output = self.attention(inputs, mask=mask)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(inputs + attn_output)
