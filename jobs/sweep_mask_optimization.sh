@@ -8,8 +8,8 @@
 #SBATCH -c 32         # Required: NERSC gpu_shared_ss11 queue mandates 32 cores per GPU
 #SBATCH --gpus-per-task=1
 #SBATCH --time=10:00:00
-#SBATCH --output=../logs/slurm-sweep_mask_opt-%j.out
-#SBATCH --error=../logs/slurm-sweep_mask_opt-%j.err
+#SBATCH --output=../logs/sweep/slurm-sweep_mask_opt-%j.out
+#SBATCH --error=../logs/sweep/slurm-sweep_mask_opt-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=liangyu5@stanford.edu
 
