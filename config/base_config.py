@@ -68,6 +68,10 @@ class BaseConfig:
     early_stopping_patience: int = 15
     lr_patience: int = 5
     min_lr: float = 1e-7
+
+    # Loss function parameters
+    loss_function: str = 'mse'  # 'mse' or 'huber'
+    huber_delta: float = 1.0    # Delta parameter for Huber loss
     
     # Model save parameters - Updated to use external directories
     models_base_dir: str = None  # Will be set in __post_init__
@@ -347,7 +351,7 @@ class BaseConfig:
             ],
             "Training Parameters": [
                 'batch_size', 'epochs', 'early_stopping_patience', 
-                'lr_patience', 'min_lr'
+                'lr_patience', 'min_lr', 'loss_function', 'huber_delta'
             ],
             "Model Save Parameters": [
                 'models_base_dir', 'model_name'
@@ -405,6 +409,11 @@ class BaseConfig:
         assert 0 < self.val_split < 1, "val_split must be between 0 and 1"
         assert self.epochs > 0, "epochs must be positive"
         assert self.batch_size > 0, "batch_size must be positive"
+
+        # Loss function validations
+        assert self.loss_function in ['mse', 'huber'], f"loss_function must be 'mse' or 'huber', got '{self.loss_function}'"
+        if self.loss_function == 'huber':
+            assert self.huber_delta > 0, "huber_delta must be positive"
         
         # Feature validations
         assert len(self.all_cell_features) > 0, "all_cell_features cannot be empty"
