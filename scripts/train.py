@@ -1,4 +1,4 @@
-"""Main training script for vertex time prediction models with YAML config support and mask support."""
+"""Main training script for vertex time prediction models with YAML config support and DNN support."""
 
 # python scripts/train.py --config-file config/configs/experiment1.yaml
 
@@ -10,10 +10,12 @@ import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from config.transformer_config import TransformerConfig
+from config.dnn_config import DNNConfig
 from config.base_config import BaseConfig
 from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.models.transformer_model import TransformerModel
+from src.models.dnn_model import DNNModel
 from src.training.trainer import Trainer
 
 
@@ -61,8 +63,19 @@ def parse_args():
 def create_config_from_yaml(yaml_path):
     """Create configuration from YAML file."""
     try:
-        # Try to create TransformerConfig from YAML
-        config = TransformerConfig.from_yaml(yaml_path)
+        # Try to determine config type by checking the content
+        import yaml
+        with open(yaml_path, 'r') as f:
+            yaml_data = yaml.safe_load(f)
+        
+        # Check if it's a DNN config
+        if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+            config = DNNConfig.from_yaml(yaml_path)
+            print(f"Loaded DNN configuration from: {yaml_path}")
+        else:
+            config = TransformerConfig.from_yaml(yaml_path)
+            print(f"Loaded Transformer configuration from: {yaml_path}")
+        
         return config
     except Exception as e:
         print(f"Error loading YAML configuration: {e}")
@@ -74,6 +87,8 @@ def create_config_default(config_type):
     """Create default configuration based on type."""
     if config_type == 'transformer':
         return TransformerConfig()
+    elif config_type == 'dnn':
+        return DNNConfig()
     else:
         raise ValueError(f"Unknown config type: {config_type}")
 
@@ -124,6 +139,12 @@ def print_training_info(config):
     print(f"  Model directory: {config.model_dir}")
     print(f"  Model path: {config.model_path}")
     print(f"  Using attention mask: {config.use_attention_mask}")
+    
+    # Print model type
+    if isinstance(config, DNNConfig):
+        print(f"  Model type: Two-Stage DNN")
+    else:
+        print(f"  Model type: Transformer")
 
 
 def validate_jet_features_setup(config, data_loader, skip_validation=False):
@@ -153,13 +174,16 @@ def validate_jet_features_setup(config, data_loader, skip_validation=False):
 
 def create_datasets_and_model(config, data_processor, train_cells_norm, val_cells_norm, 
                              train_vertex_norm, val_vertex_norm, train_times, val_times):
-    """Create datasets and model based on mask configuration."""
+    """Create datasets and model based on configuration type."""
     
     print(f"\n3. Creating TensorFlow datasets...")
     print(f"Using attention mask: {config.use_attention_mask}")
     
+    # Determine model type
+    is_dnn_model = (isinstance(config, DNNConfig) or 
+                   getattr(config, 'model_architecture', '') == 'two_stage_dnn')
+    
     if config.use_attention_mask:
-        # Use mask-enabled versions
         print("Creating datasets with attention mask support...")
         train_dataset = data_processor.create_padded_dataset_with_mask(
             train_cells_norm, train_vertex_norm, train_times, shuffle=True
@@ -167,15 +191,7 @@ def create_datasets_and_model(config, data_processor, train_cells_norm, val_cell
         val_dataset = data_processor.create_padded_dataset_with_mask(
             val_cells_norm, val_vertex_norm, val_times, shuffle=False
         )
-        
-        print(f"\n4. Building model with attention mask support...")
-        model = TransformerModel(config)
-        feature_dim = len(config.cell_features)
-        print(f"Model input feature dimension: {feature_dim}")
-        keras_model = model.build_model_with_mask(feature_dim, train_vertex_norm.shape[1])
-        
     else:
-        # Use traditional versions (backward compatibility)
         print("Creating datasets with traditional padding...")
         train_dataset = data_processor.create_padded_dataset(
             train_cells_norm, train_vertex_norm, train_times, shuffle=True
@@ -183,12 +199,25 @@ def create_datasets_and_model(config, data_processor, train_cells_norm, val_cell
         val_dataset = data_processor.create_padded_dataset(
             val_cells_norm, val_vertex_norm, val_times, shuffle=False
         )
-        
-        print(f"\n4. Building model with traditional architecture...")
+    
+    # Create appropriate model
+    feature_dim = len(config.cell_features)
+    print(f"Model input feature dimension: {feature_dim}")
+    
+    if is_dnn_model:
+        print(f"\n4. Building DNN model...")
+        model = DNNModel(config)
+        if config.use_attention_mask:
+            keras_model = model.build_model_with_mask(feature_dim, train_vertex_norm.shape[1])
+        else:
+            keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
+    else:
+        print(f"\n4. Building Transformer model...")
         model = TransformerModel(config)
-        feature_dim = len(config.cell_features)
-        print(f"Model input feature dimension: {feature_dim}")
-        keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
+        if config.use_attention_mask:
+            keras_model = model.build_model_with_mask(feature_dim, train_vertex_norm.shape[1])
+        else:
+            keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
     
     if config.use_jet_features:
         print(f"Including jet features: {config.jet_features}")
@@ -250,7 +279,7 @@ def main():
             train_times, val_times, test_times
         )
         
-        # Create datasets and model based on mask configuration
+        # Create datasets and model based on configuration type
         train_dataset, val_dataset, model, keras_model = create_datasets_and_model(
             config, data_processor, train_cells_norm, val_cells_norm,
             train_vertex_norm, val_vertex_norm, train_times, val_times
@@ -306,6 +335,12 @@ def main():
                 print(f"✓ Smart padding applied (feature-specific values)")
             else:
                 print(f"○ Traditional padding used (compatibility mode)")
+            
+            # Print model type information
+            if isinstance(config, DNNConfig):
+                print(f"✓ Two-Stage DNN model with attention pooling")
+            else:
+                print(f"✓ Transformer model architecture")
             
             # Print evaluation command
             print(f"\nTo evaluate this model, run:")
