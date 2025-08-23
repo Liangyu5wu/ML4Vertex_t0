@@ -59,6 +59,10 @@ early_stopping_patience: 20
 lr_patience: 5
 min_lr: 0.0000001
 
+# Loss function parameters
+loss_function: "mse"  # Options: "mse" or "huber"
+huber_delta: 50.0      # Delta parameter for Huber loss (only used when loss_function="huber")
+
 # Feature definitions
 spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
 vertex_spatial_features: ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
