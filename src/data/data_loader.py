@@ -26,6 +26,90 @@ class DataLoader:
             for i in range(self.config.num_files)
         ]
     
+    def apply_time_quality_cut(self, event_cells: np.ndarray) -> np.ndarray:
+        """
+        Apply time quality cut based on statistical uncertainty.
+        
+        Total uncertainty: σ_total = √(σ_vertex² + σ_cell²)
+        Cut condition: |cell_time| < n_sigma × σ_total
+        
+        Args:
+            event_cells: Array of cells for a single event
+            
+        Returns:
+            Filtered array of cells passing time quality cut
+        """
+        if not self.config.use_time_quality_cut:
+            return event_cells
+            
+        if len(event_cells) == 0:
+            return event_cells
+        
+        # Load calibration data for sigma values
+        try:
+            calibration_data = self.config.load_calibration_data()
+        except Exception:
+            print("Warning: Cannot load calibration data for time quality cut. Skipping cut.")
+            return event_cells
+        
+        # Sigma lookup tables
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
+        }
+        
+        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
+        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+        
+        def get_energy_bin_index(energy: float) -> int:
+            """Get energy bin index for calibration parameter lookup."""
+            if energy < 1.0:
+                return 0
+            for i in range(len(energy_bins) - 1):
+                if energy_bins[i] <= energy < energy_bins[i + 1]:
+                    return i
+            return len(energy_bins) - 2
+        
+        # Apply time quality cut
+        mask = np.ones(len(event_cells), dtype=bool)
+        
+        for i, cell in enumerate(event_cells):
+            try:
+                # Extract cell properties
+                barrel = int(cell['Cell_Barrel'])
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
+                cell_time = cell['Cell_time_TOF_corrected']
+                
+                # Skip cells with invalid layer
+                if layer not in [1, 2, 3]:
+                    mask[i] = False
+                    continue
+                
+                # Get sigma for this cell
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                energy_bin_idx = get_energy_bin_index(energy)
+                sigma_cell = sigma_params[energy_bin_idx]
+                
+                # Calculate total uncertainty: σ_total = √(σ_vertex² + σ_cell²)
+                sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_cell**2)
+                
+                # Apply n-sigma cut: |cell_time| < n_sigma × σ_total
+                cut_threshold = self.config.time_quality_n_sigma * sigma_total
+                
+                if abs(cell_time) > cut_threshold:
+                    mask[i] = False
+                    
+            except (KeyError, ValueError, IndexError):
+                # Skip cells with missing or invalid data
+                mask[i] = False
+        
+        return event_cells[mask]
+    
     def apply_cell_filtering(self, event_cells: np.ndarray) -> np.ndarray:
         """
         Apply configurable cell filtering based on configuration.
@@ -75,7 +159,12 @@ class DataLoader:
                 else:
                     print(f"Warning: Filter key '{filter_key}' not found in cell data. Skipping this filter.")
         
-        return event_cells[mask]
+        # Apply time quality cut before final filtering
+        filtered_cells = event_cells[mask]
+        if self.config.use_time_quality_cut:
+            filtered_cells = self.apply_time_quality_cut(filtered_cells)
+        
+        return filtered_cells
     
     def get_filtering_statistics(self, event_cells: np.ndarray) -> dict:
         """
@@ -92,6 +181,7 @@ class DataLoader:
             'valid_cells': 0,
             'track_matched_cells': 0,
             'jet_matched_cells': 0,  # NEW
+            'time_quality_passed_cells': 0,  # NEW
             'final_filtered_cells': 0
         }
         
@@ -109,6 +199,18 @@ class DataLoader:
         # NEW: Count jet-matched cells
         if 'cell_jet_matched' in event_cells.dtype.names:
             stats['jet_matched_cells'] = np.sum(event_cells['cell_jet_matched'] == True)
+        
+        # NEW: Count cells passing time quality cut (if enabled)
+        if self.config.use_time_quality_cut:
+            temp_filtered = self.apply_cell_filtering(event_cells)
+            # Remove time quality cut temporarily to count cells before this filter
+            original_time_cut = self.config.use_time_quality_cut
+            self.config.use_time_quality_cut = False
+            cells_before_time_cut = self.apply_cell_filtering(event_cells)
+            self.config.use_time_quality_cut = original_time_cut
+            
+            time_cut_filtered = self.apply_time_quality_cut(cells_before_time_cut)
+            stats['time_quality_passed_cells'] = len(time_cut_filtered)
         
         # Count cells after all filtering
         filtered_cells = self.apply_cell_filtering(event_cells)
@@ -149,6 +251,7 @@ class DataLoader:
             'cells_removed_by_valid_filter': 0,
             'cells_removed_by_track_filter': 0,
             'cells_removed_by_jet_filter': 0,  # NEW
+            'cells_removed_by_time_quality_filter': 0,  # NEW
             'cells_removed_by_additional_filters': 0
         }
         
@@ -156,6 +259,10 @@ class DataLoader:
         print(f"  Require valid cells: {self.config.require_valid_cells}")
         print(f"  Use cell-track matching: {self.config.use_cell_track_matching}")
         print(f"  Use cell-jet matching: {self.config.use_cell_jet_matching}")  # NEW
+        print(f"  Use time quality cut: {self.config.use_time_quality_cut}")  # NEW
+        if self.config.use_time_quality_cut:
+            print(f"    σ_vertex: {self.config.vertex_time_sigma} ns")
+            print(f"    Cut threshold: {self.config.time_quality_n_sigma}σ")
         print(f"  Additional filters: {self.config.additional_cell_filters}")
         print(f"  Filtering description: {self.config.get_cell_filtering_description()}")
         print(f"Using spatial features: {self.config.use_spatial_features}")
@@ -322,6 +429,12 @@ class DataLoader:
         
         print(f"\nFiltering Configuration:")
         print(f"  {self.config.get_cell_filtering_description()}")
+        
+        # NEW: Add time quality cut information
+        if self.config.use_time_quality_cut:
+            print(f"\nTime Quality Cut:")
+            print(f"  σ_vertex: {self.config.vertex_time_sigma} ns")
+            print(f"  Cut threshold: {self.config.time_quality_n_sigma}σ_total")
         
         # NEW: Add jet feature information
         if self.config.use_jet_features:
