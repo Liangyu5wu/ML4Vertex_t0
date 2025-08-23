@@ -54,6 +54,11 @@ class BaseConfig:
     use_cell_jet_matching: bool = False  # NEW: Enable cell-jet matching filter
     additional_cell_filters: Dict[str, Any] = None
     
+    # Time quality cut parameters
+    use_time_quality_cut: bool = False      # Enable time-based quality filtering
+    vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ns]
+    time_quality_n_sigma: float = 3.0       # N-sigma cut threshold
+    
     # Model architecture parameters
     use_attention_mask: bool = True  # NEW: Enable attention mask support
     
@@ -68,7 +73,7 @@ class BaseConfig:
     early_stopping_patience: int = 15
     lr_patience: int = 5
     min_lr: float = 1e-7
-
+    
     # Loss function parameters
     loss_function: str = 'mse'  # 'mse' or 'huber'
     huber_delta: float = 1.0    # Delta parameter for Huber loss
@@ -185,6 +190,10 @@ class BaseConfig:
         # NEW: Add jet matching description
         if self.use_cell_jet_matching:
             conditions.append("cell_jet_matched == True")
+            
+        # NEW: Add time quality cut description
+        if self.use_time_quality_cut:
+            conditions.append(f"|cell_time| < {self.time_quality_n_sigma}σ_total")
             
         for key, value in self.additional_cell_filters.items():
             conditions.append(f"{key} == {value}")
@@ -344,7 +353,8 @@ class BaseConfig:
                 'use_spatial_features', 'use_track_features', 'use_jet_features'
             ],
             "Cell Filtering Parameters": [
-                'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 'additional_cell_filters'
+                'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 
+                'additional_cell_filters', 'use_time_quality_cut', 'vertex_time_sigma', 'time_quality_n_sigma'
             ],
             "Model Architecture Parameters": [
                 'use_attention_mask'
@@ -409,7 +419,13 @@ class BaseConfig:
         assert 0 < self.val_split < 1, "val_split must be between 0 and 1"
         assert self.epochs > 0, "epochs must be positive"
         assert self.batch_size > 0, "batch_size must be positive"
-
+        
+        # Time quality cut validations
+        if self.use_time_quality_cut:
+            assert self.vertex_time_sigma > 0, "vertex_time_sigma must be positive"
+            assert self.time_quality_n_sigma > 0, "time_quality_n_sigma must be positive"
+            print(f"Note: Time quality cut enabled. σ_vertex={self.vertex_time_sigma} ns, {self.time_quality_n_sigma}σ cut")
+        
         # Loss function validations
         assert self.loss_function in ['mse', 'huber'], f"loss_function must be 'mse' or 'huber', got '{self.loss_function}'"
         if self.loss_function == 'huber':
@@ -480,3 +496,4 @@ class BaseConfig:
         print(f"Cell filtering: {self.get_cell_filtering_description()}")
         print(f"External models directory: {self.models_base_dir}")
         print(f"Attention mask: {'enabled' if self.use_attention_mask else 'disabled'}")
+        print(f"Loss function: {self.loss_function}" + (f" (delta={self.huber_delta})" if self.loss_function == 'huber' else ""))
