@@ -341,13 +341,13 @@ class Visualizer:
         # Plot histograms
         plt.hist(y_true, bins=bins, alpha=0.6, 
                 label=f'Actual (μ={true_mean:.4f}, σ={true_std:.4f}, RMS={true_rms:.4f})', 
-                color='blue', density=True)
+                color='blue', density=False)
         plt.hist(y_pred, bins=bins, alpha=0.6, 
                 label=f'Predicted (μ={pred_mean:.4f}, σ={pred_std:.4f}, RMS={pred_rms:.4f})', 
-                color='red', density=True)
+                color='red', density=False)
         
         plt.xlabel('Vertex Time')
-        plt.ylabel('Density')
+        plt.ylabel('Count')
         plt.title(f'{self.config.model_name}: Distribution Comparison')
         plt.legend()
         plt.grid(True, alpha=0.3)
@@ -381,7 +381,7 @@ class Visualizer:
         plt.figure(figsize=(10, 8))
         
         # Plot histogram
-        plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=True)
+        plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=False)
         
         # Add vertical lines for statistics
         plt.axvline(x=error_mean, color='k', linestyle='-', linewidth=2, 
@@ -394,10 +394,13 @@ class Visualizer:
         # Overlay normal distribution for comparison
         x_norm = np.linspace(errors.min(), errors.max(), 100)
         y_norm = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - error_mean) / error_std) ** 2)
-        plt.plot(x_norm, y_norm, 'r--', linewidth=2, label='Normal Distribution')
+        # Scale normal distribution to match histogram counts
+        bin_width = (errors.max() - errors.min()) / 100
+        scale_factor = len(errors) * bin_width
+        plt.plot(x_norm, y_norm * scale_factor, 'r--', linewidth=2, label='Normal Distribution')
         
         plt.xlabel('Prediction Error (Predicted - Actual)')
-        plt.ylabel('Density')
+        plt.ylabel('Count')
         plt.title(f'{self.config.model_name}: Error Distribution')
         plt.legend()
         plt.grid(True, alpha=0.3)
