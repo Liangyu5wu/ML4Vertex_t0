@@ -4,7 +4,7 @@ model_name: "dnn_with_jets"
 # Model architecture type
 model_architecture: "two_stage_dnn"
 loss_function: "huber"
-huber_delta: 50.0
+huber_delta: 100.0
 
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
