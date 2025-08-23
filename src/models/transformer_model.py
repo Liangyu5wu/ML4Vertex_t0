@@ -13,6 +13,24 @@ def root_mean_squared_error(y_true, y_pred):
     """Custom RMSE metric."""
     return K.sqrt(K.mean(K.square(y_pred - y_true)))
 
+def get_loss_function(loss_name: str, delta: float = 1.0):
+    """
+    Get loss function based on configuration.
+    
+    Args:
+        loss_name: Name of the loss function ('mse' or 'huber')
+        delta: Delta parameter for Huber loss
+        
+    Returns:
+        Loss function for compilation
+    """
+    if loss_name == 'mse':
+        return 'mse'
+    elif loss_name == 'huber':
+        return tf.keras.losses.Huber(delta=delta)
+    else:
+        raise ValueError(f"Unsupported loss function: {loss_name}")
+
 
 class MaskedGlobalAveragePooling1D(layers.Layer):
     """Global average pooling with attention mask support."""
@@ -192,6 +210,8 @@ class TransformerModel:
             model = models.Model(inputs=[cell_inputs, vertex_inputs, mask_inputs], outputs=output)
         else:
             model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
+
+        loss_function = get_loss_function(self.config.loss_function, self.config.huber_delta)
         
         # Compile model
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
@@ -245,6 +265,7 @@ class TransformerModel:
             'TransformerBlock': TransformerBlock,
             'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D,  # Add new layer
             # Add standard metrics that might be saved as custom objects
+            'Huber': tf.keras.losses.Huber,
             'mse': tf.keras.losses.MeanSquaredError(),
             'mae': tf.keras.metrics.MeanAbsoluteError(),
             'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric')
