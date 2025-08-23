@@ -9,7 +9,7 @@ min_cells: 1
 cell_selection_feature: "Cell_e"
 
 # Feature selection parameters
-use_spatial_features: true
+use_spatial_features: false
 use_track_features: false        # Include track matching features
 use_jet_features: true          # Include jet matching features
 
@@ -66,7 +66,7 @@ min_lr: 0.0000001
 
 # Loss function parameters
 loss_function: "huber"  # Options: "mse" or "huber"
-huber_delta: 50.0      # Delta parameter for Huber loss (only used when loss_function="huber")
+huber_delta: 100.0      # Delta parameter for Huber loss (only used when loss_function="huber")
 
 # Feature definitions
 spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
