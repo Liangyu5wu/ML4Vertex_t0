@@ -1,4 +1,4 @@
-"""Main evaluation script for vertex time prediction models with mask support."""
+"""Main evaluation script for vertex time prediction models with DNN support."""
 
 # python scripts/evaluate.py --model-dir models/transformer_simple_experiment --load-data
 
@@ -10,9 +10,11 @@ import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from config.transformer_config import TransformerConfig
+from config.dnn_config import DNNConfig
 from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.models.transformer_model import TransformerModel
+from src.models.dnn_model import DNNModel
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.visualizer import Visualizer
 from src.training.trainer import Trainer
@@ -39,9 +41,27 @@ def parse_args():
 def load_config_and_model(model_dir):
     """Load configuration and model from directory."""
     try:
-        # Load configuration
-        config = TransformerConfig.load_config(model_dir)
-        print(f"Loaded configuration from: {model_dir}")
+        # Try to load configuration - check for DNN vs Transformer
+        config_path = os.path.join(model_dir, "config.yaml")
+        if os.path.exists(config_path):
+            # Check config type by reading YAML content
+            import yaml
+            with open(config_path, 'r') as f:
+                yaml_data = yaml.safe_load(f)
+            
+            if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+                config = DNNConfig.load_config(model_dir)
+                print(f"Loaded DNN configuration from: {model_dir}")
+                is_dnn_model = True
+            else:
+                config = TransformerConfig.load_config(model_dir)
+                print(f"Loaded Transformer configuration from: {model_dir}")
+                is_dnn_model = False
+        else:
+            # Fallback to JSON config (assume Transformer for compatibility)
+            config = TransformerConfig.load_config(model_dir)
+            print(f"Loaded configuration from: {model_dir}")
+            is_dnn_model = False
         
         # Load model - try both .h5 and .keras formats for backward compatibility
         model_h5_path = os.path.join(model_dir, "model.h5")
@@ -55,11 +75,15 @@ def load_config_and_model(model_dir):
         else:
             raise FileNotFoundError(f"No model file found in {model_dir}. Expected model.h5 or model.keras")
         
-        keras_model = TransformerModel.load_model(model_path)
+        # Load model with appropriate custom objects
+        if is_dnn_model:
+            keras_model = DNNModel.load_model(model_path)
+        else:
+            keras_model = TransformerModel.load_model(model_path)
         print(f"Loaded model from: {model_path}")
         
         # Display model type information
-        print_model_info(keras_model)
+        print_model_info(keras_model, is_dnn_model)
         
         return config, keras_model
         
@@ -68,7 +92,7 @@ def load_config_and_model(model_dir):
         raise
 
 
-def print_model_info(model):
+def print_model_info(model, is_dnn_model):
     """Print information about the loaded model."""
     # Detect model type
     if hasattr(model, 'input'):
@@ -82,13 +106,12 @@ def print_model_info(model):
         num_inputs = 2  # Fallback
         input_names = ["unknown"]
     
-    print(f"\nModel Information:")
-    print(f"  Type: {'Mask-enabled' if num_inputs == 3 else 'Traditional'}")
-    print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
+    model_type = "DNN" if is_dnn_model else "Transformer"
+    mask_enabled = "Mask-enabled" if num_inputs == 3 else "Traditional"
     
-    # Check for attention mask parameter in config if possible
-    if hasattr(model, '_config') and hasattr(model._config, 'use_attention_mask'):
-        print(f"  Attention mask configured: {model._config.use_attention_mask}")
+    print(f"\nModel Information:")
+    print(f"  Type: {model_type} ({mask_enabled})")
+    print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
 
 
 def load_or_reuse_data(config, data_dir_override=None, load_data=False):
@@ -234,6 +257,12 @@ def main():
             
         if hasattr(config, 'use_cell_jet_matching') and config.use_cell_jet_matching:
             print(f"Cell-jet matching: applied during training")
+        
+        # Print model type
+        if isinstance(config, DNNConfig):
+            print(f"Model type: Two-Stage DNN")
+        else:
+            print(f"Model type: Transformer")
         
         # Print performance summary
         print(f"\nPerformance Summary:")
