@@ -77,6 +77,15 @@ class DNNModel:
         self.config = config
         self.model = None
         
+    def _get_loss_function(self):
+        """Get loss function based on configuration."""
+        if self.config.loss_function == 'huber':
+            return tf.keras.losses.Huber(delta=self.config.huber_delta)
+        elif self.config.loss_function == 'mse':
+            return 'mse'
+        else:
+            raise ValueError(f"Unsupported loss function: {self.config.loss_function}")
+        
     def build_model(self, feature_dim: int, vertex_dim: int) -> tf.keras.Model:
         """
         Build the DNN model architecture (backward compatibility).
@@ -197,11 +206,11 @@ class DNNModel:
         else:
             model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
         
-        # Compile model
+        # Compile model with configurable loss function
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
         model.compile(
             optimizer=optimizer,
-            loss='mse',
+            loss=self._get_loss_function(),
             metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
         )
         
@@ -246,7 +255,8 @@ class DNNModel:
             'MaskedAttentionPooling': MaskedAttentionPooling,
             'mse': tf.keras.losses.MeanSquaredError(),
             'mae': tf.keras.metrics.MeanAbsoluteError(),
-            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric')
+            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric'),
+            'Huber': tf.keras.losses.Huber
         }
         
         try:
