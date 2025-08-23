@@ -69,7 +69,7 @@ def load_and_filter_data(config: SimpleConfig, matching_type: str = "track") -> 
         config: Configuration object
         matching_type: "track" for cell-track matching, "jet" for cell-jet matching
         
-    Returns:
+    Retur:
         Tuple of (filtered_cell_sequences, vertex_times)
     """
     print(f"Loading data from {config.data_dir}")
@@ -197,16 +197,16 @@ def apply_cell_jet_filtering(event_cells, config: SimpleConfig):
     return event_cells[mask]
 
 
-def get_energy_bin_index(energy: float, energy_bins: List[float]) -> int:
+def get_energy_bin_index(energy: float, energy_bi: List[float]) -> int:
     """Get energy bin index for calibration parameter lookup."""
     if energy < 1.0:
         return 0  # Use first bin for energies < 1 GeV
     
-    for i in range(len(energy_bins) - 1):
-        if energy_bins[i] <= energy < energy_bins[i + 1]:
+    for i in range(len(energy_bi) - 1):
+        if energy_bi[i] <= energy < energy_bi[i + 1]:
             return i
     
-    return len(energy_bins) - 2  # Last bin for energies >= 10 GeV
+    return len(energy_bi) - 2  # Last bin for energies >= 10 GeV
 
 
 def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
@@ -217,7 +217,7 @@ def apply_time_calibration(cell_sequences: List, config: SimpleConfig) -> List:
         cell_sequences: Original cell sequences (already layer-filtered)
         config: Configuration with calibration data
         
-    Returns:
+    Retur:
         Cell sequences with calibrated time
     """
     print("Applying time calibration...")
@@ -346,19 +346,19 @@ def calculate_traditional_t0(cell_sequences: List, vertex_times: np.ndarray, con
         # Print debug info for first n events
         if event_idx < 10:  # Print first 10 events
             print(f"\n{matching_type.capitalize()} matching - Event {event_idx}:")
-            print(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ns")
+            print(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ps")
             print(f"  Number of filtered cells: {len(calibrated_cell_times)}")
             
             # Print all original cell times (before calibration)
             original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
-            print(f"  Original cell times (before calibration): {original_times_str} ns")
+            print(f"  Original cell times (before calibration): {original_times_str} ps")
             
             # Print all calibrated cell times (after calibration)
             calibrated_times_str = ", ".join([f'{t:.1f}' for t in calibrated_cell_times])
-            print(f"  Calibrated cell times (after calibration): {calibrated_times_str} ns")
+            print(f"  Calibrated cell times (after calibration): {calibrated_times_str} ps")
             
-            print(f"  Reconstructed vertex time: {t0:.4f} ns")
-            print(f"  Error (reco - truth): {t0 - vertex_times[event_idx]:.4f} ns")
+            print(f"  Reconstructed vertex time: {t0:.4f} ps")
+            print(f"  Error (reco - truth): {t0 - vertex_times[event_idx]:.4f} ps")
     
     traditional_t0 = np.array(traditional_t0)
     t0_errors = traditional_t0 - vertex_times
@@ -416,7 +416,7 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     else:
         fit_mean, fit_std = mean_all, std_all
     
-    plt.xlabel('Traditional t0 [ns]')
+    plt.xlabel('Traditional t0 [ps]')
     plt.ylabel('Count')
     plt.title(f'Traditional t0 Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
@@ -470,7 +470,7 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     else:
         fit_mean, fit_std = mean_all, std_all
     
-    plt.xlabel('Traditional t0 - True t0 [ns]')
+    plt.xlabel('Traditional t0 - True t0 [ps]')
     plt.ylabel('Count')
     plt.title(f'Traditional t0 Error Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
@@ -499,13 +499,13 @@ def plot_true_vertex_time_distribution(vertex_times: np.ndarray, save_path: str,
     
     # Add vertical lines for mean and ±1σ
     plt.axvline(x=mean_val, color='red', linestyle='-', linewidth=2, 
-               label=f'Mean: {mean_val:.2f} ns')
+               label=f'Mean: {mean_val:.2f} ps')
     plt.axvline(x=mean_val + std_val, color='red', linestyle=':', linewidth=2, 
-               label=f'+1σ: {std_val:.2f} ns')
+               label=f'+1σ: {std_val:.2f} ps')
     plt.axvline(x=mean_val - std_val, color='red', linestyle=':', linewidth=2, 
                label=f'-1σ')
     
-    plt.xlabel('True Vertex Time [ns]')
+    plt.xlabel('True Vertex Time [ps]')
     plt.ylabel('Count')
     plt.title(f'True Vertex Time Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'Data: μ={mean_val:.2f}, σ={std_val:.2f}, N={len(vertex_times)}'])
@@ -551,8 +551,8 @@ def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save
     rmse = np.sqrt(np.mean((traditional_t0 - vertex_times) ** 2))
     mae = np.mean(np.abs(traditional_t0 - vertex_times))
     
-    plt.xlabel('True Vertex Time [ns]')
-    plt.ylabel('Traditional t0 [ns]')
+    plt.xlabel('True Vertex Time [ps]')
+    plt.ylabel('Traditional t0 [ps]')
     plt.title(f'Traditional t0 vs True t0 ({matching_type.capitalize()} Matching)')
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -690,12 +690,12 @@ def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir
             f.write("-" * 30 + "\n")
             f.write(f"  Events processed: {track_results['num_events']}\n")
             f.write(f"  Correlation: {track_results['correlation']:.4f}\n")
-            f.write(f"  RMSE: {track_results['rmse']:.4f} ns\n")
-            f.write(f"  MAE: {track_results['mae']:.4f} ns\n")
-            f.write(f"  Mean error: {track_results['mean_error']:.4f} ns\n")
-            f.write(f"  Error std: {track_results['std_error']:.4f} ns\n")
-            f.write(f"  Mean t0: {track_results['mean_t0']:.4f} ns\n")
-            f.write(f"  t0 std: {track_results['std_t0']:.4f} ns\n\n")
+            f.write(f"  RMSE: {track_results['rmse']:.4f} ps\n")
+            f.write(f"  MAE: {track_results['mae']:.4f} ps\n")
+            f.write(f"  Mean error: {track_results['mean_error']:.4f} ps\n")
+            f.write(f"  Error std: {track_results['std_error']:.4f} ps\n")
+            f.write(f"  Mean t0: {track_results['mean_t0']:.4f} ps\n")
+            f.write(f"  t0 std: {track_results['std_t0']:.4f} ps\n\n")
         else:
             f.write("CELL-TRACK MATCHING RESULTS: No valid events\n\n")
         
@@ -704,12 +704,12 @@ def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir
             f.write("-" * 30 + "\n")
             f.write(f"  Events processed: {jet_results['num_events']}\n")
             f.write(f"  Correlation: {jet_results['correlation']:.4f}\n")
-            f.write(f"  RMSE: {jet_results['rmse']:.4f} ns\n")
-            f.write(f"  MAE: {jet_results['mae']:.4f} ns\n")
-            f.write(f"  Mean error: {jet_results['mean_error']:.4f} ns\n")
-            f.write(f"  Error std: {jet_results['std_error']:.4f} ns\n")
-            f.write(f"  Mean t0: {jet_results['mean_t0']:.4f} ns\n")
-            f.write(f"  t0 std: {jet_results['std_t0']:.4f} ns\n\n")
+            f.write(f"  RMSE: {jet_results['rmse']:.4f} ps\n")
+            f.write(f"  MAE: {jet_results['mae']:.4f} ps\n")
+            f.write(f"  Mean error: {jet_results['mean_error']:.4f} ps\n")
+            f.write(f"  Error std: {jet_results['std_error']:.4f} ps\n")
+            f.write(f"  Mean t0: {jet_results['mean_t0']:.4f} ps\n")
+            f.write(f"  t0 std: {jet_results['std_t0']:.4f} ps\n\n")
         else:
             f.write("CELL-JET MATCHING RESULTS: No valid events\n\n")
         
@@ -721,8 +721,8 @@ def create_comparison_summary(track_results: Dict, jet_results: Dict, output_dir
             mae_diff = jet_results['mae'] - track_results['mae']
             
             f.write(f"  Correlation difference (jet - track): {corr_diff:+.4f}\n")
-            f.write(f"  RMSE difference (jet - track): {rmse_diff:+.4f} ns\n")
-            f.write(f"  MAE difference (jet - track): {mae_diff:+.4f} ns\n")
+            f.write(f"  RMSE difference (jet - track): {rmse_diff:+.4f} ps\n")
+            f.write(f"  MAE difference (jet - track): {mae_diff:+.4f} ps\n")
             
             if corr_diff > 0:
                 f.write("  → Jet matching shows better correlation\n")
