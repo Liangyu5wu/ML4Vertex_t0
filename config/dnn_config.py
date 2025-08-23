@@ -32,6 +32,10 @@ class DNNConfig(BaseConfig):
     learning_rate: float = 1e-4
     lr_reduction_factor: float = 0.5
     
+    # Loss function parameters
+    loss_function: str = 'mse'
+    huber_delta: float = 1.0
+    
     # Detector calibration parameters (inherited from BaseConfig)
     use_detector_params: bool = False
     calibration_data_file: str = "cell_jet_calibration.txt"
@@ -75,6 +79,10 @@ class DNNConfig(BaseConfig):
         
         # Attention parameters
         assert self.attention_hidden_units > 0, "attention_hidden_units must be positive"
+        
+        # Loss function validations
+        assert self.loss_function in ['mse', 'huber'], f"loss_function must be 'mse' or 'huber', got {self.loss_function}"
+        assert self.huber_delta > 0, "huber_delta must be positive"
         
         # Detector calibration validation (if enabled)
         if self.use_detector_params:
@@ -145,3 +153,5 @@ class DNNConfig(BaseConfig):
         print(f"  event_encoder_units: {self.event_encoder_units}")
         print(f"  event_dropout_rates: {self.event_dropout_rates}")
         print(f"  use_batch_norm: {self.use_batch_norm}")
+        print(f"  loss_function: {self.loss_function}")
+        print(f"  huber_delta: {self.huber_delta}")
