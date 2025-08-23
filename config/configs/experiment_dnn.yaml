@@ -25,7 +25,7 @@ use_cell_jet_matching: true
 additional_cell_filters: {}
 
 # Time quality cut parameters
-use_time_quality_cut: false    # Enable time-based quality filtering
+use_time_quality_cut: true    # Enable time-based quality filtering
 vertex_time_sigma: 175.0       # HS vertex time uncertainty [ns]  
 time_quality_n_sigma: 3.0      # N-sigma cut threshold
 
