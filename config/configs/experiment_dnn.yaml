@@ -12,7 +12,7 @@ min_cells: 1
 cell_selection_feature: "Cell_e"
 
 # Feature selection parameters
-use_spatial_features: true
+use_spatial_features: false
 use_track_features: false
 use_jet_features: true
 
@@ -52,7 +52,7 @@ attention_hidden_units: 32
 
 # Event-level processing parameters
 event_encoder_units: [256, 128, 64]
-event_dropout_rates: [0.3, 0.2, 0.1]
+event_dropout_rates: [0.2, 0.2, 0.1]
 use_batch_norm: true
 
 # Training parameters
