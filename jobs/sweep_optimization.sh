@@ -1,18 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=sweep_mask_opt
+#SBATCH --job-name=opt_sweep
 #SBATCH --account=m2616
 #SBATCH --constraint=gpu
 #SBATCH --qos=shared
 #SBATCH --nodes=1
 #SBATCH -n 1
-#SBATCH -c 32         # Required: NERSC gpu_shared_ss11 queue mandates 32 cores per GPU
+#SBATCH -c 32
 #SBATCH --gpus-per-task=1
 #SBATCH --time=10:00:00
-#SBATCH --output=../logs/sweep/slurm-sweep_mask_opt-%j.out
-#SBATCH --error=../logs/sweep/slurm-sweep_mask_opt-%j.err
+#SBATCH --output=../logs/sweep/slurm-opt_sweep-%j.out
+#SBATCH --error=../logs/sweep/slurm-opt_sweep-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=liangyu5@stanford.edu
-
 
 # Print job information
 echo "=========================================="
@@ -23,11 +22,10 @@ echo "Start time: $(date)"
 echo "Working directory: $(pwd)"
 echo "=========================================="
 
-
 cd /pscratch/sd/l/liangyu/vertextiming/ML4Vertex_t0
 source setup.sh
 
-mkdir -p ../logs
+mkdir -p ../logs/sweep
 
 echo "Loading NERSC modules..."
 module load craype
@@ -37,49 +35,44 @@ module load tensorflow/2.12.0
 export SLURM_CPU_BIND="cores"
 export NUMEXPR_MAX_THREADS=128
 export CUDA_VISIBLE_DEVICES=0
-# Utilize available cores while keeping GPU workload optimal
 export TF_NUM_INTEROP_THREADS=8
 export TF_NUM_INTRAOP_THREADS=16
 export OMP_NUM_THREADS=16
 
 # Verify GPU access
 echo "Checking GPU access..."
-nvidia-smi || {
-    echo "WARNING: nvidia-smi failed, but continuing..."
-}
+nvidia-smi || echo "WARNING: nvidia-smi failed, but continuing..."
 
-# Remove any conflicting tensorflow installations
+# Clean up conflicting tensorflow installations
 echo "Cleaning up any pip-installed tensorflow..."
 pip uninstall --user -y tensorflow tensorflow-gpu tensorflow-cpu 2>/dev/null || true
 
-# Verify environment
-echo "Python version: $(python --version)"
-echo "Python location: $(which python)"
-echo "Pip user directory: $(python -m site --user-base)"
-
-# Test TensorFlow functionality
+# Test TensorFlow
 echo "Testing TensorFlow functionality..."
 python -c "
 import tensorflow as tf
 print(f'TensorFlow version: {tf.__version__}')
 print(f'GPU available: {tf.config.list_physical_devices(\"GPU\")}')
-print(f'CUDA available: {tf.test.is_built_with_cuda()}')
-" || {
-    echo "WARNING: TensorFlow test failed, but continuing..."
-}
+" || echo "WARNING: TensorFlow test failed, but continuing..."
 
-# Start parameter sweep
+# Configure sweep parameters
+GRID_TYPE=${1:-"transformer_quick"}  # Default to transformer_quick
+MAX_EXP=${2:-50}                     # Default to 50 experiments
+CONFIG_FILE="config/configs/experiment_with_jets.yaml"
+
 echo "=========================================="
-echo "STARTING MASK OPTIMIZATION PARAMETER SWEEP"
+echo "OPTIMIZED PARAMETER SWEEP"
 echo "=========================================="
-echo "Sweep type: mask_optimization"
-echo "Base config: config/configs/experiment_nersc.yaml"
+echo "Grid type: $GRID_TYPE"
+echo "Max experiments: $MAX_EXP"
+echo "Config file: $CONFIG_FILE"
 echo "Time started: $(date)"
 
-# Run the parameter sweep
+# Run optimized parameter sweep
 python scripts/parameter_sweep.py \
-    --base-config config/configs/experiment_nersc.yaml \
-    --grid-type mask_optimization
+    --config "$CONFIG_FILE" \
+    --grid "$GRID_TYPE" \
+    --max-exp "$MAX_EXP"
 
 # Check if sweep completed successfully
 if [ $? -eq 0 ]; then
@@ -88,12 +81,29 @@ if [ $? -eq 0 ]; then
     echo "=========================================="
     
     # Find the most recent results directory
-    RESULTS_DIR=$(find results/ -name "parameter_sweep_*" -type d | sort | tail -1)
+    RESULTS_DIR=$(find results/ -name "sweep_*" -type d | sort | tail -1)
     
     if [ -n "$RESULTS_DIR" ] && [ -d "$RESULTS_DIR" ]; then
         echo "Results directory: $RESULTS_DIR"
         
-        # Run analysis on the results
+        # Show quick summary
+        if [ -f "$RESULTS_DIR/results.csv" ]; then
+            echo "Quick summary:"
+            python -c "
+import pandas as pd
+df = pd.read_csv('$RESULTS_DIR/results.csv')
+successful = df[df['status'] == 'success']
+print(f'  Total experiments: {len(df)}')
+print(f'  Successful: {len(successful)}')
+if len(successful) > 0:
+    best = successful.loc[successful['best_val_loss'].idxmin()]
+    print(f'  Best loss: {best[\"best_val_loss\"]:.4f}')
+    if 'model_type' in best:
+        print(f'  Best model: {best[\"model_type\"]}')
+"
+        fi
+        
+        # Run automatic analysis
         echo "Running automatic analysis..."
         python scripts/analyze_sweep.py "$RESULTS_DIR"
         
@@ -101,14 +111,14 @@ if [ $? -eq 0 ]; then
             echo "Analysis completed successfully!"
             echo "Check the following files for results:"
             echo "  - $RESULTS_DIR/results.csv"
-            echo "  - $RESULTS_DIR/summary_report.txt"
-            echo "  - $RESULTS_DIR/analysis_plots/"
+            echo "  - $RESULTS_DIR/analysis_summary.txt"
+            echo "  - $RESULTS_DIR/analysis/*.png"
         else
             echo "Analysis failed, but results are available in: $RESULTS_DIR"
         fi
     else
         echo "WARNING: Could not find results directory for analysis"
-        echo "Results should be in: results/parameter_sweep_YYYYMMDD_HHMMSS/"
+        echo "Results should be in: results/sweep_YYYYMMDD_HHMMSS/"
     fi
     
 else
