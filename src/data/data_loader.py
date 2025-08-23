@@ -261,7 +261,7 @@ class DataLoader:
         print(f"  Use cell-jet matching: {self.config.use_cell_jet_matching}")  # NEW
         print(f"  Use time quality cut: {self.config.use_time_quality_cut}")  # NEW
         if self.config.use_time_quality_cut:
-            print(f"    σ_vertex: {self.config.vertex_time_sigma} ns")
+            print(f"    σ_vertex: {self.config.vertex_time_sigma} ps")
             print(f"    Cut threshold: {self.config.time_quality_n_sigma}σ")
         print(f"  Additional filters: {self.config.additional_cell_filters}")
         print(f"  Filtering description: {self.config.get_cell_filtering_description()}")
@@ -433,7 +433,7 @@ class DataLoader:
         # NEW: Add time quality cut information
         if self.config.use_time_quality_cut:
             print(f"\nTime Quality Cut:")
-            print(f"  σ_vertex: {self.config.vertex_time_sigma} ns")
+            print(f"  σ_vertex: {self.config.vertex_time_sigma} ps")
             print(f"  Cut threshold: {self.config.time_quality_n_sigma}σ_total")
         
         # NEW: Add jet feature information
