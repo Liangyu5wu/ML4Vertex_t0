@@ -32,6 +32,16 @@ class DNNConfig(BaseConfig):
     learning_rate: float = 1e-4
     lr_reduction_factor: float = 0.5
     
+    # Detector calibration parameters (inherited from BaseConfig)
+    use_detector_params: bool = False
+    calibration_data_file: str = "cell_jet_calibration.txt"
+    
+    # Calibration validation parameters
+    calibration_validation: bool = False
+    validation_detector_type: int = 1  # 1=barrel, 0=endcap
+    validation_layer: int = 1  # 1, 2, or 3
+    gaussian_fit_range: float = 120  # Range for Gaussian fitting
+    
     # Model name override
     model_name: str = "dnn_model"
     
@@ -66,8 +76,57 @@ class DNNConfig(BaseConfig):
         # Attention parameters
         assert self.attention_hidden_units > 0, "attention_hidden_units must be positive"
         
+        # Detector calibration validation (if enabled)
+        if self.use_detector_params:
+            self.validate_detector_params()
+        
         # Call parent validation
         super().validate_config()
+    
+    def validate_detector_params(self):
+        """Validate detector calibration parameters."""
+        try:
+            calibration_data = self.load_calibration_data()
+        except Exception as e:
+            raise ValueError(f"Failed to load calibration data: {e}")
+        
+        # Check required detector parameter keys
+        required_params = [
+            'EMB1_params', 'EMB1_sigma', 'EMB2_params', 'EMB2_sigma', 'EMB3_params', 'EMB3_sigma',
+            'EME1_params', 'EME1_sigma', 'EME2_params', 'EME2_sigma', 'EME3_params', 'EME3_sigma'
+        ]
+        
+        missing_params = []
+        for param_name in required_params:
+            if param_name not in calibration_data:
+                missing_params.append(param_name)
+        
+        if missing_params:
+            raise ValueError(f"Missing required calibration parameters: {', '.join(missing_params)}")
+        
+        print("Detector parameter validation passed for DNN model.")
+    
+    def load_calibration_data(self):
+        """Load calibration data from external file."""
+        calibration_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "calibration_data")
+        calibration_path = os.path.join(calibration_dir, self.calibration_data_file)
+        
+        if not os.path.exists(calibration_path):
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        return calibration_data
     
     def print_config(self):
         """Print DNN-specific configuration parameters."""
