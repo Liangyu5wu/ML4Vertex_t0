@@ -65,10 +65,10 @@ class OptimizedParameterSweep:
             },
             'dnn_quick': {
                 'model_type': ['dnn'],
-                'cell_encoder_units': [[64, 32], [128, 64]],
-                'event_encoder_units': [[256, 128, 64], [512, 256, 128]],
-                'learning_rate': [1e-4, 5e-4],
-                'attention_hidden_units': [32, 64],
+                'cell_encoder_units': [[64, 32], [128, 64], [32, 16]],
+                'event_encoder_units': [[256, 128, 64, 8], [512, 256, 128, 64, 8]],
+                'learning_rate': [1e-3, 1e-4, 1e-5],
+                'attention_hidden_units': [16, 32, 64],
                 'epochs': [20],
             },
             'dnn_full': {
