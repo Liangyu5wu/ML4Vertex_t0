@@ -5,9 +5,14 @@
 import os
 import sys
 import argparse
+import logging
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from config.transformer_config import TransformerConfig
 from config.dnn_config import DNNConfig
@@ -71,15 +76,15 @@ def create_config_from_yaml(yaml_path):
         # Check if it's a DNN config
         if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
             config = DNNConfig.from_yaml(yaml_path)
-            print(f"Loaded DNN configuration from: {yaml_path}")
+            logger.info(f"Loaded DNN configuration from: {yaml_path}")
         else:
             config = TransformerConfig.from_yaml(yaml_path)
-            print(f"Loaded Transformer configuration from: {yaml_path}")
+            logger.info(f"Loaded Transformer configuration from: {yaml_path}")
         
         return config
     except Exception as e:
-        print(f"Error loading YAML configuration: {e}")
-        print("Falling back to default TransformerConfig")
+        logger.error(f"Error loading YAML configuration: {e}")
+        logger.info("Falling back to default TransformerConfig")
         return TransformerConfig()
 
 
@@ -100,18 +105,18 @@ def create_config(args):
         if not os.path.exists(args.config_file):
             raise FileNotFoundError(f"YAML configuration file not found: {args.config_file}")
         
-        print(f"Loading configuration from: {args.config_file}")
+        logger.info(f"Loading configuration from: {args.config_file}")
         config = create_config_from_yaml(args.config_file)
-        print(f"DEBUG: After YAML load, use_spatial_features = {config.use_spatial_features}")
-        print(f"DEBUG: After YAML load, use_attention_mask = {config.use_attention_mask}")
+        logger.debug(f"After YAML load, use_spatial_features = {config.use_spatial_features}")
+        logger.debug(f"After YAML load, use_attention_mask = {config.use_attention_mask}")
     else:
         # Priority 2: Use default configuration type
-        print(f"Using default {args.config} configuration")
+        logger.info(f"Using default {args.config} configuration")
         config = create_config_default(args.config)
     
     # Priority 3: Override with command line arguments
     config.update_from_args(args)
-    print(f"DEBUG: After args update, use_spatial_features = {config.use_spatial_features}")
+    logger.debug(f"After args update, use_spatial_features = {config.use_spatial_features}")
     
     # Handle attention mask argument
     if args.use_attention_mask is not None:
@@ -119,7 +124,7 @@ def create_config(args):
             config.use_attention_mask = True
         elif args.use_attention_mask == 'false':
             config.use_attention_mask = False
-        print(f"DEBUG: After args update, use_attention_mask = {config.use_attention_mask}")
+        logger.debug(f"After args update, use_attention_mask = {config.use_attention_mask}")
     
     return config
 
@@ -150,24 +155,24 @@ def print_training_info(config):
 def validate_jet_features_setup(config, data_loader, skip_validation=False):
     """Validate jet features setup if enabled."""
     if skip_validation:
-        print("Skipping jet features validation as requested.")
+        logger.warning("Skipping jet features validation as requested.")
         return True
     
     # Check if jet features or jet matching are enabled
     if config.use_jet_features or config.use_cell_jet_matching:
-        print("\nValidating jet features setup...")
+        logger.info("Validating jet features setup...")
         
         # Check if data contains required jet fields
         if not data_loader.validate_jet_features_in_dataset():
-            print("\nError: Jet features validation failed!")
-            print("Your configuration requires jet features, but the dataset doesn't contain them.")
-            print("\nPossible solutions:")
-            print("1. Use data processed with cell-jet matching (update your H5 files)")
-            print("2. Disable jet features in config: set use_jet_features=false and use_cell_jet_matching=false")
-            print("3. Use --skip-jet-validation flag (not recommended)")
+            logger.error("Jet features validation failed!")
+            logger.error("Your configuration requires jet features, but the dataset doesn't contain them.")
+            logger.info("Possible solutions:")
+            logger.info("1. Use data processed with cell-jet matching (update your H5 files)")
+            logger.info("2. Disable jet features in config: set use_jet_features=false and use_cell_jet_matching=false")
+            logger.info("3. Use --skip-jet-validation flag (not recommended)")
             return False
         
-        print("✓ Jet features validation passed")
+        logger.info("✓ Jet features validation passed")
     
     return True
 

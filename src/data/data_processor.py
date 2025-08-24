@@ -261,6 +261,13 @@ class DataProcessor:
                 
                 # Get energy bin index and calibration value
                 energy_bin_idx = self.get_energy_bin_index(energy)
+                
+                # Add bounds checking for array access
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
                 calibration_value = detector_params[energy_bin_idx]
                 
                 # Apply calibration: corrected_time = tof_corrected_time - calibration_value
@@ -432,6 +439,13 @@ class DataProcessor:
                 # Get sigma for this cell
                 sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
                 energy_bin_idx = self.get_energy_bin_index(energy)
+                
+                # Add bounds checking for array access
+                if energy_bin_idx >= len(sigma_params):
+                    energy_bin_idx = len(sigma_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
                 sigma = sigma_params[energy_bin_idx]
                 
                 # Weight = 1/sigma^2

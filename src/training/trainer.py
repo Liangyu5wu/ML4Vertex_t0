@@ -4,22 +4,23 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import callbacks
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, Union
 
 from config.base_config import BaseConfig
 from src.models.transformer_model import TransformerModel
+from src.models.dnn_model import DNNModel
 
 
 class Trainer:
     """Handle model training with callbacks and monitoring."""
     
-    def __init__(self, config: BaseConfig, model: TransformerModel):
+    def __init__(self, config: BaseConfig, model: Union[TransformerModel, DNNModel]):
         """
         Initialize trainer.
         
         Args:
             config: Configuration object
-            model: Model to train
+            model: Model to train (either TransformerModel or DNNModel)
         """
         self.config = config
         self.model = model
@@ -213,9 +214,15 @@ class Trainer:
             raise FileNotFoundError(f"No saved model found at {self.config.model_path}")
         
         print(f"Loading model from {self.config.model_path}")
-        keras_model = TransformerModel.load_model(self.config.model_path)
         
-        # Update the model in our TransformerModel wrapper
+        # Load model using the appropriate class method
+        if isinstance(self.model, TransformerModel):
+            keras_model = TransformerModel.load_model(self.config.model_path)
+        else:
+            from src.models.dnn_model import DNNModel
+            keras_model = DNNModel.load_model(self.config.model_path)
+        
+        # Update the model in our model wrapper
         self.model.model = keras_model
         
         print(f"Resuming training for {additional_epochs} additional epochs...")

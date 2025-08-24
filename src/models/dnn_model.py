@@ -2,15 +2,14 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import tensorflow.keras.backend as K
 from typing import Dict, Any
 
+from .model_utils import (
+    root_mean_squared_error, get_standard_metrics, get_common_custom_objects,
+    load_model_with_fallback, get_model_summary_string, count_model_parameters,
+    create_dummy_vertex_connection
+)
 from config.dnn_config import DNNConfig
-
-
-def root_mean_squared_error(y_true, y_pred):
-    """Custom RMSE metric."""
-    return K.sqrt(K.mean(K.square(y_pred - y_true)))
 
 
 class MaskedAttentionPooling(layers.Layer):
@@ -179,9 +178,8 @@ class DNNModel:
             vertex_processed = vertex_inputs
             combined = layers.Concatenate(name='combine_features')([cell_representation, vertex_processed])
         else:
-            # Create dummy connection for vertex features
-            vertex_processed = layers.Dense(cell_representation.shape[-1])(vertex_inputs)
-            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_processed)
+            # Create simplified dummy connection for unused vertex features
+            vertex_zeros = create_dummy_vertex_connection(vertex_inputs, cell_representation.shape[-1])
             combined = layers.Add(name='add_dummy_vertex')([cell_representation, vertex_zeros])
         
         # Stage 4: Event-level processing
@@ -211,7 +209,7 @@ class DNNModel:
         model.compile(
             optimizer=optimizer,
             loss=self._get_loss_function(),
-            metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
+            metrics=get_standard_metrics()
         )
         
         self.model = model
@@ -250,66 +248,18 @@ class DNNModel:
         Returns:
             Loaded Keras model
         """
-        custom_objects = {
-            'root_mean_squared_error': root_mean_squared_error,
-            'MaskedAttentionPooling': MaskedAttentionPooling,
-            'mse': tf.keras.losses.MeanSquaredError(),
-            'mae': tf.keras.metrics.MeanAbsoluteError(),
-            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric'),
-            'Huber': tf.keras.losses.Huber
-        }
+        # Combine common custom objects with DNN-specific ones
+        custom_objects = get_common_custom_objects()
+        custom_objects.update({
+            'MaskedAttentionPooling': MaskedAttentionPooling
+        })
         
-        try:
-            model = models.load_model(filepath, custom_objects=custom_objects)
-            print(f"Model loaded successfully with compilation intact.")
-            return model
-        except Exception as e:
-            print(f"Error loading model from {filepath}: {e}")
-            if filepath.endswith('.h5'):
-                print("Attempting alternative loading method for .h5 file...")
-                try:
-                    model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
-                    print("Model architecture loaded successfully. Re-compiling...")
-                    
-                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-                    model.compile(
-                        optimizer=optimizer,
-                        loss='mse',
-                        metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
-                    )
-                    print("Model re-compiled successfully.")
-                    return model
-                except Exception as e2:
-                    print(f"Alternative loading method also failed: {e2}")
-                    raise e2
-            else:
-                raise e
+        return load_model_with_fallback(filepath, custom_objects)
     
     def get_model_summary(self) -> str:
         """Get model summary as string."""
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        summary_lines = []
-        self.model.summary(print_fn=lambda x: summary_lines.append(x))
-        return '\n'.join(summary_lines)
+        return get_model_summary_string(self.model)
     
     def count_parameters(self) -> Dict[str, int]:
-        """
-        Count model parameters.
-        
-        Returns:
-            Dictionary with parameter counts
-        """
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        total_params = self.model.count_params()
-        trainable_params = sum([K.count_params(w) for w in self.model.trainable_weights])
-        non_trainable_params = total_params - trainable_params
-        
-        return {
-            'total': total_params,
-            'trainable': trainable_params,
-            'non_trainable': non_trainable_params
-        }
+        """Count model parameters."""
+        return count_model_parameters(self.model)

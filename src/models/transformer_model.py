@@ -2,34 +2,15 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import tensorflow.keras.backend as K
 from typing import Dict, Any
 
 from .transformer_layers import PositionalEncoding, MultiHeadSelfAttention, TransformerBlock
+from .model_utils import (
+    root_mean_squared_error, get_loss_function, get_standard_metrics,
+    get_common_custom_objects, load_model_with_fallback, get_model_summary_string,
+    count_model_parameters, create_dummy_vertex_connection
+)
 from config.transformer_config import TransformerConfig
-
-
-def root_mean_squared_error(y_true, y_pred):
-    """Custom RMSE metric."""
-    return K.sqrt(K.mean(K.square(y_pred - y_true)))
-
-def get_loss_function(loss_name: str, delta: float = 1.0):
-    """
-    Get loss function based on configuration.
-    
-    Args:
-        loss_name: Name of the loss function ('mse' or 'huber')
-        delta: Delta parameter for Huber loss
-        
-    Returns:
-        Loss function for compilation
-    """
-    if loss_name == 'mse':
-        return 'mse'
-    elif loss_name == 'huber':
-        return tf.keras.losses.Huber(delta=delta)
-    else:
-        raise ValueError(f"Unsupported loss function: {loss_name}")
 
 
 class MaskedGlobalAveragePooling1D(layers.Layer):
@@ -178,15 +159,8 @@ class TransformerModel:
             # Combine cell and vertex representations
             combined = layers.Concatenate()([cell_representation, vertex_dense])
         else:
-            # Create dummy connection: process vertex but multiply by 0
-            vertex_dense = layers.Dense(
-                self.config.vertex_dense_units, 
-                activation='relu'
-            )(vertex_inputs)
-            # Project to same dimension as cell_representation
-            vertex_projected = layers.Dense(self.config.d_model)(vertex_dense)
-            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_projected)
-            # Add zeros (no effect on result)
+            # Create simplified dummy connection for unused vertex features
+            vertex_zeros = create_dummy_vertex_connection(vertex_inputs, self.config.d_model)
             combined = layers.Add()([cell_representation, vertex_zeros])
         
         # Final prediction layers
@@ -217,8 +191,8 @@ class TransformerModel:
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
         model.compile(
             optimizer=optimizer,
-            loss='mse',
-            metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
+            loss=loss_function,
+            metrics=get_standard_metrics()
         )
         
         self.model = model
@@ -258,74 +232,21 @@ class TransformerModel:
         Returns:
             Loaded Keras model
         """
-        custom_objects = {
-            'root_mean_squared_error': root_mean_squared_error,
+        # Combine common custom objects with transformer-specific ones
+        custom_objects = get_common_custom_objects()
+        custom_objects.update({
             'PositionalEncoding': PositionalEncoding,
             'MultiHeadSelfAttention': MultiHeadSelfAttention,
             'TransformerBlock': TransformerBlock,
-            'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D,  # Add new layer
-            # Add standard metrics that might be saved as custom objects
-            'Huber': tf.keras.losses.Huber,
-            'mse': tf.keras.losses.MeanSquaredError(),
-            'mae': tf.keras.metrics.MeanAbsoluteError(),
-            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric')
-        }
+            'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D
+        })
         
-        # Handle both .h5 and .keras formats
-        try:
-            model = models.load_model(filepath, custom_objects=custom_objects)
-            print(f"Model loaded successfully with compilation intact.")
-            return model
-        except Exception as e:
-            print(f"Error loading model from {filepath}: {e}")
-            # Try alternative loading method for .h5 files
-            if filepath.endswith('.h5'):
-                print("Attempting alternative loading method for .h5 file...")
-                try:
-                    # Load without compilation first
-                    model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
-                    print("Model architecture loaded successfully. Re-compiling...")
-                    
-                    # Re-compile the model with the same configuration as training
-                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # Default learning rate
-                    model.compile(
-                        optimizer=optimizer,
-                        loss='mse',
-                        metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
-                    )
-                    print("Model re-compiled successfully.")
-                    return model
-                except Exception as e2:
-                    print(f"Alternative loading method also failed: {e2}")
-                    raise e2
-            else:
-                raise e
+        return load_model_with_fallback(filepath, custom_objects)
     
     def get_model_summary(self) -> str:
         """Get model summary as string."""
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        summary_lines = []
-        self.model.summary(print_fn=lambda x: summary_lines.append(x))
-        return '\n'.join(summary_lines)
+        return get_model_summary_string(self.model)
     
     def count_parameters(self) -> Dict[str, int]:
-        """
-        Count model parameters.
-        
-        Returns:
-            Dictionary with parameter counts
-        """
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        total_params = self.model.count_params()
-        trainable_params = sum([K.count_params(w) for w in self.model.trainable_weights])
-        non_trainable_params = total_params - trainable_params
-        
-        return {
-            'total': total_params,
-            'trainable': trainable_params,
-            'non_trainable': non_trainable_params
-        }
+        """Count model parameters."""
+        return count_model_parameters(self.model)

@@ -93,6 +93,13 @@ class DataLoader:
                 # Get sigma for this cell
                 sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
                 energy_bin_idx = get_energy_bin_index(energy)
+                
+                # Add bounds checking for array access
+                if energy_bin_idx >= len(sigma_params):
+                    energy_bin_idx = len(sigma_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
                 sigma_cell = sigma_params[energy_bin_idx]
                 
                 # Calculate total uncertainty: σ_total = √(σ_vertex² + σ_cell²)
