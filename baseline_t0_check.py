@@ -382,6 +382,9 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     
     counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
     
+    # Calculate actual bin width from the histogram
+    bin_width = bin_edges[1] - bin_edges[0]
+    
     # Calculate basic statistics
     mean_all = np.mean(traditional_t0)
     std_all = np.std(traditional_t0)
@@ -393,23 +396,27 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     if np.sum(mask) > 10:  # Need enough points for fitting
         fit_data = traditional_t0[mask]
         try:
-            # Initial guess for Gaussian parameters
-            hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-            bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+            # Create histogram for fitting using the same binning approach
+            fit_bins = np.arange(-fit_range, fit_range + bin_width, bin_width)
+            hist_fit, fit_bin_edges = np.histogram(fit_data, bins=fit_bins)
+            bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
             
-            # Fit Gaussian
-            initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-            popt, _ = curve_fit(gaussian_func, bin_centers, hist_fit, p0=initial_guess)
-            
-            fit_mean, fit_std = popt[1], abs(popt[2])
-            
-            # Plot fitted Gaussian
-            x_fit = np.linspace(-fit_range, fit_range, 200)
-            y_fit = gaussian_func(x_fit, *popt)
-            # Scale to match histogram
-            scale_factor = 10 * len(traditional_t0) / len(fit_data)
-            plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2, 
-                    label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+            # Only use non-zero bins for fitting
+            nonzero_mask = hist_fit > 0
+            if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
+                # Fit Gaussian
+                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
+                popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
+                
+                fit_mean, fit_std = popt[1], abs(popt[2])
+                
+                # Plot fitted Gaussian with proper scaling
+                x_fit = np.linspace(-fit_range, fit_range, 200)
+                y_fit = gaussian_func(x_fit, *popt)
+                plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
+                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+            else:
+                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
             
         except Exception:
             fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
@@ -439,6 +446,9 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     
     counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
     
+    # Calculate actual bin width from the histogram
+    bin_width = bin_edges[1] - bin_edges[0]
+    
     # Calculate basic statistics
     mean_all = np.mean(t0_errors)
     std_all = np.std(t0_errors)
@@ -450,20 +460,27 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     if np.sum(mask) > 10:
         fit_data = t0_errors[mask]
         try:
-            hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-            bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+            # Create histogram for fitting using the same binning approach
+            fit_bins = np.arange(-fit_range, fit_range + bin_width, bin_width)
+            hist_fit, fit_bin_edges = np.histogram(fit_data, bins=fit_bins)
+            bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
             
-            initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-            popt, _ = curve_fit(gaussian_func, bin_centers, hist_fit, p0=initial_guess)
-            
-            fit_mean, fit_std = popt[1], abs(popt[2])
-            
-            # Plot fitted Gaussian
-            x_fit = np.linspace(-fit_range, fit_range, 200)
-            y_fit = gaussian_func(x_fit, *popt)
-            scale_factor = 10 * len(t0_errors) / len(fit_data)
-            plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
-                    label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+            # Only use non-zero bins for fitting
+            nonzero_mask = hist_fit > 0
+            if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
+                # Fit Gaussian
+                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
+                popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
+                
+                fit_mean, fit_std = popt[1], abs(popt[2])
+                
+                # Plot fitted Gaussian with proper scaling
+                x_fit = np.linspace(-fit_range, fit_range, 200)
+                y_fit = gaussian_func(x_fit, *popt)
+                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
+                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+            else:
+                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
             
         except Exception:
             fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)

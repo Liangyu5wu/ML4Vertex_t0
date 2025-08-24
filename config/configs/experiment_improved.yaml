@@ -1,0 +1,94 @@
+# Improved configuration with physics-informed features
+model_name: "improved_transformer_with_jets"
+
+# Data parameters
+data_dir: "../selected_h5_with_jets/"
+num_files: 43
+max_cells: 70
+min_cells: 1
+cell_selection_feature: "Cell_e"
+
+# Feature selection parameters
+use_spatial_features: true
+use_track_features: false
+use_jet_features: true
+
+# Cell filtering parameters
+require_valid_cells: true
+use_cell_track_matching: false
+use_cell_jet_matching: true
+additional_cell_filters: {}
+
+# Time quality cut parameters
+use_time_quality_cut: true
+vertex_time_sigma: 175.0
+time_quality_n_sigma: 3.0
+
+# Detector calibration parameters
+use_detector_params: true
+calibration_data_file: "cell_jet_calibration.txt"
+
+# Model architecture parameters
+use_attention_mask: true
+use_physics_informed_features: true  # NEW: Add physics-based features
+
+# Data split parameters
+test_size: 0.1
+val_split: 0.222222
+random_state: 42
+
+# Improved model architecture parameters
+d_model: 128  # Increased from 64 for better feature representation
+num_heads: 8
+dff: 256     # Increased from 128
+num_transformer_blocks: 3  # Increased from 2 for deeper model
+dropout_rate: 0.1
+
+# Dense layer parameters
+vertex_dense_units: 16  # Increased from 8
+final_dense_units: [64, 32, 16]  # More capacity
+final_dropout_rates: [0.2, 0.1, 0.05]  # More aggressive dropout
+use_batch_norm: true
+
+# Improved training parameters
+batch_size: 64          # Reduced for better gradient estimation
+epochs: 50              # Increased from 30
+learning_rate: 0.0001   # Reduced for more stable training
+lr_reduction_factor: 0.3  # More aggressive reduction
+early_stopping_patience: 25
+lr_patience: 8
+min_lr: 0.00000001
+
+# Loss function parameters - try MSE first
+loss_function: "mse"  # Changed from huber to mse
+
+# Feature definitions
+spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
+vertex_spatial_features: ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
+all_cell_features:
+  - "Cell_x"
+  - "Cell_y" 
+  - "Cell_z"
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+track_features:
+  - "matched_track_pt"
+  - "matched_track_deltaR"
+jet_features:
+  - "matched_jet_pt"
+  - "matched_jet_eta"
+  - "matched_jet_phi"
+  - "matched_jet_width"
+  - "matched_jet_deltaR"
+# CHANGE: Include Cell_time_TOF_corrected in normalization
+skip_normalization: ["Cell_Barrel", "Cell_layer"]
+
+# Physics-informed feature engineering parameters
+sigma_energy_bins: [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0]  # Energy bins for sigma lookup
+use_energy_weighted_pooling: true  # Use energy-based attention weights
+time_calibration_aware: true       # Include calibration in preprocessing

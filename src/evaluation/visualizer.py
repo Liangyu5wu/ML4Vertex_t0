@@ -380,8 +380,12 @@ class Visualizer:
         
         plt.figure(figsize=(10, 8))
         
-        # Plot histogram
-        plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=False)
+        # Create histogram with consistent binning
+        counts, bin_edges, _ = plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=False)
+        
+        # Calculate actual bin width from the histogram
+        bin_width = bin_edges[1] - bin_edges[0]
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
         # Add vertical lines for statistics
         plt.axvline(x=error_mean, color='k', linestyle='-', linewidth=2, 
@@ -392,10 +396,11 @@ class Visualizer:
                    label=f'-1σ')
         
         # Overlay normal distribution for comparison
-        x_norm = np.linspace(errors.min(), errors.max(), 100)
+        # Use the same range as the histogram data for consistency
+        x_norm = np.linspace(errors.min(), errors.max(), 200)
         y_norm = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - error_mean) / error_std) ** 2)
-        # Scale normal distribution to match histogram counts
-        bin_width = (errors.max() - errors.min()) / 100
+        
+        # Scale normal distribution to match histogram counts using actual bin width
         scale_factor = len(errors) * bin_width
         plt.plot(x_norm, y_norm * scale_factor, 'r--', linewidth=2, label='Normal Distribution')
         
