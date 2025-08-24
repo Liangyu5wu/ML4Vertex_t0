@@ -144,7 +144,22 @@ class TransformerModel:
             )(x, mask=current_mask)
         
         # Global average pooling (with or without mask)
-        if use_mask:
+        # Check if physics features are available for weighted pooling
+        use_physics = getattr(self.config, 'use_physics_informed_features', False)
+        if use_physics and feature_dim > 10:
+            # Use physics weights (cell_weight is 5th from end in physics features)
+            physics_weights = cell_inputs[:, :, -5]
+            weights = tf.expand_dims(physics_weights, axis=-1)
+            if current_mask is not None:
+                mask_expanded = tf.expand_dims(tf.cast(current_mask, tf.float32), axis=-1)
+                weights = weights * mask_expanded
+            # Normalize weights
+            weight_sum = tf.reduce_sum(weights, axis=1, keepdims=True)
+            weight_sum = tf.maximum(weight_sum, 1e-8)
+            weights = weights / weight_sum
+            # Apply weighted pooling
+            cell_representation = tf.reduce_sum(x * weights, axis=1)
+        elif use_mask:
             cell_representation = MaskedGlobalAveragePooling1D()(x, mask=current_mask)
         else:
             cell_representation = layers.GlobalAveragePooling1D()(x)

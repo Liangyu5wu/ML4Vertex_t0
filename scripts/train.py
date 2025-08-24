@@ -266,6 +266,17 @@ def main():
         
         # Process data
         print(f"\n2. Splitting and processing data...")
+        
+        # Add physics features if enabled
+        if getattr(config, 'use_physics_informed_features', False):
+            print("Adding physics-informed features...")
+            from src.data.physics_features import PhysicsFeatureEngineer
+            physics_engineer = PhysicsFeatureEngineer(config)
+            cell_sequences, feature_names = physics_engineer.add_physics_features(
+                cell_sequences, feature_names
+            )
+            print(f"Enhanced features: {len(feature_names)} total")
+        
         data_processor = DataProcessor(config)
         
         # Split data

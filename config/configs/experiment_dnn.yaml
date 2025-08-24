@@ -41,6 +41,7 @@ gaussian_fit_range: 120
 
 # Model architecture parameters
 use_attention_mask: true
+use_physics_informed_features: true  # Enable physics features
 
 # Data split parameters
 test_size: 0.1
