@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=transformer_with_jets
+#SBATCH --job-name=transformer_physics
 #SBATCH --account=m2616
 #SBATCH --constraint=gpu
 #SBATCH --qos=shared
@@ -8,8 +8,8 @@
 #SBATCH -c 32         # Required: NERSC gpu_shared_ss11 queue mandates 32 cores per GPU
 #SBATCH --gpus-per-task=1
 #SBATCH --time=08:00:00
-#SBATCH --output=../logs/slurm-transformer_with_jets-%j.out
-#SBATCH --error=../logs/slurm-transformer_with_jets-%j.err
+#SBATCH --output=../logs/slurm-transformer-%j.out
+#SBATCH --error=../logs/slurm-transformer-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=liangyu5@stanford.edu
 
@@ -69,8 +69,10 @@ print(f'CUDA available: {tf.test.is_built_with_cuda()}')
 }
 
 # Run the pipeline
-echo "Starting pipeline execution..."
+echo "Starting Transformer training with physics features..."
 echo "Time started: $(date)"
+
+python scripts/train.py --config-file config/configs/experiment_transformer.yaml
 
 python scripts/evaluate.py --model-dir /pscratch/sd/l/liangyu/vertextiming/models/transformer_with_jets --load-data
 

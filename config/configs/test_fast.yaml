@@ -1,5 +1,8 @@
 # Fast testing configuration for development and debugging
-model_name: "transformer_fast_test"
+model_name: "fast_test"
+
+# Model architecture specification (can be changed for testing)
+model_architecture: "transformer"   # Options: "transformer" or "two_stage_dnn"
 
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
@@ -8,10 +11,11 @@ max_cells: 50  # Reduced for faster processing
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
-# Feature selection parameters
-use_spatial_features: true
-use_track_features: false      
-use_jet_features: true         
+# Feature selection parameters (comprehensive switches)
+use_spatial_features: false         # Spatial position features
+use_track_features: false           # Track matching features
+use_jet_features: true              # Jet matching features
+use_physics_informed_features: true # Physics-based 1/sigma^2 weighting         
 
 # Cell filtering parameters
 require_valid_cells: true
@@ -52,8 +56,8 @@ use_batch_norm: true
 
 # Training parameters - fast training
 batch_size: 32  # Smaller batch for faster iterations
-epochs: 3  # Increased from 10 for meaningful training
-learning_rate: 0.001  # Higher LR for faster convergence
+epochs: 3  # Quick testing epochs
+learning_rate: 0.001  # Default learning rate
 lr_reduction_factor: 0.5
 early_stopping_patience: 8
 lr_patience: 3
