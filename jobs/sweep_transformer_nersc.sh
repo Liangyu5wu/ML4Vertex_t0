@@ -20,7 +20,7 @@ echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Start time: $(date)"
 
-cd /pscratch/sd/l/liangyu/vertextiming/ML4Vertex_t0
+cd /pscratch/sd/l/liangyu/vertextiming/ML4Vertex_t0_mbp_local
 source setup.sh
 mkdir -p ../logs/sweep
 
