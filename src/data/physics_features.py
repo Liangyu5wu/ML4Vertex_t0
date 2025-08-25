@@ -137,24 +137,28 @@ class PhysicsFeatureEngineer:
                 enhanced_cell.append(sigma)
                 
                 # 2. Measurement weight (1/sigma^2) - traditional weighting
+                # Apply stronger weighting and ensure positive values
                 weight = 1.0 / (sigma * sigma) if sigma > 0 else 0.0
+                # Scale weights to reasonable range (avoid too large values)
+                weight = min(weight, 1e6)  # Cap maximum weight
                 enhanced_cell.append(weight)
                 
-                # 3. Energy-normalized time (helps with different energy scales)
-                energy_norm_time = time / max(energy, 0.1)
-                enhanced_cell.append(energy_norm_time)
+                # 3. Normalized time (critical for training stability)
+                # Use both sigma and energy for normalization
+                time_normalized = time / max(sigma, 1.0)  # Time per unit uncertainty
+                enhanced_cell.append(time_normalized)
                 
-                # 4. Log energy (physics-motivated feature)
-                log_energy = np.log(max(energy, 0.01))
-                enhanced_cell.append(log_energy)
+                # 4. Energy significance (energy relative to threshold)
+                energy_significance = np.log(max(energy, 0.01) / 0.5)  # Log relative to 0.5 GeV
+                enhanced_cell.append(energy_significance)
                 
-                # 5. Time significance (time/sigma ratio)
-                time_significance = time / max(sigma, 1.0)
-                enhanced_cell.append(time_significance)
-                
-                # 6. Quality indicator (higher energy and lower sigma = better)
+                # 5. Quality factor (signal-to-noise ratio)
                 quality = energy / max(sigma, 1.0)
                 enhanced_cell.append(quality)
+                
+                # 6. Weighted time (pre-computed for easier access)
+                weighted_time = time * weight
+                enhanced_cell.append(weighted_time)
                 
                 enhanced_sequence.append(enhanced_cell)
             
@@ -163,11 +167,11 @@ class PhysicsFeatureEngineer:
         # Update feature names
         enhanced_feature_names = feature_names + [
             'cell_sigma',           # Expected time uncertainty
-            'cell_weight',          # Traditional 1/sigma^2 weight
-            'energy_norm_time',     # Time normalized by energy
-            'log_energy',           # Log of cell energy
-            'time_significance',    # Time/sigma ratio
-            'quality_indicator'     # Energy/sigma quality metric
+            'cell_weight',          # Traditional 1/sigma^2 weight  
+            'time_normalized',      # Time normalized by sigma
+            'energy_significance',  # Log energy significance
+            'quality_factor',       # Energy/sigma quality metric
+            'weighted_time'         # Pre-computed weighted time
         ]
         
         logger.info(f"Added {len(enhanced_feature_names) - len(feature_names)} physics-informed features")

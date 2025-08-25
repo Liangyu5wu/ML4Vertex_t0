@@ -96,4 +96,4 @@ jet_features:
   - "matched_jet_phi"
   - "matched_jet_width"
   - "matched_jet_deltaR"
-skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
+skip_normalization: ["Cell_Barrel", "Cell_layer"]  # Allow time normalization

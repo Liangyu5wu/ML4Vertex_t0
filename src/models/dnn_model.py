@@ -159,6 +159,8 @@ class DNNModel:
         if use_physics and feature_dim > 10:
             # Use physics weights (cell_weight is 5th from end in physics features)
             physics_weights = cell_inputs[:, :, -5]
+            # Normalize weights within each sequence to avoid gradient issues
+            physics_weights = tf.nn.softmax(physics_weights, axis=1)
             weights = tf.expand_dims(physics_weights, axis=-1)
             if current_mask is not None:
                 mask_expanded = tf.expand_dims(tf.cast(current_mask, tf.float32), axis=-1)
