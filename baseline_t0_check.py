@@ -389,45 +389,37 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
     mean_all = np.mean(traditional_t0)
     std_all = np.std(traditional_t0)
     
-    # Gaussian fit on restricted range
-    fit_range = config.gaussian_fit_range
-    mask = (traditional_t0 >= -fit_range) & (traditional_t0 <= fit_range)
-    
-    if np.sum(mask) > 10:  # Need enough points for fitting
-        fit_data = traditional_t0[mask]
-        try:
-            # Create histogram for fitting using the same binning approach
-            fit_bins = np.arange(-fit_range, fit_range + bin_width, bin_width)
-            hist_fit, fit_bin_edges = np.histogram(fit_data, bins=fit_bins)
-            bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
+    # Global Gaussian fit (use all data)
+    try:
+        # Use the same binning as the histogram for fitting
+        hist_fit, fit_bin_edges = np.histogram(traditional_t0, bins=bins)
+        bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
+        
+        # Only use non-zero bins for fitting
+        nonzero_mask = hist_fit > 0
+        if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
+            # Fit Gaussian
+            initial_guess = [np.max(hist_fit), mean_all, std_all]
+            popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
             
-            # Only use non-zero bins for fitting
-            nonzero_mask = hist_fit > 0
-            if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
-                # Fit Gaussian
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
-                
-                fit_mean, fit_std = popt[1], abs(popt[2])
-                
-                # Plot fitted Gaussian with proper scaling
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = gaussian_func(x_fit, *popt)
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-            else:
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
+            fit_mean, fit_std = popt[1], abs(popt[2])
             
-        except Exception:
-            fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
-    else:
+            # Plot fitted Gaussian over the full range
+            x_fit = np.linspace(-2000, 2000, 1000)
+            y_fit = gaussian_func(x_fit, *popt)
+            plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
+                    label=f'Global Gaussian fit: μ={fit_mean:.2f}, σ={fit_std:.2f}')
+        else:
+            fit_mean, fit_std = mean_all, std_all
+        
+    except Exception:
         fit_mean, fit_std = mean_all, std_all
     
     plt.xlabel('Traditional t0 [ps]')
     plt.ylabel('Count')
     plt.title(f'Traditional t0 Distribution ({matching_type.capitalize()} Matching)')
     plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
-               f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
+               f'Global fit: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
     plt.grid(True, alpha=0.3)
     plt.xlim(-2000, 2000)
     
@@ -478,13 +470,8 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
                 x_fit = np.linspace(-fit_range, fit_range, 200)
                 y_fit = gaussian_func(x_fit, *popt)
                 
-                # Scale the fit curve to match the histogram bin width
-                # The fitted Gaussian is based on histogram counts, we need to scale it to match the display
-                bin_width_display = bin_edges[1] - bin_edges[0]  # Display histogram bin width
-                fit_bin_width = fit_bin_edges[1] - fit_bin_edges[0]  # Fit histogram bin width
-                scale_factor = bin_width_display / fit_bin_width
-                
-                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
+                # Plot fitted Gaussian with proper scaling - fix the scaling to match histogram better
+                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
                         label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
             else:
                 fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
@@ -546,8 +533,8 @@ def plot_2d_histogram(traditional_t0: np.ndarray, vertex_times: np.ndarray, save
     """Plot traditional t0 vs true t0 as 2D histogram."""
     plt.figure(figsize=(10, 8))
     
-    # Fixed plot range to ±2000
-    plot_min, plot_max = -2000, 2000
+    # Fixed plot range to ±1000
+    plot_min, plot_max = -1000, 1000
     
     # Create 2D histogram
     bins = 80

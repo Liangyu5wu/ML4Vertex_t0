@@ -269,8 +269,8 @@ class DataLoader:
         
         if weight_sum > 0:
             baseline_t0 = weighted_sum / weight_sum
-            # Convert from ns to ps and calculate absolute error
-            error_ps = abs((baseline_t0 - true_vertex_time) * 1000.0)
+            # Calculate absolute error (all data already in ps)
+            error_ps = abs(baseline_t0 - true_vertex_time)
             return error_ps
         else:
             return float('inf')  # Invalid calculation

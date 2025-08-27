@@ -9,7 +9,7 @@ huber_delta: 100.0
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
 num_files: 43
-max_cells: 30
+max_cells: 40
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
@@ -31,7 +31,7 @@ vertex_time_sigma: 175.0       # HS vertex time uncertainty [ps]
 time_quality_n_sigma: 3.0      # N-sigma cut threshold
 
 # Baseline method filtering parameters
-use_baseline_method_filter: false   # Enable baseline method performance filtering
+use_baseline_method_filter: true    # Enable baseline method performance filtering
 baseline_method_threshold: 500.0    # Baseline error threshold in ps (±500 ps default)
 
 # Detector calibration parameters
