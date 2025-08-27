@@ -173,6 +173,129 @@ class DataLoader:
         
         return filtered_cells
     
+    def calculate_baseline_t0_error(self, event_cells: np.ndarray, true_vertex_time: float) -> float:
+        """
+        Calculate baseline (non-ML) t0 error for event-level filtering.
+        
+        Args:
+            event_cells: Array of cells for a single event (after basic filtering)
+            true_vertex_time: True vertex time for this event
+            
+        Returns:
+            Absolute error in ps between baseline t0 and true vertex time
+        """
+        if len(event_cells) == 0:
+            return float('inf')  # Invalid event
+        
+        try:
+            # Load calibration data for sigma and parameter values
+            calibration_data = self.config.load_calibration_data()
+        except Exception:
+            return 0.0  # Skip filtering if calibration data unavailable
+        
+        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
+        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+        
+        def get_energy_bin_index(energy: float) -> int:
+            """Get energy bin index for calibration parameter lookup."""
+            if energy < 1.0:
+                return 0
+            for i in range(len(energy_bins) - 1):
+                if energy_bins[i] <= energy < energy_bins[i + 1]:
+                    return i
+            return len(energy_bins) - 2
+        
+        # Parameter and sigma lookup tables
+        param_lookup = {
+            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
+        }
+        
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
+        }
+        
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        
+        for cell in event_cells:
+            try:
+                # Extract cell properties
+                barrel = int(cell['Cell_Barrel'])
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
+                time_tof = cell['Cell_time_TOF_corrected']
+                
+                # Skip cells with invalid layer
+                if layer not in [1, 2, 3]:
+                    continue
+                
+                # Get calibration parameters and sigma
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                
+                energy_bin_idx = get_energy_bin_index(energy)
+                
+                # Add bounds checking
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
+                calibration_value = detector_params[energy_bin_idx]
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
+                calibrated_time = time_tof - calibration_value
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * calibrated_time
+                weight_sum += weight
+                
+            except (KeyError, ValueError, IndexError):
+                # Skip cells with missing or invalid data
+                continue
+        
+        if weight_sum > 0:
+            baseline_t0 = weighted_sum / weight_sum
+            # Convert from ns to ps and calculate absolute error
+            error_ps = abs((baseline_t0 - true_vertex_time) * 1000.0)
+            return error_ps
+        else:
+            return float('inf')  # Invalid calculation
+    
+    def apply_baseline_method_filter(
+        self, 
+        event_cells: np.ndarray, 
+        true_vertex_time: float
+    ) -> bool:
+        """
+        Apply baseline method performance filter.
+        
+        Args:
+            event_cells: Array of cells for a single event (after basic filtering)
+            true_vertex_time: True vertex time for this event
+            
+        Returns:
+            True if event passes baseline method filter, False otherwise
+        """
+        if not self.config.use_baseline_method_filter:
+            return True
+        
+        error_ps = self.calculate_baseline_t0_error(event_cells, true_vertex_time)
+        return error_ps <= self.config.baseline_method_threshold
+    
     def get_filtering_statistics(self, event_cells: np.ndarray) -> dict:
         """
         Get statistics about cell filtering for debugging/monitoring.
@@ -253,6 +376,7 @@ class DataLoader:
             'total_events': 0,
             'events_with_cells': 0,
             'events_after_min_cells_filter': 0,
+            'events_after_baseline_filter': 0,  # NEW
             'total_cells_before_filtering': 0,
             'total_cells_after_filtering': 0,
             'cells_removed_by_valid_filter': 0,
@@ -270,6 +394,9 @@ class DataLoader:
         if self.config.use_time_quality_cut:
             print(f"    σ_vertex: {self.config.vertex_time_sigma} ps")
             print(f"    Cut threshold: {self.config.time_quality_n_sigma}σ")
+        print(f"  Use baseline method filter: {self.config.use_baseline_method_filter}")  # NEW
+        if self.config.use_baseline_method_filter:
+            print(f"    Baseline error threshold: ±{self.config.baseline_method_threshold} ps")
         print(f"  Additional filters: {self.config.additional_cell_filters}")
         print(f"  Filtering description: {self.config.get_cell_filtering_description()}")
         print(f"Using spatial features: {self.config.use_spatial_features}")
@@ -322,6 +449,7 @@ class DataLoader:
             'total_events': 0,
             'events_with_cells': 0,
             'events_after_min_cells_filter': 0,
+            'events_after_baseline_filter': 0,  # NEW
             'total_cells_before_filtering': 0,
             'total_cells_after_filtering': 0
         }
@@ -362,6 +490,13 @@ class DataLoader:
                 
                 file_stats['events_after_min_cells_filter'] += 1
                 
+                # Apply baseline method filter if enabled
+                vertex_time = vertex_data[i]['HSvertex_time']
+                if not self.apply_baseline_method_filter(valid_cells, vertex_time):
+                    continue
+                
+                file_stats['events_after_baseline_filter'] += 1
+                
                 # Process cells for this event
                 sequence = self._process_event_cells(valid_cells)
                 if sequence is None:
@@ -369,7 +504,7 @@ class DataLoader:
                 
                 cell_sequences.append(sequence)
                 vertex_features.append(vertex_reco)
-                vertex_times.append(vertex_data[i]['HSvertex_time'])
+                vertex_times.append(vertex_time)
                 sequence_lengths.append(len(sequence))
         
         return cell_sequences, vertex_features, vertex_times, sequence_lengths, file_stats
@@ -416,9 +551,23 @@ class DataLoader:
         print(f"  Events with cells: {stats['events_with_cells']}")
         print(f"  Events after min_cells filter: {stats['events_after_min_cells_filter']}")
         
+        # NEW: Show baseline filter statistics
+        if self.config.use_baseline_method_filter:
+            print(f"  Events after baseline filter: {stats['events_after_baseline_filter']}")
+            final_events = stats['events_after_baseline_filter']
+        else:
+            final_events = stats['events_after_min_cells_filter']
+        
         if stats['events_with_cells'] > 0:
-            event_retention_rate = (stats['events_after_min_cells_filter'] / stats['events_with_cells']) * 100
-            print(f"  Event retention rate: {event_retention_rate:.1f}%")
+            event_retention_rate = (final_events / stats['events_with_cells']) * 100
+            print(f"  Final event retention rate: {event_retention_rate:.1f}%")
+            
+            # Show baseline filter impact if enabled
+            if self.config.use_baseline_method_filter and stats['events_after_min_cells_filter'] > 0:
+                baseline_retention = (stats['events_after_baseline_filter'] / stats['events_after_min_cells_filter']) * 100
+                baseline_removed = stats['events_after_min_cells_filter'] - stats['events_after_baseline_filter']
+                print(f"  Events removed by baseline filter: {baseline_removed}")
+                print(f"  Baseline filter retention rate: {baseline_retention:.1f}%")
         
         print(f"\nCells:")
         print(f"  Total cells before filtering: {stats['total_cells_before_filtering']}")
@@ -430,8 +579,8 @@ class DataLoader:
             print(f"  Cells removed: {cells_removed}")
             print(f"  Cell retention rate: {cell_retention_rate:.1f}%")
             
-            if stats['events_after_min_cells_filter'] > 0:
-                avg_cells_per_event = stats['total_cells_after_filtering'] / stats['events_after_min_cells_filter']
+            if final_events > 0:
+                avg_cells_per_event = stats['total_cells_after_filtering'] / final_events
                 print(f"  Average cells per event (after filtering): {avg_cells_per_event:.1f}")
         
         print(f"\nFiltering Configuration:")
@@ -442,6 +591,12 @@ class DataLoader:
             print(f"\nTime Quality Cut:")
             print(f"  σ_vertex: {self.config.vertex_time_sigma} ps")
             print(f"  Cut threshold: {self.config.time_quality_n_sigma}σ_total")
+        
+        # NEW: Add baseline method filter information
+        if self.config.use_baseline_method_filter:
+            print(f"\nBaseline Method Filter:")
+            print(f"  Error threshold: ±{self.config.baseline_method_threshold} ps")
+            print(f"  Only events with baseline method error ≤ {self.config.baseline_method_threshold} ps are included")
         
         # NEW: Add jet feature information
         if self.config.use_jet_features:

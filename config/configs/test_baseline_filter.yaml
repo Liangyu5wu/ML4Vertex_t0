@@ -1,0 +1,32 @@
+# Test configuration for baseline method filtering
+# This config demonstrates the new baseline method filtering functionality
+
+# Basic data parameters
+data_dir: "../selected_h5/"
+num_files: 2  # Small number for testing
+max_cells: 40
+min_cells: 3
+
+# Basic filtering
+require_valid_cells: true
+use_cell_track_matching: true
+use_cell_jet_matching: false
+
+# NEW: Baseline method filtering
+use_baseline_method_filter: true
+baseline_method_threshold: 500.0  # Only events with baseline error ≤ 500 ps
+
+# Basic model parameters
+model_name: "test_baseline_filter"
+batch_size: 32
+epochs: 5  # Small number for testing
+
+# Features
+use_spatial_features: false
+use_track_features: true
+use_jet_features: false
+use_attention_mask: true
+
+# Training parameters
+loss_function: "mse"
+early_stopping_patience: 3

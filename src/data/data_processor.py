@@ -533,9 +533,10 @@ class DataProcessor:
                 # Plot fitted Gaussian
                 x_fit = np.linspace(-fit_range, fit_range, 200)
                 y_fit = self.gaussian_func(x_fit, *popt)
-                # Scale to match histogram
-                scale_factor = 10 * len(traditional_t0) / len(fit_data)
-                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2, 
+                
+                # The fitted Gaussian amplitude is already in histogram count units from curve_fit
+                # No additional scaling needed since we fit to histogram counts directly
+                plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
                         label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
                 
             except Exception:
@@ -588,8 +589,10 @@ class DataProcessor:
                 # Plot fitted Gaussian
                 x_fit = np.linspace(-fit_range, fit_range, 200)
                 y_fit = self.gaussian_func(x_fit, *popt)
-                scale_factor = 10 * len(t0_errors) / len(fit_data)
-                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
+                
+                # The fitted Gaussian amplitude is already in histogram count units from curve_fit
+                # No additional scaling needed since we fit to histogram counts directly
+                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
                         label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
                 
             except Exception:

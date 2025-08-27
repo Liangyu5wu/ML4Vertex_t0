@@ -59,6 +59,10 @@ class BaseConfig:
     vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ns]
     time_quality_n_sigma: float = 3.0       # N-sigma cut threshold
     
+    # Baseline method filtering parameters
+    use_baseline_method_filter: bool = False # Enable baseline method performance filtering
+    baseline_method_threshold: float = 500.0 # Baseline error threshold in ps (±500 ps default)
+    
     # Model architecture parameters
     use_attention_mask: bool = True  # NEW: Enable attention mask support
     
@@ -194,6 +198,10 @@ class BaseConfig:
         # NEW: Add time quality cut description
         if self.use_time_quality_cut:
             conditions.append(f"|cell_time| < {self.time_quality_n_sigma}σ_total")
+            
+        # NEW: Add baseline method filtering description
+        if self.use_baseline_method_filter:
+            conditions.append(f"baseline_error < ±{self.baseline_method_threshold} ps")
             
         for key, value in self.additional_cell_filters.items():
             conditions.append(f"{key} == {value}")
@@ -354,7 +362,8 @@ class BaseConfig:
             ],
             "Cell Filtering Parameters": [
                 'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 
-                'additional_cell_filters', 'use_time_quality_cut', 'vertex_time_sigma', 'time_quality_n_sigma'
+                'additional_cell_filters', 'use_time_quality_cut', 'vertex_time_sigma', 'time_quality_n_sigma',
+                'use_baseline_method_filter', 'baseline_method_threshold'
             ],
             "Model Architecture Parameters": [
                 'use_attention_mask'
@@ -409,6 +418,36 @@ class BaseConfig:
         
         print("=" * 60)
     
+    def load_calibration_data(self) -> Dict[str, List[float]]:
+        """
+        Load calibration data for baseline method calculations.
+        
+        Returns:
+            Dictionary with calibration parameters and sigma values
+        """
+        # Default calibration file for baseline calculations
+        if not hasattr(self, 'calibration_data_file'):
+            self.calibration_data_file = "HStrackmatching_calibration.txt"
+        
+        calibration_path = os.path.join("calibration_data", self.calibration_data_file)
+        
+        if not os.path.exists(calibration_path):
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        return calibration_data
+    
     def validate_config(self):
         """Validate configuration parameters."""
         # Basic validations
@@ -425,6 +464,17 @@ class BaseConfig:
             assert self.vertex_time_sigma > 0, "vertex_time_sigma must be positive"
             assert self.time_quality_n_sigma > 0, "time_quality_n_sigma must be positive"
             print(f"Note: Time quality cut enabled. σ_vertex={self.vertex_time_sigma} ns, {self.time_quality_n_sigma}σ cut")
+        
+        # Baseline method filter validations
+        if self.use_baseline_method_filter:
+            assert self.baseline_method_threshold > 0, "baseline_method_threshold must be positive"
+            print(f"Note: Baseline method filter enabled. Threshold: ±{self.baseline_method_threshold} ps")
+            # Try to load calibration data to ensure it's available
+            try:
+                self.load_calibration_data()
+                print("✓ Calibration data successfully loaded for baseline method calculations")
+            except Exception as e:
+                print(f"Warning: Could not load calibration data for baseline method filtering: {e}")
         
         # Loss function validations
         assert self.loss_function in ['mse', 'huber'], f"loss_function must be 'mse' or 'huber', got '{self.loss_function}'"

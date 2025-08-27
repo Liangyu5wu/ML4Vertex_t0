@@ -477,7 +477,14 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
                 # Plot fitted Gaussian with proper scaling
                 x_fit = np.linspace(-fit_range, fit_range, 200)
                 y_fit = gaussian_func(x_fit, *popt)
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
+                
+                # Scale the fit curve to match the histogram bin width
+                # The fitted Gaussian is based on histogram counts, we need to scale it to match the display
+                bin_width_display = bin_edges[1] - bin_edges[0]  # Display histogram bin width
+                fit_bin_width = fit_bin_edges[1] - fit_bin_edges[0]  # Fit histogram bin width
+                scale_factor = bin_width_display / fit_bin_width
+                
+                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
                         label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
             else:
                 fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
