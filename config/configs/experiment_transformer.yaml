@@ -28,6 +28,10 @@ use_time_quality_cut: true          # Enable time quality filtering
 vertex_time_sigma: 175.0            # HS vertex time uncertainty [ps]  
 time_quality_n_sigma: 3.0           # N-sigma cut threshold
 
+# Baseline method filtering parameters
+use_baseline_method_filter: false   # Enable baseline method performance filtering
+baseline_method_threshold: 500.0    # Baseline error threshold in ps (±500 ps default)
+
 # Detector calibration parameters
 use_detector_params: true
 calibration_data_file: "cell_jet_calibration.txt"
