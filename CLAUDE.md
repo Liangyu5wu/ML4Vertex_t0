@@ -32,14 +32,20 @@ python scripts/train.py --config-file config/configs/experiment_with_jets.yaml
 # Train DNN model
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml
 
+# Train Baseline-Guided DNN model
+python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml
+
 # Train with parameter overrides
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
 
 ### Running Evaluations
 ```bash
-# Evaluate any model (auto-detects Transformer vs DNN)
+# Evaluate any model (auto-detects Transformer/DNN/Baseline-Guided)
 python scripts/evaluate.py --model-dir ../models/your_model --load-data
+
+# Evaluate baseline-guided model
+python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks --load-data
 ```
 
 ### Parameter Sweeps
@@ -64,6 +70,7 @@ sbatch jobs/sweep_dnn_quick.sh
 # Submit training jobs
 sbatch jobs/model_dnn_nersc.sh
 sbatch jobs/model_nersc.sh
+sbatch jobs/model_baseline_guided_track_nersc.sh
 ```
 
 ### Testing
@@ -82,7 +89,7 @@ There is no dedicated test suite. Verification is done through:
 - **YAML Configs**: `config/configs/` - Experiment-specific settings
 
 ### Model Architecture
-Two main model types with mask support:
+Three main model types with advanced features:
 
 #### Transformer Model (`src/models/transformer_model.py`)
 ```
@@ -99,6 +106,19 @@ Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Ve
 - Uses `MaskedAttentionPooling` for learned attention weights
 - Dual-stage processing: cell-level then event-level
 - Alternative to traditional sigma-weighted pooling
+
+#### Baseline-Guided DNN Model (`src/models/baseline_guided_model.py`)
+```
+Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline → Residual Learning → Vertex Time
+                                                        ↑
+                                               Baseline Predictions (External)
+```
+- **Residual Learning Approach**: Learns corrections to existing baseline method predictions
+- **Three-Input Architecture**: Cell sequences + Vertex features + Baseline predictions
+- **Physics-Informed Design**: Leverages domain knowledge through baseline predictions
+- **Simplified Processing**: Uses global average pooling instead of attention mechanisms
+- **Robust to Baseline Quality**: Can handle imperfect baseline predictions through residual learning
+- **Configuration**: Use `model_architecture: "baseline_guided_dnn"` in config files
 
 ### Data Pipeline
 - **Data Loading**: `src/data/data_loader.py` - HDF5 file processing with cell filtering
@@ -130,6 +150,26 @@ Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Ve
 - **Jet features**: Cell-jet matching data
 - **Smart toggling**: Automatic feature list adjustment
 
+### Baseline-Guided Model Features
+
+#### Baseline Method Integration
+- **External Predictions**: Requires baseline method predictions as third input
+- **Residual Learning**: Model learns `residual = target - baseline` then outputs `baseline + residual`
+- **Baseline Method Filtering**: Optional filtering by baseline method performance (`baseline_method_threshold`)
+- **Robustness**: Works with imperfect baselines, improving through learned corrections
+
+#### Architectural Differences
+- **No Attention Mechanism**: Uses simple global average pooling for computational efficiency
+- **Simplified Network**: 3-4 dense layers vs complex attention architectures
+- **Physics Integration**: Incorporates domain knowledge through baseline predictions
+- **Three-Input Design**: Handles cell sequences, vertex features, and baseline predictions simultaneously
+
+#### Configuration Requirements
+- **Data Requirements**: Must have baseline predictions computed and stored
+- **Model Architecture**: Set `model_architecture: "baseline_guided_dnn"`
+- **Baseline Features**: Often combined with track matching for optimal performance
+- **Loss Functions**: Both MSE and Huber loss supported for residual learning
+
 ## Performance Optimization
 
 ### Data Caching Strategy
@@ -148,7 +188,8 @@ Parameter sweeps use optimized data caching:
 ### Model Selection
 Choose model type via `model_architecture` parameter:
 - `"transformer"` - Use transformer_config.py
-- `"two_stage_dnn"` - Use dnn_config.py
+- `"two_stage_dnn"` - Use dnn_config.py  
+- `"baseline_guided_dnn"` - Use dnn_config.py (baseline-guided variant)
 
 ### Loss Functions
 - **MSE**: `loss_function: "mse"` (default)
@@ -158,6 +199,7 @@ Choose model type via `model_architecture` parameter:
 Use descriptive model names that reflect configuration:
 - `transformer_with_jets` - Transformer with jet features
 - `dnn_with_jets` - DNN with jet matching
+- `baseline_guided_dnn_with_tracks` - Baseline-guided model with track features
 - `baseline_test` - Quick testing configuration
 
 ## File Structure Notes
@@ -187,9 +229,11 @@ External calibration files in `calibration_data/`:
 - Save final configs with trained models
 
 ### Model Development
-- Both model classes support masked and unmasked versions
-- Use `build_model_with_mask()` for attention mask support
+- All model classes support various input configurations
+- Transformer/DNN: Use `build_model_with_mask()` for attention mask support
+- Baseline-guided: Use `build_model()` with three inputs (cells, vertex, baseline)
 - Custom layers require registration in `load_model()` methods
+- Baseline-guided models require special handling in evaluation scripts
 
 ### Parameter Sweeps
 - Use optimized sweeps for multiple experiments

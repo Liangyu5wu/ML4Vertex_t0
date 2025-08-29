@@ -1,6 +1,6 @@
 # Vertex Time Prediction Models
 
-A framework for training Transformer and DNN models for vertex t0 prediction with LAr Calorimeter in ATLAS. Features optimized parameter sweeps and attention mask support.
+A framework for training Transformer, DNN, and Baseline-Guided models for vertex t0 prediction with LAr Calorimeter in ATLAS. Features optimized parameter sweeps, attention mask support, and physics-informed residual learning.
 
 ## Project Structure
 
@@ -14,6 +14,7 @@ ML4Vertex_t0/
 │   └── configs/               # YAML configuration files
 │       ├── experiment_with_jets.yaml  # Transformer with jet features
 │       ├── experiment_dnn.yaml        # DNN experimental setup
+│       ├── experiment_baseline_guided_track.yaml  # Baseline-guided DNN
 │       ├── experiment_nersc.yaml      # NERSC cluster configuration
 │       └── test_fast.yaml     # Fast testing configuration
 ├── calibration_data/          # External calibration data files
@@ -22,11 +23,11 @@ ML4Vertex_t0/
 ├── src/                       # Source code
 │   ├── __init__.py            # Source package initialization
 │   ├── data/                  # Data loading and processing
-│   ├── models/                # Model architectures (Transformer + DNN)
+│   ├── models/                # Model architectures (Transformer + DNN + Baseline-Guided)
 │   ├── training/              # Training utilities
 │   └── evaluation/            # Evaluation and visualization
 ├── scripts/                   # Main execution scripts
-│   ├── train.py              # Training script (supports both models)
+│   ├── train.py              # Training script (supports all models)
 │   ├── evaluate.py           # Evaluation script (auto-detects model type)
 │   ├── parameter_sweep.py    # Optimized parameter sweeps with data caching
 │   └── analyze_sweep.py      # Simplified results analysis
@@ -61,6 +62,18 @@ Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Ve
 - Masked attention pooling ignores padding cells
 - Smart padding uses feature-specific values
 
+### Baseline-Guided DNN Model 🆕
+```
+Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline → Residual Learning → Vertex Time
+                                                        ↑
+                                               Baseline Predictions (External)
+```
+- **Physics-Informed Design**: Leverages existing baseline method predictions
+- **Residual Learning**: Learns corrections to baseline predictions (`target = baseline + residual`)
+- **Three-Input Architecture**: Cell sequences + Vertex features + Baseline predictions
+- **Simplified Processing**: Global average pooling instead of complex attention
+- **Robust Performance**: Works even with imperfect baseline predictions
+
 ## Quick Start
 
 ### Training Models
@@ -72,6 +85,9 @@ python scripts/train.py --config-file config/configs/experiment_with_jets.yaml
 # Train DNN model  
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml
 
+# Train Baseline-Guided DNN model 🆕
+python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml
+
 # Override parameters
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
@@ -79,8 +95,11 @@ python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epoch
 ### Evaluation (Auto-detects Model Type)
 
 ```bash
-# Evaluate any model - automatically detects Transformer vs DNN
+# Evaluate any model - automatically detects Transformer/DNN/Baseline-Guided
 python scripts/evaluate.py --model-dir ../models/your_model --load-data
+
+# Evaluate baseline-guided model 🆕
+python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks --load-data
 ```
 
 ### Optimized Parameter Sweeps ⚡
@@ -127,6 +146,12 @@ sbatch jobs/sweep_dnn_comparison.sh
 - **Parameter effects**: Visualize parameter impact on performance  
 - **Training efficiency**: Time vs performance analysis
 
+### 🧪 **Physics-Informed Learning** 🆕
+- **Baseline Integration**: Leverages existing physics-based methods
+- **Residual Learning**: Learns corrections instead of predictions from scratch
+- **Domain Knowledge**: Incorporates detector calibration and track matching
+- **Robust Performance**: Handles imperfect baseline predictions gracefully
+
 ## Configuration
 
 ### DNN Configuration
@@ -150,6 +175,37 @@ event_dropout_rates: [0.3, 0.2, 0.1]
 use_jet_features: true
 use_cell_jet_matching: true
 calibration_data_file: "cell_jet_calibration.txt"
+```
+
+### Baseline-Guided DNN Configuration 🆕
+```yaml
+model_name: "baseline_guided_dnn_with_tracks"
+model_architecture: "baseline_guided_dnn"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Simplified network architecture (3-4 dense layers)
+cell_encoder_units: [128, 64, 32]
+cell_dropout_rate: 0.1
+cell_activation: "relu"
+
+# No attention pooling (simple average pooling)
+use_attention_pooling: false
+
+# Event-level processing parameters (simplified)
+event_encoder_units: [128, 64, 32, 16]
+event_dropout_rates: [0.2, 0.2, 0.1, 0.1]
+use_batch_norm: true
+
+# Features and filtering (optimized for baseline guidance)
+use_spatial_features: false         # Spatial position features
+use_track_features: true            # Track matching features  
+use_jet_features: false             # Jet matching features
+use_physics_informed_features: false # Baseline handles physics weighting
+
+# Baseline method filtering parameters
+use_baseline_method_filter: true    # Enable baseline method performance filtering
+baseline_method_threshold: 500.0    # Baseline error threshold in ps
 ```
 
 ### Transformer Configuration
@@ -178,6 +234,9 @@ calibration_data_file: "cell_jet_calibration.txt"
 | `use_cell_jet_matching` | `false` | Filter cells matched to jets |
 | `use_detector_params` | `false` | Apply detector-specific time calibration |
 | `calibration_validation` | `false` | Generate calibration validation plots |
+| `use_baseline_method_filter` | `false` | Filter events by baseline method performance |
+| `baseline_method_threshold` | `500.0` | Baseline error threshold in ps (±500 ps default) |
+| `model_architecture` | `"two_stage_dnn"` | Model type: `transformer`, `two_stage_dnn`, `baseline_guided_dnn` |
 
 ## Parameter Sweep Types
 
@@ -217,14 +276,16 @@ Parameter sweeps in `results/sweep_YYYYMMDD_HHMMSS/`:
 ## Examples
 
 ```bash
-# Train and compare both models
+# Train and compare all three models
 python scripts/train.py --config-file config/configs/experiment_with_jets.yaml --model-name transformer_test
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --model-name dnn_test
+python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml --model-name baseline_guided_test
 
 # Run efficient parameter sweep  
 python scripts/parameter_sweep.py --config config/configs/experiment_dnn.yaml --grid comparison --max-exp 20
 
-# Evaluate results
+# Evaluate results (auto-detects model type)
 python scripts/evaluate.py --model-dir ../models/transformer_test --load-data
 python scripts/evaluate.py --model-dir ../models/dnn_test --load-data
+python scripts/evaluate.py --model-dir ../models/baseline_guided_test --load-data
 ```
