@@ -390,8 +390,8 @@ class Visualizer:
         else:
             data_min, data_max = np.min(errors), np.max(errors)
         
-        # Apply ±4000ps limit but adjust to data if within range
-        error_range = (max(-4000, data_min), min(4000, data_max))
+        # Apply ±2000ps limit but adjust to data if within range
+        error_range = (max(-2000, data_min), min(2000, data_max))
         
         # Create histogram with consistent binning
         bins = np.linspace(error_range[0], error_range[1], 60)
@@ -488,7 +488,7 @@ class Visualizer:
         plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
         
-        # Enforce ±4000ps axis limits
+        # Enforce ±2000ps axis limits
         plt.xlim(error_range[0], error_range[1])
         
         # Add statistics text box
@@ -544,6 +544,76 @@ class Visualizer:
         print(f"Residuals plot saved to: {save_path}")
         plt.close()
     
+    def plot_baseline_corrections_scatter(
+        self, 
+        y_true: np.ndarray, 
+        y_pred: np.ndarray, 
+        baseline_predictions: np.ndarray,
+        save_path: Optional[str] = None
+    ):
+        """
+        Plot scatter plot of baseline corrections vs truth for baseline-guided models.
+        
+        Args:
+            y_true: True vertex time values
+            y_pred: ML model predictions (final predictions)
+            baseline_predictions: Baseline method predictions
+            save_path: Path to save the plot
+        """
+        if save_path is None:
+            save_path = os.path.join(self.config.plots_dir, "baseline_corrections_scatter.png")
+        
+        # Calculate the corrections made by the ML model
+        # Corrections = final_prediction - baseline_prediction
+        corrections = y_pred - baseline_predictions.flatten()
+        
+        # Calculate statistics
+        correction_mean = np.mean(corrections)
+        correction_std = np.std(corrections)
+        correction_rmse = np.sqrt(np.mean(corrections**2))
+        
+        # Create the plot
+        plt.figure(figsize=(10, 8))
+        
+        # Create scatter plot with alpha for density visualization
+        plt.scatter(y_true, corrections, alpha=0.6, s=15, c='darkgreen', 
+                   label=f'ML Corrections (N={len(corrections):,})')
+        
+        # Add horizontal line at zero (no correction)
+        plt.axhline(y=0, color='red', linestyle='--', linewidth=2, 
+                   label='No Correction', alpha=0.8)
+        
+        # Add statistics text box
+        stats_text = f"Correction Statistics:\n"
+        stats_text += f"Mean: {correction_mean:.2f} ps\n"
+        stats_text += f"Std: {correction_std:.2f} ps\n"
+        stats_text += f"RMSE: {correction_rmse:.2f} ps\n"
+        stats_text += f"Range: [{np.min(corrections):.1f}, {np.max(corrections):.1f}] ps"
+        
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
+                verticalalignment='top', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.9))
+        
+        # Calculate correlation between truth and corrections
+        correlation = np.corrcoef(y_true, corrections)[0, 1]
+        corr_text = f"Correlation with Truth: {correlation:.4f}"
+        
+        plt.text(0.98, 0.02, corr_text, transform=plt.gca().transAxes,
+                verticalalignment='bottom', horizontalalignment='right', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9))
+        
+        # Formatting
+        plt.xlabel('Truth Vertex Time [ps]', fontsize=12)
+        plt.ylabel('ML Model Corrections to Baseline [ps]', fontsize=12)
+        plt.title(f'{self.config.model_name}: ML Model Corrections vs Truth Vertex Time', fontsize=14)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Baseline corrections scatter plot saved to: {save_path}")
+        plt.close()
+    
     def create_comprehensive_evaluation_plots(
         self, 
         y_true: np.ndarray, 
@@ -587,6 +657,10 @@ class Visualizer:
         
         # Plot residuals
         self.plot_residuals_vs_predicted(y_true, y_pred)
+        
+        # Plot baseline corrections scatter plot if this is a baseline-guided model
+        if baseline_predictions is not None:
+            self.plot_baseline_corrections_scatter(y_true, y_pred, baseline_predictions)
         
         print(f"All evaluation plots saved to: {self.config.plots_dir}")
     
