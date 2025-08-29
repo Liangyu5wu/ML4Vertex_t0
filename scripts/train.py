@@ -182,16 +182,17 @@ def validate_jet_features_setup(config, data_loader, skip_validation=False):
 
 
 def create_datasets_and_model(config, data_processor, train_cells_norm, val_cells_norm, 
-                             train_vertex_norm, val_vertex_norm, train_times, val_times):
+                             train_vertex_norm, val_vertex_norm, train_times, val_times, 
+                             train_baselines=None, val_baselines=None):
     """Create datasets and model based on configuration type."""
     
     print(f"\n3. Creating TensorFlow datasets...")
     print(f"Using attention mask: {config.use_attention_mask}")
     
-    # Determine model type
+    # Determine model type within function
+    is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
     is_dnn_model = (isinstance(config, DNNConfig) or 
                    getattr(config, 'model_architecture', '') == 'two_stage_dnn')
-    is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
     
     if is_baseline_guided:
         print("Creating datasets with baseline predictions for residual learning...")
@@ -260,6 +261,11 @@ def main():
         
         # Print training information
         print_training_info(config)
+        
+        # Determine model type early for data loading
+        is_dnn_model = (isinstance(config, DNNConfig) or 
+                       getattr(config, 'model_architecture', '') == 'two_stage_dnn')
+        is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
         
         # Load data
         print(f"\n1. Loading and processing data...")
@@ -343,7 +349,8 @@ def main():
         # Create datasets and model based on configuration type
         train_dataset, val_dataset, model, keras_model = create_datasets_and_model(
             config, data_processor, train_cells_norm, val_cells_norm,
-            train_vertex_norm, val_vertex_norm, train_times, val_times
+            train_vertex_norm, val_vertex_norm, train_times, val_times,
+            train_baselines, val_baselines
         )
         
         # Train model
