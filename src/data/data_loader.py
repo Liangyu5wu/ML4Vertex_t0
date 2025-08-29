@@ -275,6 +275,105 @@ class DataLoader:
         else:
             return float('inf')  # Invalid calculation
     
+    def calculate_baseline_t0_prediction(self, event_cells: np.ndarray) -> float:
+        """
+        Calculate baseline (non-ML) t0 prediction for residual learning.
+        
+        Args:
+            event_cells: Array of cells for a single event (after basic filtering)
+            
+        Returns:
+            Baseline t0 prediction in ps (or 0.0 if calculation fails)
+        """
+        if len(event_cells) == 0:
+            return 0.0  # Return 0 for empty events
+        
+        try:
+            # Load calibration data for sigma and parameter values
+            calibration_data = self.config.load_calibration_data()
+        except Exception:
+            return 0.0  # Return 0 if calibration data unavailable
+        
+        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
+        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+        
+        def get_energy_bin_index(energy: float) -> int:
+            """Get energy bin index for calibration parameter lookup."""
+            if energy < 1.0:
+                return 0
+            for i in range(len(energy_bins) - 1):
+                if energy_bins[i] <= energy < energy_bins[i + 1]:
+                    return i
+            return len(energy_bins) - 2
+        
+        # Parameter and sigma lookup tables
+        param_lookup = {
+            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
+        }
+        
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
+        }
+        
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        
+        for cell in event_cells:
+            try:
+                # Extract cell properties
+                barrel = int(cell['Cell_Barrel'])
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
+                time_tof = cell['Cell_time_TOF_corrected']
+                
+                # Skip cells with invalid layer
+                if layer not in [1, 2, 3]:
+                    continue
+                
+                # Get calibration parameters and sigma
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                
+                energy_bin_idx = get_energy_bin_index(energy)
+                
+                # Add bounds checking
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
+                calibration_value = detector_params[energy_bin_idx]
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
+                calibrated_time = time_tof - calibration_value
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * calibrated_time
+                weight_sum += weight
+                
+            except (KeyError, ValueError, IndexError):
+                # Skip cells with missing or invalid data
+                continue
+        
+        if weight_sum > 0:
+            baseline_t0 = weighted_sum / weight_sum
+            return baseline_t0
+        else:
+            return 0.0  # Return 0 for invalid calculation
+    
     def apply_baseline_method_filter(
         self, 
         event_cells: np.ndarray, 
@@ -436,6 +535,98 @@ class DataLoader:
         
         return (all_cell_sequences, np.array(all_vertex_features), 
                 np.array(all_vertex_times), sequence_lengths)
+    
+    def load_data_with_baselines_from_files(
+        self, 
+        file_paths: Optional[List[str]] = None,
+        print_filtering_stats: bool = True
+    ) -> Tuple[List[List[List[float]]], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Load data from HDF5 files with baseline predictions for residual learning.
+        
+        Args:
+            file_paths: List of file paths to load. If None, uses default paths.
+            print_filtering_stats: Whether to print cell filtering statistics
+            
+        Returns:
+            Tuple of (cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions)
+        """
+        # Load regular data first
+        cell_sequences, vertex_features, vertex_times, sequence_lengths = self.load_data_from_files(
+            file_paths, print_filtering_stats
+        )
+        
+        print("Computing baseline predictions for residual learning...")
+        baseline_predictions = []
+        
+        # Process each event to compute baseline predictions
+        for i, cell_seq in enumerate(cell_sequences):
+            # Convert cell sequence back to structured array format for baseline calculation
+            # We need to reconstruct the event_cells format from the processed sequences
+            if len(cell_seq) == 0:
+                baseline_pred = 0.0
+            else:
+                # Create structured array from cell sequence
+                # Note: This requires matching the cell sequence format to the expected structure
+                event_cells = self._reconstruct_event_cells_from_sequence(cell_seq)
+                baseline_pred = self.calculate_baseline_t0_prediction(event_cells)
+            
+            baseline_predictions.append(baseline_pred)
+            
+            if (i + 1) % 10000 == 0:
+                print(f"Computed baseline predictions for {i + 1}/{len(cell_sequences)} events")
+        
+        baseline_predictions = np.array(baseline_predictions)
+        print(f"Baseline predictions computed. Mean: {np.mean(baseline_predictions):.2f}, "
+              f"Std: {np.std(baseline_predictions):.2f}")
+        
+        return (cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions)
+    
+    def _reconstruct_event_cells_from_sequence(self, cell_seq: List[List[float]]) -> np.ndarray:
+        """
+        Reconstruct structured event_cells array from processed cell sequence.
+        
+        Args:
+            cell_seq: Processed cell sequence (list of feature vectors)
+            
+        Returns:
+            Structured array compatible with baseline calculation
+        """
+        if len(cell_seq) == 0:
+            # Return empty structured array with correct dtype
+            return np.array([], dtype=[
+                ('Cell_Barrel', 'i4'),
+                ('Cell_layer', 'i4'),
+                ('Cell_e', 'f8'),
+                ('Cell_time_TOF_corrected', 'f8')
+            ])
+        
+        # Map feature indices based on config.cell_features
+        feature_names = self.config.cell_features
+        
+        # Find indices of required features for baseline calculation
+        barrel_idx = feature_names.index('Cell_Barrel') if 'Cell_Barrel' in feature_names else -1
+        layer_idx = feature_names.index('Cell_layer') if 'Cell_layer' in feature_names else -1
+        energy_idx = feature_names.index('Cell_e') if 'Cell_e' in feature_names else -1
+        time_idx = feature_names.index('Cell_time_TOF_corrected') if 'Cell_time_TOF_corrected' in feature_names else -1
+        
+        # Create structured array
+        num_cells = len(cell_seq)
+        event_cells = np.zeros(num_cells, dtype=[
+            ('Cell_Barrel', 'i4'),
+            ('Cell_layer', 'i4'),
+            ('Cell_e', 'f8'),
+            ('Cell_time_TOF_corrected', 'f8')
+        ])
+        
+        for i, cell_features in enumerate(cell_seq):
+            # Extract required features (with defaults if not available)
+            event_cells[i]['Cell_Barrel'] = int(cell_features[barrel_idx]) if barrel_idx >= 0 else 1
+            event_cells[i]['Cell_layer'] = int(cell_features[layer_idx]) if layer_idx >= 0 else 1
+            event_cells[i]['Cell_e'] = float(cell_features[energy_idx]) if energy_idx >= 0 else 1.0
+            event_cells[i]['Cell_time_TOF_corrected'] = float(cell_features[time_idx]) if time_idx >= 0 else 0.0
+        
+        return event_cells
     
     def _process_file(self, file_path: str) -> Tuple[List, List, List, List, dict]:
         """Process a single HDF5 file with detailed statistics."""

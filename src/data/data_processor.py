@@ -1072,3 +1072,114 @@ class DataProcessor:
                 'vertex_features': batch_vertex,
                 'attention_mask': batch_mask
             }, batch_times
+    
+    def create_padded_dataset_with_baseline(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        baseline_predictions: np.ndarray,
+        shuffle: bool = True
+    ) -> tf.data.Dataset:
+        """
+        Create padded TensorFlow dataset with baseline predictions for residual learning.
+        
+        Args:
+            cell_sequences: Variable-length cell sequences
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            baseline_predictions: Baseline method predictions
+            shuffle: Whether to shuffle the dataset
+            
+        Returns:
+            Batched and prefetched TensorFlow dataset with baseline predictions
+        """
+        # Find maximum sequence length
+        max_seq_len = max(len(seq) for seq in cell_sequences)
+        
+        # Feature dimension
+        feature_dim = len(self.config.cell_features)
+        
+        # Apply smart padding
+        padded_cells = self.apply_smart_padding(cell_sequences, max_seq_len, feature_dim)
+        
+        # Reshape baseline predictions to match expected input shape
+        baseline_predictions = baseline_predictions.reshape(-1, 1)
+        
+        # For residual learning, target is the residual: true_time - baseline_time
+        residual_targets = vertex_times - baseline_predictions.flatten()
+        
+        # Create TensorFlow dataset
+        dataset = tf.data.Dataset.from_tensor_slices((
+            {
+                'cell_sequence': padded_cells, 
+                'vertex_features': vertex_features,
+                'baseline_prediction': baseline_predictions
+            },
+            vertex_times  # Note: we use actual vertex_times, not residuals
+                         # The model will compute residual internally
+        ))
+        
+        if shuffle:
+            dataset = dataset.shuffle(buffer_size=10000)
+        
+        return dataset.batch(self.config.batch_size).prefetch(tf.data.AUTOTUNE)
+    
+    def create_prediction_batches_with_baseline(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        baseline_predictions: np.ndarray
+    ):
+        """
+        Create prediction batches with baseline predictions (for evaluation).
+        
+        Args:
+            cell_sequences: Variable-length cell sequences
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            baseline_predictions: Baseline predictions
+            
+        Yields:
+            Batch data tuples for prediction
+        """
+        batch_size = self.config.batch_size
+        num_samples = len(cell_sequences)
+        
+        # Get sequence lengths for batching
+        sequence_lengths = [len(seq) for seq in cell_sequences]
+        
+        # Create indices sorted by sequence length for efficient batching
+        indices = list(range(num_samples))
+        indices.sort(key=lambda i: sequence_lengths[i])
+        
+        feature_dim = len(self.config.cell_features)
+        
+        for i in range(0, num_samples, batch_size):
+            batch_indices = indices[i:i + batch_size]
+            batch_lengths = [sequence_lengths[idx] for idx in batch_indices]
+            max_length = max(batch_lengths)
+            
+            # Create batch sequences for smart padding
+            batch_sequences = [cell_sequences[idx] for idx in batch_indices]
+            
+            # Apply smart padding
+            batch_cells = self.apply_smart_padding(batch_sequences, max_length, feature_dim)
+            
+            # Prepare other batch data
+            batch_vertex = np.zeros((len(batch_indices), len(vertex_features[0])))
+            batch_baselines = np.zeros((len(batch_indices), 1))
+            batch_times = np.zeros(len(batch_indices))
+            
+            for j, idx in enumerate(batch_indices):
+                batch_vertex[j] = vertex_features[idx]
+                batch_baselines[j, 0] = baseline_predictions[idx]
+                batch_times[j] = vertex_times[idx]
+            
+            # Return batch inputs
+            yield {
+                'cell_sequence': batch_cells, 
+                'vertex_features': batch_vertex,
+                'baseline_prediction': batch_baselines
+            }, batch_times

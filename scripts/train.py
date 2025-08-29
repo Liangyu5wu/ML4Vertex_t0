@@ -21,6 +21,7 @@ from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.models.transformer_model import TransformerModel
 from src.models.dnn_model import DNNModel
+from src.models.baseline_guided_model import BaselineGuidedDNN
 from src.training.trainer import Trainer
 
 
@@ -73,8 +74,11 @@ def create_config_from_yaml(yaml_path):
         with open(yaml_path, 'r') as f:
             yaml_data = yaml.safe_load(f)
         
-        # Check if it's a DNN config
-        if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+        # Check model architecture type
+        if yaml_data.get('model_architecture') == 'baseline_guided_dnn':
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded baseline-guided DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
             config = DNNConfig.from_yaml(yaml_path)
             logger.info(f"Loaded DNN configuration from: {yaml_path}")
         else:
@@ -187,8 +191,17 @@ def create_datasets_and_model(config, data_processor, train_cells_norm, val_cell
     # Determine model type
     is_dnn_model = (isinstance(config, DNNConfig) or 
                    getattr(config, 'model_architecture', '') == 'two_stage_dnn')
+    is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
     
-    if config.use_attention_mask:
+    if is_baseline_guided:
+        print("Creating datasets with baseline predictions for residual learning...")
+        train_dataset = data_processor.create_padded_dataset_with_baseline(
+            train_cells_norm, train_vertex_norm, train_times, train_baselines, shuffle=True
+        )
+        val_dataset = data_processor.create_padded_dataset_with_baseline(
+            val_cells_norm, val_vertex_norm, val_times, val_baselines, shuffle=False
+        )
+    elif config.use_attention_mask:
         print("Creating datasets with attention mask support...")
         train_dataset = data_processor.create_padded_dataset_with_mask(
             train_cells_norm, train_vertex_norm, train_times, shuffle=True
@@ -209,7 +222,11 @@ def create_datasets_and_model(config, data_processor, train_cells_norm, val_cell
     feature_dim = len(config.cell_features)
     print(f"Model input feature dimension: {feature_dim}")
     
-    if is_dnn_model:
+    if is_baseline_guided:
+        print(f"\n4. Building Baseline-guided DNN model...")
+        model = BaselineGuidedDNN(config)
+        keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
+    elif is_dnn_model:
         print(f"\n4. Building DNN model...")
         model = DNNModel(config)
         if config.use_attention_mask:
@@ -253,8 +270,15 @@ def main():
             return 1
         
         try:
-            cell_sequences, vertex_features, vertex_times, sequence_lengths = \
-                data_loader.load_data_from_files()
+            if is_baseline_guided:
+                # Load data with baseline predictions for residual learning
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
+                    data_loader.load_data_with_baselines_from_files()
+            else:
+                # Standard data loading
+                cell_sequences, vertex_features, vertex_times, sequence_lengths = \
+                    data_loader.load_data_from_files()
+                baseline_predictions = None
         except Exception as e:
             print(f"Error loading data: {e}")
             print("Please check that the data directory exists and contains HDF5 files.")
@@ -280,11 +304,32 @@ def main():
         data_processor = DataProcessor(config)
         
         # Split data
-        (train_cells, val_cells, test_cells), \
-        (train_vertex, val_vertex, test_vertex), \
-        (train_times, val_times, test_times) = data_processor.split_data(
-            cell_sequences, vertex_features, vertex_times
-        )
+        if is_baseline_guided:
+            # Split data including baseline predictions
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times
+            )
+            
+            # Split baseline predictions accordingly
+            from sklearn.model_selection import train_test_split
+            train_baselines, temp_baselines = train_test_split(
+                baseline_predictions, test_size=config.test_size + config.val_split, 
+                random_state=config.random_state
+            )
+            val_baselines, test_baselines = train_test_split(
+                temp_baselines, test_size=config.test_size/(config.test_size + config.val_split), 
+                random_state=config.random_state
+            )
+        else:
+            # Standard data splitting
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times
+            )
+            train_baselines = val_baselines = test_baselines = None
         
         # Normalize features (includes time calibration if enabled)
         (train_cells_norm, val_cells_norm, test_cells_norm), \

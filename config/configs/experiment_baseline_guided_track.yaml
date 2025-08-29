@@ -1,0 +1,103 @@
+# Baseline-guided DNN experimental configuration with track-matching features
+model_name: "baseline_guided_dnn_with_tracks"
+
+# Model architecture specification
+model_architecture: "baseline_guided_dnn"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Data parameters
+data_dir: "../selected_h5_with_jets/"
+num_files: 43
+max_cells: 40
+min_cells: 1
+cell_selection_feature: "Cell_e"
+
+# Feature selection parameters (comprehensive switches)
+use_spatial_features: false         # Spatial position features
+use_track_features: true            # Track matching features
+use_jet_features: false             # Jet matching features
+use_physics_informed_features: false # Disable physics weighting (baseline handles this)
+
+# Cell filtering parameters
+require_valid_cells: true
+use_cell_track_matching: true       # Track-based cell filtering
+use_cell_jet_matching: false        # Jet-based cell filtering
+additional_cell_filters: {}
+
+# Time quality cut parameters
+use_time_quality_cut: true    # Enable time-based quality filtering
+vertex_time_sigma: 175.0       # HS vertex time uncertainty [ps]  
+time_quality_n_sigma: 3.0      # N-sigma cut threshold
+
+# Baseline method filtering parameters
+use_baseline_method_filter: true    # Enable baseline method performance filtering
+baseline_method_threshold: 500.0    # Baseline error threshold in ps (±500 ps default)
+
+# Detector calibration parameters
+use_detector_params: true
+calibration_data_file: "HStrackmatching_calibration.txt"
+
+# Calibration validation parameters
+calibration_validation: true
+validation_detector_type: 1
+validation_layer: 1
+gaussian_fit_range: 120
+
+# Model architecture parameters (simplified for baseline-guided approach)
+use_attention_mask: false           # No attention mask needed
+use_physics_informed_features: false # Baseline handles physics weighting
+
+# Data split parameters
+test_size: 0.1
+val_split: 0.222222
+random_state: 42
+
+# Simplified network architecture (3-4 dense layers)
+cell_encoder_units: [128, 64, 32]
+cell_dropout_rate: 0.1
+cell_activation: "relu"
+
+# No attention pooling (simple average pooling)
+use_attention_pooling: false
+attention_pooling_masked: false
+attention_hidden_units: 32
+
+# Event-level processing parameters (simplified)
+event_encoder_units: [128, 64, 32, 16]
+event_dropout_rates: [0.2, 0.2, 0.1, 0.1]
+use_batch_norm: true
+
+# Training parameters
+batch_size: 128
+epochs: 200                         # Default training epochs
+learning_rate: 0.001                # Default learning rate
+lr_reduction_factor: 0.5
+early_stopping_patience: 20
+lr_patience: 5
+min_lr: 0.0000001
+
+# Feature definitions
+spatial_features: ["Cell_x", "Cell_y", "Cell_z"]
+vertex_spatial_features: ["HSvertex_reco_x", "HSvertex_reco_y", "HSvertex_reco_z"]
+all_cell_features:
+  - "Cell_x"
+  - "Cell_y"
+  - "Cell_z"
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+track_features:
+  - "matched_track_pt"
+  - "matched_track_deltaR"
+jet_features:
+  - "matched_jet_pt"
+  - "matched_jet_eta"
+  - "matched_jet_phi"
+  - "matched_jet_width"
+  - "matched_jet_deltaR"
+skip_normalization: ["Cell_Barrel", "Cell_layer"]  # Allow time normalization

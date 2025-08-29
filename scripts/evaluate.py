@@ -15,6 +15,7 @@ from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.models.transformer_model import TransformerModel
 from src.models.dnn_model import DNNModel
+from src.models.baseline_guided_model import BaselineGuidedDNN
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.visualizer import Visualizer
 from src.training.trainer import Trainer
@@ -49,19 +50,27 @@ def load_config_and_model(model_dir):
             with open(config_path, 'r') as f:
                 yaml_data = yaml.safe_load(f)
             
-            if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+            if yaml_data.get('model_architecture') == 'baseline_guided_dnn':
+                config = DNNConfig.load_config(model_dir)
+                print(f"Loaded baseline-guided DNN configuration from: {model_dir}")
+                is_dnn_model = False
+                is_baseline_guided = True
+            elif yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
                 config = DNNConfig.load_config(model_dir)
                 print(f"Loaded DNN configuration from: {model_dir}")
                 is_dnn_model = True
+                is_baseline_guided = False
             else:
                 config = TransformerConfig.load_config(model_dir)
                 print(f"Loaded Transformer configuration from: {model_dir}")
                 is_dnn_model = False
+                is_baseline_guided = False
         else:
             # Fallback to JSON config (assume Transformer for compatibility)
             config = TransformerConfig.load_config(model_dir)
             print(f"Loaded configuration from: {model_dir}")
             is_dnn_model = False
+            is_baseline_guided = False
         
         # Load model - try both .h5 and .keras formats for backward compatibility
         model_h5_path = os.path.join(model_dir, "model.h5")
@@ -76,7 +85,9 @@ def load_config_and_model(model_dir):
             raise FileNotFoundError(f"No model file found in {model_dir}. Expected model.h5 or model.keras")
         
         # Load model with appropriate custom objects
-        if is_dnn_model:
+        if is_baseline_guided:
+            keras_model = BaselineGuidedDNN.load_model(model_path)
+        elif is_dnn_model:
             keras_model = DNNModel.load_model(model_path)
         else:
             keras_model = TransformerModel.load_model(model_path)
@@ -85,7 +96,7 @@ def load_config_and_model(model_dir):
         # Display model type information
         print_model_info(keras_model, is_dnn_model)
         
-        return config, keras_model
+        return config, keras_model, is_baseline_guided
         
     except Exception as e:
         print(f"Error loading model or config: {e}")
@@ -124,8 +135,13 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False):
         
         # Load raw data
         data_loader = DataLoader(config)
-        cell_sequences, vertex_features, vertex_times, sequence_lengths = \
-            data_loader.load_data_from_files()
+        if is_baseline_guided:
+            cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
+                data_loader.load_data_with_baselines_from_files()
+        else:
+            cell_sequences, vertex_features, vertex_times, sequence_lengths = \
+                data_loader.load_data_from_files()
+            baseline_predictions = None
         
         # Process data
         data_processor = DataProcessor(config)
@@ -136,6 +152,20 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False):
         (train_times, val_times, test_times) = data_processor.split_data(
             cell_sequences, vertex_features, vertex_times
         )
+        
+        # Split baseline predictions if needed
+        if is_baseline_guided:
+            from sklearn.model_selection import train_test_split
+            train_baselines, temp_baselines = train_test_split(
+                baseline_predictions, test_size=config.test_size + config.val_split, 
+                random_state=config.random_state
+            )
+            val_baselines, test_baselines = train_test_split(
+                temp_baselines, test_size=config.test_size/(config.test_size + config.val_split), 
+                random_state=config.random_state
+            )
+        else:
+            train_baselines = val_baselines = test_baselines = None
         
         # Normalize features
         (train_cells_norm, val_cells_norm, test_cells_norm), \
@@ -183,7 +213,7 @@ def main():
     try:
         # Load configuration and model
         print("\n1. Loading model and configuration...")
-        config, keras_model = load_config_and_model(args.model_dir)
+        config, keras_model, is_baseline_guided = load_config_and_model(args.model_dir)
         
         # Update config with model directory for saving results
         config.models_base_dir = os.path.dirname(args.model_dir)
