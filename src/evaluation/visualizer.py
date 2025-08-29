@@ -382,16 +382,19 @@ class Visualizer:
         
         plt.figure(figsize=(12, 8))
         
-        # Determine bin range to accommodate both ML and baseline errors
+        # Determine bin range with ±4000ps limit
         if baseline_predictions is not None:
             baseline_errors = baseline_predictions.flatten() - y_true
             all_errors = np.concatenate([errors, baseline_errors])
-            error_range = (np.min(all_errors), np.max(all_errors))
+            data_min, data_max = np.min(all_errors), np.max(all_errors)
         else:
-            error_range = (np.min(errors), np.max(errors))
+            data_min, data_max = np.min(errors), np.max(errors)
+        
+        # Apply ±4000ps limit but adjust to data if within range
+        error_range = (max(-4000, data_min), min(4000, data_max))
         
         # Create histogram with consistent binning
-        bins = np.linspace(error_range[0], error_range[1], 50)
+        bins = np.linspace(error_range[0], error_range[1], 60)
         bin_width = bins[1] - bins[0]
         
         # Plot ML model errors
@@ -419,67 +422,74 @@ class Visualizer:
             plt.axvline(x=baseline_mean - baseline_std, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
         
         # Overlay improved normal distribution fits
-        x_range = np.linspace(error_range[0], error_range[1], 300)
+        x_range = np.linspace(error_range[0], error_range[1], 400)
         
-        # ML model normal fit
-        try:
-            from scipy import stats
-            # Use robust fitting with outlier detection
-            # Remove outliers beyond 3 sigma for better fit
-            z_scores = np.abs(stats.zscore(errors))
-            errors_clean = errors[z_scores < 3]
-            
-            if len(errors_clean) > 10:  # Ensure sufficient data for fit
-                clean_mean = np.mean(errors_clean)
-                clean_std = np.std(errors_clean)
-                y_norm_ml = stats.norm.pdf(x_range, clean_mean, clean_std)
-                scale_factor_ml = len(errors) * bin_width
-                plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
-                        label=f'ML Normal Fit (clean: μ={clean_mean:.2f}, σ={clean_std:.2f})')
-            else:
-                # Fallback to simple fit
-                y_norm_ml = stats.norm.pdf(x_range, error_mean, error_std)
-                scale_factor_ml = len(errors) * bin_width
-                plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
-                        label='ML Normal Fit')
-                
-        except ImportError:
-            # Fallback to manual normal distribution if scipy not available
-            y_norm_ml = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_range - error_mean) / error_std) ** 2)
-            scale_factor_ml = len(errors) * bin_width
-            plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
-                    label='ML Normal Fit')
-        
-        # Baseline normal fit if provided
-        if baseline_predictions is not None:
+        def robust_gaussian_fit(data, x_range, bin_width, color, label_prefix):
+            """Perform robust Gaussian fitting with proper optimization."""
             try:
-                from scipy import stats
-                z_scores_baseline = np.abs(stats.zscore(baseline_errors))
-                baseline_errors_clean = baseline_errors[z_scores_baseline < 3]
+                from scipy import stats, optimize
                 
-                if len(baseline_errors_clean) > 10:
-                    baseline_clean_mean = np.mean(baseline_errors_clean)
-                    baseline_clean_std = np.std(baseline_errors_clean)
-                    y_norm_baseline = stats.norm.pdf(x_range, baseline_clean_mean, baseline_clean_std)
-                    scale_factor_baseline = len(baseline_errors) * bin_width
-                    plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
-                            label=f'Baseline Normal Fit (clean: μ={baseline_clean_mean:.2f}, σ={baseline_clean_std:.2f})')
-                else:
-                    y_norm_baseline = stats.norm.pdf(x_range, baseline_mean, baseline_std)
-                    scale_factor_baseline = len(baseline_errors) * bin_width
-                    plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
-                            label='Baseline Normal Fit')
+                # Filter data to the plotting range for better fitting
+                data_in_range = data[(data >= error_range[0]) & (data <= error_range[1])]
+                
+                if len(data_in_range) < 20:  # Not enough data for robust fit
+                    return None, None
+                
+                # Use robust statistics for initial estimates
+                median = np.median(data_in_range)
+                mad = np.median(np.abs(data_in_range - median))
+                robust_std = 1.4826 * mad  # Convert MAD to standard deviation
+                
+                # Remove extreme outliers (beyond 4 MAD) for fitting
+                outlier_threshold = 4 * mad
+                data_clean = data_in_range[np.abs(data_in_range - median) <= outlier_threshold]
+                
+                if len(data_clean) < 10:
+                    data_clean = data_in_range  # Use all data if too few points
+                
+                # Fit Gaussian using maximum likelihood estimation
+                fit_mean = np.mean(data_clean)
+                fit_std = np.std(data_clean)
+                
+                # Create histogram for the cleaned data to get proper scaling
+                counts_in_range = len(data_in_range)
+                scale_factor = counts_in_range * bin_width
+                
+                # Generate fitted curve
+                y_norm = stats.norm.pdf(x_range, fit_mean, fit_std)
+                y_fitted = y_norm * scale_factor
+                
+                fit_label = f'{label_prefix} Fit (μ={fit_mean:.1f}, σ={fit_std:.1f})'
+                
+                return y_fitted, fit_label
+                
             except ImportError:
-                y_norm_baseline = (1 / (baseline_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_range - baseline_mean) / baseline_std) ** 2)
-                scale_factor_baseline = len(baseline_errors) * bin_width
-                plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
-                        label='Baseline Normal Fit')
+                # Fallback to simple fitting if scipy not available
+                data_mean = np.mean(data)
+                data_std = np.std(data)
+                y_norm = (1 / (data_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_range - data_mean) / data_std) ** 2)
+                scale_factor = len(data) * bin_width
+                return y_norm * scale_factor, f'{label_prefix} Fit'
+        
+        # ML model gaussian fit
+        ml_fit, ml_label = robust_gaussian_fit(errors, x_range, bin_width, 'blue', 'ML')
+        if ml_fit is not None:
+            plt.plot(x_range, ml_fit, 'b--', linewidth=2, label=ml_label, alpha=0.8)
+        
+        # Baseline gaussian fit if provided
+        if baseline_predictions is not None:
+            baseline_fit, baseline_label = robust_gaussian_fit(baseline_errors, x_range, bin_width, 'red', 'Baseline')
+            if baseline_fit is not None:
+                plt.plot(x_range, baseline_fit, 'r--', linewidth=2, label=baseline_label, alpha=0.8)
         
         plt.xlabel('Prediction Error (Predicted - Actual) [ps]')
         plt.ylabel('Count')
         plt.title(f'{self.config.model_name}: Error Distribution Comparison')
         plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
+        
+        # Enforce ±4000ps axis limits
+        plt.xlim(error_range[0], error_range[1])
         
         # Add statistics text box
         stats_text = f"Events: {len(errors):,}\n"

@@ -507,39 +507,47 @@ class DataProcessor:
         
         # Create histogram with bin width = 10, limited to ±2000 range
         bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
+        bin_width = bins[1] - bins[0]
         
-        counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
+        # Plot histogram with correct label
+        counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', 
+                                       edgecolor='black', label='Data')
         
         # Calculate basic statistics
         mean_all = np.mean(traditional_t0)
         std_all = np.std(traditional_t0)
         
-        # Gaussian fit on restricted range
+        # Improved Gaussian fit on restricted range
         fit_range = self.config.gaussian_fit_range
         mask = (traditional_t0 >= -fit_range) & (traditional_t0 <= fit_range)
-        if np.sum(mask) > 10:  # Need enough points for fitting
+        if np.sum(mask) > 20:  # Need enough points for fitting
             fit_data = traditional_t0[mask]
             try:
-                # Initial guess for Gaussian parameters
-                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+                # Use robust fitting approach
+                from scipy import stats
                 
-                # Fit Gaussian
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
+                # Remove extreme outliers for better fit
+                z_scores = np.abs(stats.zscore(fit_data))
+                clean_data = fit_data[z_scores < 3]
                 
-                fit_mean, fit_std = popt[1], abs(popt[2])
+                if len(clean_data) > 10:
+                    fit_mean = np.mean(clean_data)
+                    fit_std = np.std(clean_data)
+                else:
+                    fit_mean = np.mean(fit_data)
+                    fit_std = np.std(fit_data)
                 
-                # Plot fitted Gaussian
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = self.gaussian_func(x_fit, *popt)
+                # Generate fitted curve properly scaled
+                x_fit = np.linspace(-fit_range, fit_range, 400)
+                # Scale to match histogram counts
+                scale_factor = len(fit_data) * bin_width / np.sqrt(2 * np.pi * fit_std**2)
+                y_fit = scale_factor * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
                 
-                # The fitted Gaussian amplitude is already in histogram count units from curve_fit
-                # No additional scaling needed since we fit to histogram counts directly
                 plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+                        label=f'Gaussian Fit (±{fit_range}ps): μ={fit_mean:.1f}, σ={fit_std:.1f}')
                 
-            except Exception:
+            except Exception as e:
+                print(f"Warning: Gaussian fit failed: {e}")
                 fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
         else:
             fit_mean, fit_std = mean_all, std_all
@@ -547,11 +555,17 @@ class DataProcessor:
         # Get labels for title and annotation
         cal_label, filter_label = self._get_display_labels()
         
-        plt.xlabel('Traditional t0 [ns]')
+        plt.xlabel('Traditional t0 [ps]')
         plt.ylabel('Count')
         plt.title(f'Traditional t0 Distribution\n{cal_label} | {filter_label}')
-        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
-                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
+        
+        # Create proper legend with data statistics in text box
+        stats_text = f'All Data:\nμ={mean_all:.1f}ps, σ={std_all:.1f}ps\nN={len(traditional_t0):,} events'
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
+                verticalalignment='top', fontsize=9,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', alpha=0.8))
+        
+        plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
         plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
         
@@ -565,37 +579,47 @@ class DataProcessor:
         
         # Create histogram with bin width = 10, limited to ±2000 range
         bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
+        bin_width = bins[1] - bins[0]
         
-        counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
+        # Plot histogram with correct label
+        counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', 
+                                       edgecolor='black', label='Error Data')
         
         # Calculate basic statistics
         mean_all = np.mean(t0_errors)
         std_all = np.std(t0_errors)
         
-        # Gaussian fit on restricted range
+        # Improved Gaussian fit on restricted range
         fit_range = self.config.gaussian_fit_range
         mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
-        if np.sum(mask) > 10:
+        if np.sum(mask) > 20:  # Need enough points for fitting
             fit_data = t0_errors[mask]
             try:
-                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
+                # Use robust fitting approach
+                from scipy import stats
                 
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
+                # Remove extreme outliers for better fit
+                z_scores = np.abs(stats.zscore(fit_data))
+                clean_data = fit_data[z_scores < 3]
                 
-                fit_mean, fit_std = popt[1], abs(popt[2])
+                if len(clean_data) > 10:
+                    fit_mean = np.mean(clean_data)
+                    fit_std = np.std(clean_data)
+                else:
+                    fit_mean = np.mean(fit_data)
+                    fit_std = np.std(fit_data)
                 
-                # Plot fitted Gaussian
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = self.gaussian_func(x_fit, *popt)
+                # Generate fitted curve properly scaled
+                x_fit = np.linspace(-fit_range, fit_range, 400)
+                # Scale to match histogram counts
+                scale_factor = len(fit_data) * bin_width / np.sqrt(2 * np.pi * fit_std**2)
+                y_fit = scale_factor * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
                 
-                # The fitted Gaussian amplitude is already in histogram count units from curve_fit
-                # No additional scaling needed since we fit to histogram counts directly
                 plt.plot(x_fit, y_fit, 'r-', linewidth=2,
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+                        label=f'Gaussian Fit (±{fit_range}ps): μ={fit_mean:.1f}, σ={fit_std:.1f}')
                 
-            except Exception:
+            except Exception as e:
+                print(f"Warning: Gaussian fit failed: {e}")
                 fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
         else:
             fit_mean, fit_std = mean_all, std_all
@@ -603,11 +627,17 @@ class DataProcessor:
         # Get labels for title
         cal_label, filter_label = self._get_display_labels()
         
-        plt.xlabel('Traditional t0 - True t0 [ns]')
+        plt.xlabel('Traditional t0 - True t0 [ps]')
         plt.ylabel('Count')
         plt.title(f'Traditional t0 Error Distribution\n{cal_label} | {filter_label}')
-        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
-                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
+        
+        # Create proper legend with data statistics in text box  
+        stats_text = f'All Error Data:\nμ={mean_all:.1f}ps, σ={std_all:.1f}ps\nN={len(t0_errors):,} events'
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
+                verticalalignment='top', fontsize=9,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.8))
+        
+        plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
         plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
         
