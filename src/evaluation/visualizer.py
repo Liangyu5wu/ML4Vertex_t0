@@ -340,10 +340,10 @@ class Visualizer:
         
         # Plot histograms
         plt.hist(y_true, bins=bins, alpha=0.6, 
-                label=f'Actual (μ={true_mean:.4f}, σ={true_std:.4f}, RMS={true_rms:.4f})', 
+                label=f'Actual (μ={true_mean:.4f}, σ={true_std:.4f}, RMS={true_rms:.4f}, N={len(y_true):,})', 
                 color='blue', density=False)
         plt.hist(y_pred, bins=bins, alpha=0.6, 
-                label=f'Predicted (μ={pred_mean:.4f}, σ={pred_std:.4f}, RMS={pred_rms:.4f})', 
+                label=f'Predicted (μ={pred_mean:.4f}, σ={pred_std:.4f}, RMS={pred_rms:.4f}, N={len(y_pred):,})', 
                 color='red', density=False)
         
         plt.xlabel('Vertex Time')
@@ -406,7 +406,7 @@ class Visualizer:
         
         plt.xlabel('Prediction Error (Predicted - Actual)')
         plt.ylabel('Count')
-        plt.title(f'{self.config.model_name}: Error Distribution')
+        plt.title(f'{self.config.model_name}: Error Distribution (N={len(errors):,} events)')
         plt.legend()
         plt.grid(True, alpha=0.3)
         

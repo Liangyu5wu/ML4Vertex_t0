@@ -98,9 +98,14 @@ class BaselineGuidedDNN:
             x = layers.Dropout(dropout_rate, name=f'event_dropout_{i}')(x)
         
         # Output residual correction
+        # This layer outputs a residual value (can be positive, negative, or zero)
         residual = layers.Dense(1, name='residual_output')(x)
         
         # Final prediction: baseline + residual
+        # The model optimizes: |final_prediction - true_vertex_time|^2
+        # where final_prediction = baseline_prediction + model_residual
+        # If residual ≈ 0, performance equals baseline method
+        # If residual ≠ 0, model learns improvements over baseline
         final_output = layers.Add(name='final_prediction')([baseline_inputs, residual])
         
         # Create model

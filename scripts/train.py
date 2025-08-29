@@ -311,23 +311,41 @@ def main():
         
         # Split data
         if is_baseline_guided:
-            # Split data including baseline predictions
-            (train_cells, val_cells, test_cells), \
-            (train_vertex, val_vertex, test_vertex), \
-            (train_times, val_times, test_times) = data_processor.split_data(
-                cell_sequences, vertex_features, vertex_times
+            # For baseline-guided models, we need to split all data together to maintain consistency
+            from sklearn.model_selection import train_test_split
+            import numpy as np
+            
+            # Create indices for consistent splitting
+            indices = np.arange(len(vertex_times))
+            
+            # First split: train vs (val + test)
+            train_indices, temp_indices = train_test_split(
+                indices, test_size=config.test_size + config.val_split, 
+                random_state=config.random_state
             )
             
-            # Split baseline predictions accordingly
-            from sklearn.model_selection import train_test_split
-            train_baselines, temp_baselines = train_test_split(
-                baseline_predictions, test_size=config.test_size + config.val_split, 
+            # Second split: val vs test
+            val_indices, test_indices = train_test_split(
+                temp_indices, test_size=config.test_size/(config.test_size + config.val_split), 
                 random_state=config.random_state
             )
-            val_baselines, test_baselines = train_test_split(
-                temp_baselines, test_size=config.test_size/(config.test_size + config.val_split), 
-                random_state=config.random_state
-            )
+            
+            # Split all data using these indices
+            train_cells = [cell_sequences[i] for i in train_indices]
+            val_cells = [cell_sequences[i] for i in val_indices]
+            test_cells = [cell_sequences[i] for i in test_indices]
+            
+            train_vertex = vertex_features[train_indices]
+            val_vertex = vertex_features[val_indices]
+            test_vertex = vertex_features[test_indices]
+            
+            train_times = vertex_times[train_indices]
+            val_times = vertex_times[val_indices]
+            test_times = vertex_times[test_indices]
+            
+            train_baselines = baseline_predictions[train_indices]
+            val_baselines = baseline_predictions[val_indices]
+            test_baselines = baseline_predictions[test_indices]
         else:
             # Standard data splitting
             (train_cells, val_cells, test_cells), \

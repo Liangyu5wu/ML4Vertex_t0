@@ -1103,21 +1103,24 @@ class DataProcessor:
         # Apply smart padding
         padded_cells = self.apply_smart_padding(cell_sequences, max_seq_len, feature_dim)
         
+        # Ensure arrays have consistent lengths
+        assert len(cell_sequences) == len(vertex_features) == len(vertex_times) == len(baseline_predictions), \
+            f"Data length mismatch: cells={len(cell_sequences)}, vertex={len(vertex_features)}, " \
+            f"times={len(vertex_times)}, baselines={len(baseline_predictions)}"
+        
         # Reshape baseline predictions to match expected input shape
         baseline_predictions = baseline_predictions.reshape(-1, 1)
         
-        # For residual learning, target is the residual: true_time - baseline_time
-        residual_targets = vertex_times - baseline_predictions.flatten()
-        
         # Create TensorFlow dataset
+        # Target is actual vertex_times - the model internally computes baseline + residual
         dataset = tf.data.Dataset.from_tensor_slices((
             {
                 'cell_sequence': padded_cells, 
                 'vertex_features': vertex_features,
                 'baseline_prediction': baseline_predictions
             },
-            vertex_times  # Note: we use actual vertex_times, not residuals
-                         # The model will compute residual internally
+            vertex_times  # Model optimizes: |final_prediction - vertex_times|
+                         # where final_prediction = baseline_prediction + model_residual
         ))
         
         if shuffle:
