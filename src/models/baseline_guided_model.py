@@ -79,7 +79,11 @@ class BaselineGuidedDNN:
             ])
         else:
             # Create zero vertex connection for consistency
-            vertex_zeros = layers.Lambda(lambda x: tf.zeros_like(x[:, :1]))(vertex_inputs)
+            vertex_zeros = layers.Lambda(
+                lambda x: tf.zeros_like(x[:, :1]), 
+                output_shape=(1,),
+                name='vertex_zeros'
+            )(vertex_inputs)
             combined = layers.Concatenate(name='combine_features')([
                 cell_representation,
                 vertex_zeros, 
