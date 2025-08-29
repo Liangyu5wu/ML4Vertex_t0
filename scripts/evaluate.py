@@ -267,6 +267,8 @@ def main():
             # For baseline-guided models, make predictions directly using the dataset
             print("Making predictions for baseline-guided model...")
             y_pred = keras_model.predict(test_dataset)
+            # Flatten predictions to match expected shape for metrics computation
+            y_pred = y_pred.flatten()
             detailed_metrics = evaluator.compute_metrics(test_times, y_pred)
         else:
             y_pred, detailed_metrics = evaluator.predict_and_evaluate(
