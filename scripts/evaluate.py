@@ -125,7 +125,7 @@ def print_model_info(model, is_dnn_model):
     print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
 
 
-def load_or_reuse_data(config, data_dir_override=None, load_data=False):
+def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False):
     """Load data or try to reuse existing processed data."""
     if data_dir_override:
         config.data_dir = data_dir_override
@@ -176,26 +176,37 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False):
             train_times, val_times, test_times
         )
         
-        return (test_cells_norm, test_vertex_norm, test_times, data_processor)
+        if is_baseline_guided:
+            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines)
+        else:
+            return (test_cells_norm, test_vertex_norm, test_times, data_processor)
     
     else:
         # This is a placeholder - in a real implementation, you might save/load 
         # processed data to avoid reprocessing
         print("Warning: --load-data not specified. You must provide processed data.")
         print("For now, will load and process data anyway...")
-        return load_or_reuse_data(config, data_dir_override, load_data=True)
+        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided)
 
 
-def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor):
+def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None):
     """Create test dataset automatically based on model type."""
     print("\n3. Creating test dataset for evaluation...")
     
-    # Use the new automatic dataset creation method
-    test_dataset = evaluator.create_test_dataset_for_evaluation(
-        test_cells_norm, test_vertex_norm, test_times, data_processor, model
-    )
-    
-    return test_dataset
+    # Check if this is a baseline-guided model
+    if test_baselines is not None:
+        print("Creating test dataset with baseline predictions for baseline-guided model...")
+        # For baseline-guided models, we need to create the dataset with baseline predictions
+        # Use the data processor's method but with baseline predictions
+        return data_processor.create_padded_dataset_with_baseline(
+            test_cells_norm, test_vertex_norm, test_times, test_baselines, shuffle=False
+        )
+    else:
+        # Use the standard automatic dataset creation method
+        test_dataset = evaluator.create_test_dataset_for_evaluation(
+            test_cells_norm, test_vertex_norm, test_times, data_processor, model
+        )
+        return test_dataset
 
 
 def main():
@@ -221,8 +232,13 @@ def main():
         
         # Load or process data
         print("\n2. Loading evaluation data...")
-        test_cells_norm, test_vertex_norm, test_times, data_processor = \
-            load_or_reuse_data(config, args.data_dir, args.load_data)
+        if is_baseline_guided:
+            test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines = \
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided)
+        else:
+            test_cells_norm, test_vertex_norm, test_times, data_processor = \
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided)
+            test_baselines = None
         
         print(f"Test data loaded: {len(test_times)} samples")
         
@@ -232,7 +248,7 @@ def main():
         
         # Create test dataset automatically based on model type
         test_dataset = create_test_dataset_automatically(
-            evaluator, keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor
+            evaluator, keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines
         )
         
         # Evaluate using Keras
@@ -241,9 +257,15 @@ def main():
         
         # Make predictions and compute detailed metrics
         print("\n5. Computing detailed metrics...")
-        y_pred, detailed_metrics = evaluator.predict_and_evaluate(
-            keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor
-        )
+        if is_baseline_guided:
+            # For baseline-guided models, make predictions directly using the dataset
+            print("Making predictions for baseline-guided model...")
+            y_pred = keras_model.predict(test_dataset)
+            detailed_metrics = evaluator.compute_metrics(test_times, y_pred)
+        else:
+            y_pred, detailed_metrics = evaluator.predict_and_evaluate(
+                keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor
+            )
         
         # Print comprehensive metrics
         evaluator.print_metrics(detailed_metrics)
