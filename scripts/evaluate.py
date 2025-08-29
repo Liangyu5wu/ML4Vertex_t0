@@ -296,9 +296,10 @@ def main():
                 training_history = Trainer.load_training_history(history_path)
                 print(f"Loaded training history from: {history_path}")
             
-            # Create all plots
+            # Create all plots with baseline comparison if available
             visualizer.create_comprehensive_evaluation_plots(
-                test_times, y_pred, detailed_metrics, training_history
+                test_times, y_pred, detailed_metrics, training_history,
+                baseline_predictions=test_baselines
             )
         
         # Print summary

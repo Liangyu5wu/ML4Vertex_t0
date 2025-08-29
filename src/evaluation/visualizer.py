@@ -361,15 +361,17 @@ class Visualizer:
         self, 
         y_true: np.ndarray, 
         y_pred: np.ndarray,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        baseline_predictions: Optional[np.ndarray] = None
     ):
         """
-        Plot distribution of prediction errors.
+        Plot distribution of prediction errors with optional baseline comparison.
         
         Args:
             y_true: True values
             y_pred: Predicted values
             save_path: Path to save the plot
+            baseline_predictions: Optional baseline method predictions for comparison
         """
         if save_path is None:
             save_path = os.path.join(self.config.plots_dir, "error_distribution.png")
@@ -378,37 +380,119 @@ class Visualizer:
         error_mean = np.mean(errors)
         error_std = np.std(errors)
         
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(12, 8))
+        
+        # Determine bin range to accommodate both ML and baseline errors
+        if baseline_predictions is not None:
+            baseline_errors = baseline_predictions.flatten() - y_true
+            all_errors = np.concatenate([errors, baseline_errors])
+            error_range = (np.min(all_errors), np.max(all_errors))
+        else:
+            error_range = (np.min(errors), np.max(errors))
         
         # Create histogram with consistent binning
-        counts, bin_edges, _ = plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=False)
+        bins = np.linspace(error_range[0], error_range[1], 50)
+        bin_width = bins[1] - bins[0]
         
-        # Calculate actual bin width from the histogram
-        bin_width = bin_edges[1] - bin_edges[0]
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        # Plot ML model errors
+        counts_ml, _, _ = plt.hist(errors, bins=bins, alpha=0.7, color='blue', 
+                                  edgecolor='black', density=False, 
+                                  label=f'ML Model (μ={error_mean:.2f}, σ={error_std:.2f})')
         
-        # Add vertical lines for statistics
-        plt.axvline(x=error_mean, color='k', linestyle='-', linewidth=2, 
-                   label=f'Mean: {error_mean:.4f}')
-        plt.axvline(x=error_mean + error_std, color='k', linestyle=':', linewidth=2, 
-                   label=f'+1σ: {error_std:.4f}')
-        plt.axvline(x=error_mean - error_std, color='k', linestyle=':', linewidth=2, 
-                   label=f'-1σ')
+        # Plot baseline errors if provided
+        if baseline_predictions is not None:
+            baseline_mean = np.mean(baseline_errors)
+            baseline_std = np.std(baseline_errors)
+            counts_baseline, _, _ = plt.hist(baseline_errors, bins=bins, alpha=0.6, color='red',
+                                           edgecolor='darkred', density=False,
+                                           label=f'Baseline Method (μ={baseline_mean:.2f}, σ={baseline_std:.2f})')
         
-        # Overlay normal distribution for comparison
-        # Use the same range as the histogram data for consistency
-        x_norm = np.linspace(errors.min(), errors.max(), 200)
-        y_norm = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - error_mean) / error_std) ** 2)
+        # Add vertical lines for ML model statistics
+        plt.axvline(x=error_mean, color='blue', linestyle='-', linewidth=2, alpha=0.8)
+        plt.axvline(x=error_mean + error_std, color='blue', linestyle=':', linewidth=1.5, alpha=0.8)
+        plt.axvline(x=error_mean - error_std, color='blue', linestyle=':', linewidth=1.5, alpha=0.8)
         
-        # Scale normal distribution to match histogram counts using actual bin width
-        scale_factor = len(errors) * bin_width
-        plt.plot(x_norm, y_norm * scale_factor, 'r--', linewidth=2, label='Normal Distribution')
+        # Add vertical lines for baseline statistics if provided
+        if baseline_predictions is not None:
+            plt.axvline(x=baseline_mean, color='red', linestyle='-', linewidth=2, alpha=0.8)
+            plt.axvline(x=baseline_mean + baseline_std, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+            plt.axvline(x=baseline_mean - baseline_std, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
         
-        plt.xlabel('Prediction Error (Predicted - Actual)')
+        # Overlay improved normal distribution fits
+        x_range = np.linspace(error_range[0], error_range[1], 300)
+        
+        # ML model normal fit
+        try:
+            from scipy import stats
+            # Use robust fitting with outlier detection
+            # Remove outliers beyond 3 sigma for better fit
+            z_scores = np.abs(stats.zscore(errors))
+            errors_clean = errors[z_scores < 3]
+            
+            if len(errors_clean) > 10:  # Ensure sufficient data for fit
+                clean_mean = np.mean(errors_clean)
+                clean_std = np.std(errors_clean)
+                y_norm_ml = stats.norm.pdf(x_range, clean_mean, clean_std)
+                scale_factor_ml = len(errors) * bin_width
+                plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
+                        label=f'ML Normal Fit (clean: μ={clean_mean:.2f}, σ={clean_std:.2f})')
+            else:
+                # Fallback to simple fit
+                y_norm_ml = stats.norm.pdf(x_range, error_mean, error_std)
+                scale_factor_ml = len(errors) * bin_width
+                plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
+                        label='ML Normal Fit')
+                
+        except ImportError:
+            # Fallback to manual normal distribution if scipy not available
+            y_norm_ml = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_range - error_mean) / error_std) ** 2)
+            scale_factor_ml = len(errors) * bin_width
+            plt.plot(x_range, y_norm_ml * scale_factor_ml, 'b--', linewidth=2, 
+                    label='ML Normal Fit')
+        
+        # Baseline normal fit if provided
+        if baseline_predictions is not None:
+            try:
+                from scipy import stats
+                z_scores_baseline = np.abs(stats.zscore(baseline_errors))
+                baseline_errors_clean = baseline_errors[z_scores_baseline < 3]
+                
+                if len(baseline_errors_clean) > 10:
+                    baseline_clean_mean = np.mean(baseline_errors_clean)
+                    baseline_clean_std = np.std(baseline_errors_clean)
+                    y_norm_baseline = stats.norm.pdf(x_range, baseline_clean_mean, baseline_clean_std)
+                    scale_factor_baseline = len(baseline_errors) * bin_width
+                    plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
+                            label=f'Baseline Normal Fit (clean: μ={baseline_clean_mean:.2f}, σ={baseline_clean_std:.2f})')
+                else:
+                    y_norm_baseline = stats.norm.pdf(x_range, baseline_mean, baseline_std)
+                    scale_factor_baseline = len(baseline_errors) * bin_width
+                    plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
+                            label='Baseline Normal Fit')
+            except ImportError:
+                y_norm_baseline = (1 / (baseline_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_range - baseline_mean) / baseline_std) ** 2)
+                scale_factor_baseline = len(baseline_errors) * bin_width
+                plt.plot(x_range, y_norm_baseline * scale_factor_baseline, 'r--', linewidth=2,
+                        label='Baseline Normal Fit')
+        
+        plt.xlabel('Prediction Error (Predicted - Actual) [ps]')
         plt.ylabel('Count')
-        plt.title(f'{self.config.model_name}: Error Distribution (N={len(errors):,} events)')
-        plt.legend()
+        plt.title(f'{self.config.model_name}: Error Distribution Comparison')
+        plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
+        
+        # Add statistics text box
+        stats_text = f"Events: {len(errors):,}\n"
+        stats_text += f"ML RMSE: {np.sqrt(np.mean(errors**2)):.2f}\n"
+        if baseline_predictions is not None:
+            stats_text += f"Baseline RMSE: {np.sqrt(np.mean(baseline_errors**2)):.2f}\n"
+            improvement = ((np.sqrt(np.mean(baseline_errors**2)) - np.sqrt(np.mean(errors**2))) / 
+                          np.sqrt(np.mean(baseline_errors**2)) * 100)
+            stats_text += f"RMSE Improvement: {improvement:.1f}%"
+        
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
+                verticalalignment='top', fontsize=9,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
         
         plt.tight_layout()
         plt.savefig(save_path, bbox_inches='tight')
@@ -433,14 +517,16 @@ class Visualizer:
             save_path = os.path.join(self.config.plots_dir, "residuals_vs_predicted.png")
         
         residuals = y_pred - y_true
+        n_events = len(y_true)
         
         plt.figure(figsize=(10, 8))
-        plt.scatter(y_pred, residuals, alpha=0.6, s=20)
-        plt.axhline(y=0, color='r', linestyle='--', linewidth=2)
+        plt.scatter(y_pred, residuals, alpha=0.6, s=20, label=f'Residuals (N={n_events:,} events)')
+        plt.axhline(y=0, color='r', linestyle='--', linewidth=2, label='Zero line')
         
         plt.xlabel('Predicted Values')
         plt.ylabel('Residuals (Predicted - Actual)')
         plt.title(f'{self.config.model_name}: Residuals vs Predicted Values')
+        plt.legend()
         plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -454,7 +540,8 @@ class Visualizer:
         y_pred: np.ndarray, 
         metrics: Dict[str, float],
         training_history: Optional[Dict[str, np.ndarray]] = None,
-        plot_prediction_type: str = '2d_hist'  # 新增参数
+        plot_prediction_type: str = '2d_hist',
+        baseline_predictions: Optional[np.ndarray] = None
     ):
         """
         Create all evaluation plots with configurable prediction plot type.
@@ -465,6 +552,7 @@ class Visualizer:
             metrics: Evaluation metrics
             training_history: Optional training history for plotting
             plot_prediction_type: Type of prediction plot ('2d_hist', 'hexbin', 'scatter', 'comparison')
+            baseline_predictions: Optional baseline method predictions for comparison
         """
         # Ensure plots directory exists
         os.makedirs(self.config.plots_dir, exist_ok=True)
@@ -484,8 +572,8 @@ class Visualizer:
         # Plot histogram comparison
         self.plot_histogram_comparison(y_true, y_pred)
         
-        # Plot error distribution
-        self.plot_error_distribution(y_true, y_pred)
+        # Plot error distribution with baseline comparison if available
+        self.plot_error_distribution(y_true, y_pred, baseline_predictions=baseline_predictions)
         
         # Plot residuals
         self.plot_residuals_vs_predicted(y_true, y_pred)
