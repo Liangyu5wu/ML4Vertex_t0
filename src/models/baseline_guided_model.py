@@ -79,9 +79,12 @@ class BaselineGuidedDNN:
             ])
         else:
             # Create zero vertex connection for consistency
-            vertex_zeros = layers.Lambda(
-                lambda x: tf.zeros_like(x[:, :1]), 
-                output_shape=(1,),
+            # Use a dense layer with zero weights instead of Lambda to avoid tf scoping issues
+            vertex_zeros = layers.Dense(
+                1, 
+                use_bias=False,
+                kernel_initializer='zeros',
+                trainable=False,
                 name='vertex_zeros'
             )(vertex_inputs)
             combined = layers.Concatenate(name='combine_features')([
