@@ -5,6 +5,7 @@
 import os
 import sys
 import argparse
+import numpy as np
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -147,23 +148,28 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
         data_processor = DataProcessor(config)
         
         # Split data (using same random state as training for consistency)
+        # Generate the same indices that split_data uses
+        from sklearn.model_selection import train_test_split
+        indices = np.arange(len(vertex_times))
+        train_indices, temp_indices = train_test_split(
+            indices, test_size=config.test_size, random_state=config.random_state
+        )
+        val_indices, test_indices = train_test_split(
+            temp_indices, test_size=config.val_split, random_state=config.random_state
+        )
+        
+        # Split all data using the same indices
         (train_cells, val_cells, test_cells), \
         (train_vertex, val_vertex, test_vertex), \
         (train_times, val_times, test_times) = data_processor.split_data(
             cell_sequences, vertex_features, vertex_times
         )
         
-        # Split baseline predictions if needed
+        # Split baseline predictions using the same indices if needed
         if is_baseline_guided:
-            from sklearn.model_selection import train_test_split
-            train_baselines, temp_baselines = train_test_split(
-                baseline_predictions, test_size=config.test_size + config.val_split, 
-                random_state=config.random_state
-            )
-            val_baselines, test_baselines = train_test_split(
-                temp_baselines, test_size=config.test_size/(config.test_size + config.val_split), 
-                random_state=config.random_state
-            )
+            train_baselines = baseline_predictions[train_indices]
+            val_baselines = baseline_predictions[val_indices]
+            test_baselines = baseline_predictions[test_indices]
         else:
             train_baselines = val_baselines = test_baselines = None
         
