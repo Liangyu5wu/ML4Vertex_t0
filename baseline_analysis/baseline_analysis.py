@@ -45,10 +45,18 @@ class BaselineAnalysisConfig:
     
     def _load_calibration_data(self) -> Dict[str, List[float]]:
         """Load calibration data from external file."""
+        # Try current directory first, then parent directory
         calibration_path = Path("calibration_data") / self.calibration_data_file
+        if not calibration_path.exists():
+            calibration_path = Path("../calibration_data") / self.calibration_data_file
         
         if not calibration_path.exists():
-            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+            raise FileNotFoundError(f"Calibration data file not found. Tried paths:\n"
+                                  f"  - calibration_data/{self.calibration_data_file}\n"
+                                  f"  - ../calibration_data/{self.calibration_data_file}\n"
+                                  f"Please ensure calibration data is available.")
+        
+        print(f"Loading calibration data from: {calibration_path}")
         
         calibration_data = {}
         with open(calibration_path, 'r') as f:
