@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(chmod:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(python:*)",
+      "Bash(git log:*)",
+      "Bash(find:*)",
+      "Read(/Users/liangyu5/Desktop/models/**)",
+      "Read(/Users/liangyu5/Desktop/**)",
+      "Bash(mkdir:*)",
+      "Bash(pkill:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

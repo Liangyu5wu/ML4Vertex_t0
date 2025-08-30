@@ -21,9 +21,15 @@ from typing import List, Tuple, Dict, Any
 import shutil
 import logging
 
+# Add the src directory to the path to import DataLoader and BaseConfig
+sys.path.append(str(Path(__file__).parent.parent / "src"))
+sys.path.append(str(Path(__file__).parent.parent))
+from data.data_loader import DataLoader
+from config.base_config import BaseConfig
 
-class BaselineAnalysisConfig:
-    """Configuration class for baseline analysis."""
+
+class BaselineAnalysisConfig(BaseConfig):
+    """Configuration class for baseline analysis, inheriting from BaseConfig."""
     
     def __init__(self, config_file: str = None):
         """Initialize configuration from YAML file."""
@@ -33,17 +39,23 @@ class BaselineAnalysisConfig:
         with open(config_file, 'r') as f:
             config_data = yaml.safe_load(f)
         
-        # Load all configuration parameters
+        # Initialize with defaults from BaseConfig
+        super().__init__()
+        
+        # Override with values from YAML file
         for key, value in config_data.items():
             setattr(self, key, value)
         
-        # Load calibration data
-        self.calibration_data = self._load_calibration_data()
+        # Run post_init to setup feature lists
+        self.__post_init__()
         
-        # Energy bins for calibration
+        # Load calibration data
+        self.calibration_data = self.load_calibration_data()
+        
+        # Energy bins for calibration  
         self.energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
     
-    def _load_calibration_data(self) -> Dict[str, List[float]]:
+    def load_calibration_data(self) -> Dict[str, List[float]]:
         """Load calibration data from external file."""
         # Try current directory first, then parent directory
         calibration_path = Path("calibration_data") / self.calibration_data_file
@@ -89,7 +101,7 @@ def setup_logging(output_dir: Path) -> logging.Logger:
 
 
 def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger) -> Tuple[List, np.ndarray, List]:
-    """Load and filter data from HDF5 files."""
+    """Load and filter data from HDF5 files using optimized filtering approach."""
     logger.info(f"Loading data from {config.data_dir}")
     logger.info(f"Number of files: {config.num_files}")
     logger.info(f"Track matching: {config.use_track_features}, Jet matching: {config.use_jet_features}")
@@ -127,33 +139,30 @@ def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger)
                 
                 total_cells_before += len(event_cells)
                 
-                # Apply filtering based on configuration
-                filtered_cells = apply_cell_filtering(event_cells, vertex_time, config)
+                # Apply optimized cell filtering
+                filtered_cells = apply_optimized_cell_filtering(event_cells, config)
                 
                 if len(filtered_cells) < config.min_cells:
                     continue
                 
-                # Additional layer filtering
-                layer_filtered_cells = []
-                for cell in filtered_cells:
-                    if cell['Cell_layer'] in [1, 2, 3]:
-                        layer_filtered_cells.append(cell)
+                # Apply baseline method filter if enabled
+                if config.use_baseline_method_filter:
+                    baseline_error = calculate_baseline_t0_error(filtered_cells, vertex_time, config)
+                    if baseline_error > config.baseline_method_threshold:
+                        continue
                 
-                if len(layer_filtered_cells) < config.min_cells:
-                    continue
-                
-                total_cells_after += len(layer_filtered_cells)
+                total_cells_after += len(filtered_cells)
                 valid_events += 1
                 
-                # Store raw cell data for feature analysis
-                all_raw_cell_data.append(layer_filtered_cells)
+                # Store filtered cell data for feature analysis
+                all_raw_cell_data.append(filtered_cells)
                 
                 # Convert to list format for processing
                 cell_sequence = []
-                for cell in layer_filtered_cells:
+                for cell in filtered_cells:
                     cell_features = [
                         cell['Cell_time_TOF_corrected'],
-                        cell['Cell_e'],
+                        cell['Cell_e'], 
                         cell['Cell_Barrel'],
                         cell['Cell_layer']
                     ]
@@ -182,14 +191,17 @@ def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger)
         logger.info(f"  - Jet matching: {config.use_cell_jet_matching}")
     logger.info(f"  - Time quality cut: {config.use_time_quality_cut}")
     if config.use_time_quality_cut:
-        logger.info(f"    └─ Threshold: ±{config.time_quality_n_sigma}σ × {config.vertex_time_sigma} ps = ±{config.time_quality_n_sigma * config.vertex_time_sigma:.1f} ps")
+        logger.info(f"    └─ Formula: |cell_time| <= sqrt({config.vertex_time_sigma}^2 + sigma_cell^2) * {config.time_quality_n_sigma}")
     logger.info(f"  - Layer filtering: layers 1, 2, 3 only")
+    logger.info(f"  - Baseline method filter: {config.use_baseline_method_filter}")
+    if config.use_baseline_method_filter:
+        logger.info(f"    └─ Threshold: ±{config.baseline_method_threshold:.1f} ps")
     
     return all_cell_sequences, np.array(all_vertex_times), all_raw_cell_data
 
 
-def apply_cell_filtering(event_cells, vertex_time: float, config: BaselineAnalysisConfig):
-    """Apply cell filtering based on configuration."""
+def apply_optimized_cell_filtering(event_cells: np.ndarray, config: BaselineAnalysisConfig) -> np.ndarray:
+    """Apply optimized cell filtering using the validated logic from DataLoader."""
     mask = np.ones(len(event_cells), dtype=bool)
     
     # Apply valid cell filter
@@ -197,23 +209,172 @@ def apply_cell_filtering(event_cells, vertex_time: float, config: BaselineAnalys
         valid_mask = event_cells['valid'] == True
         mask = mask & valid_mask
     
-    # Apply track or jet matching filter
-    if config.use_track_features and config.use_cell_track_matching:
+    # Apply cell-track matching filter
+    if config.use_cell_track_matching:
         track_matching_mask = event_cells['matched_track_HS'] == 1
         mask = mask & track_matching_mask
-    elif config.use_jet_features and config.use_cell_jet_matching:
-        jet_matching_mask = event_cells['cell_jet_matched'] == True
-        mask = mask & jet_matching_mask
+    
+    # Apply cell-jet matching filter
+    if config.use_cell_jet_matching:
+        if 'cell_jet_matched' in event_cells.dtype.names:
+            jet_matching_mask = event_cells['cell_jet_matched'] == True
+            mask = mask & jet_matching_mask
+    
+    # Apply layer filtering - only keep cells with layers 1, 2, 3
+    if 'Cell_layer' in event_cells.dtype.names:
+        layer_mask = np.isin(event_cells['Cell_layer'], [1, 2, 3])
+        mask = mask & layer_mask
+    
+    # Apply additional custom filters
+    if config.additional_cell_filters:
+        for filter_key, filter_value in config.additional_cell_filters.items():
+            if filter_key in event_cells.dtype.names:
+                additional_mask = event_cells[filter_key] == filter_value
+                mask = mask & additional_mask
+    
+    # Apply basic filtering first
+    filtered_cells = event_cells[mask]
     
     # Apply time quality cut
     if config.use_time_quality_cut:
-        cell_times = event_cells['Cell_time_TOF_corrected']
-        time_diff = np.abs(cell_times - vertex_time)
-        time_threshold = config.time_quality_n_sigma * config.vertex_time_sigma
-        time_quality_mask = time_diff <= time_threshold
-        mask = mask & time_quality_mask
+        filtered_cells = apply_time_quality_cut(filtered_cells, config)
+    
+    return filtered_cells
+
+
+def apply_time_quality_cut(event_cells: np.ndarray, config: BaselineAnalysisConfig) -> np.ndarray:
+    """Apply time quality cut based on statistical uncertainty using correct formula."""
+    if not config.use_time_quality_cut or len(event_cells) == 0:
+        return event_cells
+    
+    # Sigma lookup tables using pre-loaded calibration data
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
+    }
+    
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    mask = np.ones(len(event_cells), dtype=bool)
+    
+    for i, cell in enumerate(event_cells):
+        try:
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            energy = cell['Cell_e']
+            cell_time = cell['Cell_time_TOF_corrected']
+            
+            # Skip cells with invalid layer
+            if layer not in [1, 2, 3]:
+                mask[i] = False
+                continue
+            
+            # Get sigma for this cell
+            sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+            energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+            
+            # Add bounds checking for array access
+            if energy_bin_idx >= len(sigma_params):
+                energy_bin_idx = len(sigma_params) - 1
+            elif energy_bin_idx < 0:
+                energy_bin_idx = 0
+            
+            sigma_cell = sigma_params[energy_bin_idx]
+            
+            # Calculate total uncertainty: σ_total = √(σ_vertex² + σ_cell²)
+            sigma_total = np.sqrt(config.vertex_time_sigma**2 + sigma_cell**2)
+            
+            # Apply n-sigma cut: |cell_time| < n_sigma × σ_total
+            cut_threshold = config.time_quality_n_sigma * sigma_total
+            
+            if abs(cell_time) > cut_threshold:
+                mask[i] = False
+                
+        except (KeyError, ValueError, IndexError):
+            # Skip cells with missing or invalid data
+            mask[i] = False
     
     return event_cells[mask]
+
+
+def calculate_baseline_t0_error(event_cells: np.ndarray, true_vertex_time: float, config: BaselineAnalysisConfig) -> float:
+    """Calculate baseline t0 error for baseline method filtering."""
+    if len(event_cells) == 0:
+        return float('inf')
+    
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    # Parameter and sigma lookup tables
+    param_lookup = {
+        (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_params'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_params'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_params'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_params'],  # Endcap, Layer 3
+    }
+    
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
+    }
+    
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    
+    for cell in event_cells:
+        try:
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            energy = cell['Cell_e']
+            time_tof = cell['Cell_time_TOF_corrected']
+            
+            # Skip cells with invalid layer
+            if layer not in [1, 2, 3]:
+                continue
+            
+            # Get calibration parameters and sigma
+            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+            sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+            
+            energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+            
+            # Add bounds checking
+            if energy_bin_idx >= len(detector_params):
+                energy_bin_idx = len(detector_params) - 1
+            elif energy_bin_idx < 0:
+                energy_bin_idx = 0
+            
+            calibration_value = detector_params[energy_bin_idx]
+            sigma = sigma_params[energy_bin_idx]
+            
+            # Apply calibration
+            calibrated_time = time_tof - calibration_value
+            
+            # Weight = 1/sigma^2
+            weight = 1.0 / (sigma * sigma)
+            
+            weighted_sum += weight * calibrated_time
+            weight_sum += weight
+            
+        except (KeyError, ValueError, IndexError):
+            continue
+    
+    if weight_sum > 0:
+        baseline_t0 = weighted_sum / weight_sum
+        return abs(baseline_t0 - true_vertex_time)
+    else:
+        return float('inf')
 
 
 def get_energy_bin_index(energy: float, energy_bins: List[float]) -> int:
@@ -228,104 +389,85 @@ def get_energy_bin_index(energy: float, energy_bins: List[float]) -> int:
     return len(energy_bins) - 2
 
 
-def apply_time_calibration(cell_sequences: List, config: BaselineAnalysisConfig, logger: logging.Logger) -> List:
-    """Apply detector time calibration to cell sequences."""
-    logger.info("Applying time calibration...")
-    
-    # Parameter lookup - using 1-based layer indexing
-    param_lookup = {
-        (1, 1): config.calibration_data['EMB1_params'],
-        (1, 2): config.calibration_data['EMB2_params'],
-        (1, 3): config.calibration_data['EMB3_params'],
-        (0, 1): config.calibration_data['EME1_params'],
-        (0, 2): config.calibration_data['EME2_params'],
-        (0, 3): config.calibration_data['EME3_params'],
-    }
-    
-    calibrated_sequences = []
-    
-    for sequence in cell_sequences:
-        calibrated_sequence = []
-        
-        for cell in sequence:
-            calibrated_cell = cell.copy()
-            time_tof = cell[0]
-            energy = cell[1]
-            barrel = int(cell[2])
-            layer = int(cell[3])
-            
-            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
-            energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
-            calibration_value = detector_params[energy_bin_idx]
-            
-            calibrated_time = time_tof - calibration_value
-            calibrated_cell[0] = calibrated_time
-            
-            calibrated_sequence.append(calibrated_cell)
-        
-        calibrated_sequences.append(calibrated_sequence)
-    
-    return calibrated_sequences
+# Removed apply_time_calibration function - calibration is now handled within DataLoader's baseline calculation
 
 
-def calculate_baseline_t0(cell_sequences: List, vertex_times: np.ndarray, 
+def calculate_baseline_t0(raw_cell_data: List, vertex_times: np.ndarray, 
                          config: BaselineAnalysisConfig, logger: logging.Logger) -> Tuple[np.ndarray, np.ndarray]:
-    """Calculate baseline t0 for each event using weighted average."""
+    """Calculate baseline t0 for each event using optimized implementation."""
     logger.info("Calculating baseline t0...")
     
-    # Sigma lookup tables
-    sigma_lookup = {
-        (1, 1): config.calibration_data['EMB1_sigma'],
-        (1, 2): config.calibration_data['EMB2_sigma'],
-        (1, 3): config.calibration_data['EMB3_sigma'],
-        (0, 1): config.calibration_data['EME1_sigma'],
-        (0, 2): config.calibration_data['EME2_sigma'],
-        (0, 3): config.calibration_data['EME3_sigma'],
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    # Parameter and sigma lookup tables
+    param_lookup = {
+        (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_params'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_params'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_params'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_params'],  # Endcap, Layer 3
     }
     
-    # Parameter lookup for original times
-    param_lookup = {
-        (1, 1): config.calibration_data['EMB1_params'],
-        (1, 2): config.calibration_data['EMB2_params'],
-        (1, 3): config.calibration_data['EMB3_params'],
-        (0, 1): config.calibration_data['EME1_params'],
-        (0, 2): config.calibration_data['EME2_params'],
-        (0, 3): config.calibration_data['EME3_params'],
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
     }
     
     baseline_t0 = []
     
-    for event_idx, sequence in enumerate(cell_sequences):
+    for event_idx, event_cells in enumerate(raw_cell_data):
         weighted_sum = 0.0
         weight_sum = 0.0
         
-        calibrated_cell_times = []
         original_cell_times = []
+        calibrated_cell_times = []
         
-        for cell in sequence:
-            calibrated_time = cell[0]
-            energy = cell[1]
-            barrel = int(cell[2])
-            layer = int(cell[3])
-            
-            calibrated_cell_times.append(calibrated_time)
-            
-            # Calculate original time
-            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
-            energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
-            calibration_value = detector_params[energy_bin_idx]
-            original_time = calibrated_time + calibration_value
-            original_cell_times.append(original_time)
-            
-            # Get sigma for this cell
-            sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
-            sigma = sigma_params[energy_bin_idx]
-            
-            # Weight = 1/sigma^2
-            weight = 1.0 / (sigma * sigma)
-            
-            weighted_sum += weight * calibrated_time
-            weight_sum += weight
+        for cell in event_cells:
+            try:
+                barrel = int(cell['Cell_Barrel'])
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
+                time_tof = cell['Cell_time_TOF_corrected']
+                
+                original_cell_times.append(time_tof)
+                
+                # Skip cells with invalid layer
+                if layer not in [1, 2, 3]:
+                    continue
+                
+                # Get calibration parameters and sigma
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                
+                energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+                
+                # Add bounds checking
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
+                calibration_value = detector_params[energy_bin_idx]
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Apply calibration
+                calibrated_time = time_tof - calibration_value
+                calibrated_cell_times.append(calibrated_time)
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * calibrated_time
+                weight_sum += weight
+                
+            except (KeyError, ValueError, IndexError):
+                continue
         
         if weight_sum > 0:
             t0 = weighted_sum / weight_sum
@@ -338,7 +480,7 @@ def calculate_baseline_t0(cell_sequences: List, vertex_times: np.ndarray,
         if event_idx < 10:
             logger.info(f"Event {event_idx}:")
             logger.info(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ps")
-            logger.info(f"  Number of filtered cells: {len(calibrated_cell_times)}")
+            logger.info(f"  Number of filtered cells: {len(original_cell_times)}")
             
             original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
             logger.info(f"  Original cell times: {original_times_str} ps")
@@ -889,33 +1031,13 @@ def main():
             logger.error("No valid events found. Exiting.")
             return
         
-        # Apply time calibration
-        calibrated_sequences = apply_time_calibration(cell_sequences, config, logger)
+        # Calculate baseline t0 using filtered raw cell data
+        baseline_t0, t0_errors = calculate_baseline_t0(raw_cell_data, vertex_times, config, logger)
         
-        # Calculate baseline t0
-        baseline_t0, t0_errors = calculate_baseline_t0(calibrated_sequences, vertex_times, config, logger)
-        
-        # Apply baseline method filtering if enabled
+        # Note: Baseline method filtering is now handled during data loading in load_and_filter_data()
+        logger.info(f"Baseline method filtering: {'enabled' if config.use_baseline_method_filter else 'disabled'}")
         if config.use_baseline_method_filter:
-            baseline_filter_mask = np.abs(t0_errors) <= config.baseline_method_threshold
-            
-            logger.info(f"Baseline method filtering:")
-            logger.info(f"  Threshold: ±{config.baseline_method_threshold:.1f} ps")
-            logger.info(f"  Events before filtering: {len(baseline_t0)}")
-            logger.info(f"  Events after filtering: {np.sum(baseline_filter_mask)}")
-            
-            if np.sum(baseline_filter_mask) == 0:
-                logger.error("No events pass baseline method filter. Exiting.")
-                return
-            
-            # Filter all arrays
-            baseline_t0 = baseline_t0[baseline_filter_mask]
-            vertex_times = vertex_times[baseline_filter_mask]
-            t0_errors = t0_errors[baseline_filter_mask]
-            calibrated_sequences = [calibrated_sequences[i] for i in range(len(calibrated_sequences)) if baseline_filter_mask[i]]
-            raw_cell_data = [raw_cell_data[i] for i in range(len(raw_cell_data)) if baseline_filter_mask[i]]
-        else:
-            logger.info("Baseline method filtering: disabled")
+            logger.info(f"  Threshold: ±{config.baseline_method_threshold:.1f} ps (applied during data loading)")
         
         # Analyze worst events
         analyze_worst_events(baseline_t0, vertex_times, raw_cell_data, config, logger)
