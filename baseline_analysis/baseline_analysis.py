@@ -635,42 +635,52 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     
     if np.sum(error_mask) > 10:
         try:
-            error_x = t0_errors[error_mask]
-            error_y = np.ones(len(error_x))  # We're fitting the data points directly
-            error_error = np.ones(len(error_x))  # Unit weights for data points
+            fit_data = t0_errors[error_mask]
             
-            # Initial parameters for fit (amplitude, mean, sigma) - following compare_delta_t0.py
-            error_p0 = [np.max(np.histogram(error_x, bins=50)[0]), 0, 100]
+            # Create histogram data for fitting using the SAME bins as the plot
+            # This is crucial - we need to fit the exact same histogram that's displayed
+            plot_hist, plot_bin_edges = np.histogram(t0_errors, bins=bins)
             
-            # Create histogram data for fitting (like compare_delta_t0.py)
-            hist_values, bin_edges = np.histogram(error_x, bins=50)
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            hist_error = np.sqrt(hist_values)
-            hist_error[hist_error == 0] = 1
+            # Find the range of bins that correspond to our fitting range
+            bin_centers = (plot_bin_edges[:-1] + plot_bin_edges[1:]) / 2
+            fit_mask = (bin_centers >= fit_min) & (bin_centers <= fit_max)
             
-            # Only fit non-zero bins
-            nonzero_mask = hist_values > 0
-            if np.sum(nonzero_mask) >= 3:
-                error_popt, error_pcov = curve_fit(gaussian, bin_centers[nonzero_mask], 
-                                                  hist_values[nonzero_mask], 
-                                                  p0=error_p0, sigma=hist_error[nonzero_mask], 
-                                                  absolute_sigma=True)
-                error_perr = np.sqrt(np.diag(error_pcov))
+            if np.sum(fit_mask) > 3:
+                fit_bin_centers = bin_centers[fit_mask]
+                fit_hist_values = plot_hist[fit_mask]
+                fit_hist_error = np.sqrt(fit_hist_values)
+                fit_hist_error[fit_hist_error == 0] = 1
                 
-                # Plot the fitted curves exactly like compare_delta_t0.py
-                x_fit = np.linspace(min(fit_min, t0_errors.min()), 
-                                   max(fit_max, t0_errors.max()), 1000)
+                # Initial parameters for fit (amplitude, mean, sigma)
+                error_p0 = [np.max(fit_hist_values), 0, 100]
                 
-                error_fit = gaussian(x_fit, *error_popt)
-                
-                ax.plot(x_fit, error_fit, 'b--', linewidth=2)
-                
-                # Store fit results for legend
-                fit_successful = True
-                fit_mean = error_popt[1]
-                fit_std = abs(error_popt[2])
-                fit_mean_err = error_perr[1]
-                fit_std_err = error_perr[2]
+                # Only fit non-zero bins
+                nonzero_mask = fit_hist_values > 0
+                if np.sum(nonzero_mask) >= 3:
+                    error_popt, error_pcov = curve_fit(gaussian, 
+                                                      fit_bin_centers[nonzero_mask], 
+                                                      fit_hist_values[nonzero_mask], 
+                                                      p0=error_p0, 
+                                                      sigma=fit_hist_error[nonzero_mask], 
+                                                      absolute_sigma=True)
+                    error_perr = np.sqrt(np.diag(error_pcov))
+                    
+                    # Plot the fitted curves
+                    x_fit = np.linspace(min(fit_min, t0_errors.min()), 
+                                       max(fit_max, t0_errors.max()), 1000)
+                    
+                    error_fit = gaussian(x_fit, *error_popt)
+                    
+                    ax.plot(x_fit, error_fit, 'b--', linewidth=2)
+                    
+                    # Store fit results for legend
+                    fit_successful = True
+                    fit_mean = error_popt[1]
+                    fit_std = abs(error_popt[2])
+                    fit_mean_err = error_perr[1]
+                    fit_std_err = error_perr[2]
+                else:
+                    fit_successful = False
             else:
                 fit_successful = False
                 
@@ -680,10 +690,10 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     else:
         fit_successful = False
     
-    # Set axis labels and title exactly like compare_delta_t0.py
+    # Set axis labels and title
     ax.set_xlabel("Time [ps]", fontsize=12)
     ax.set_ylabel("Counts", fontsize=12)
-    ax.set_title("Reco. t0", fontsize=14)
+    ax.set_title("Delta t0", fontsize=14)
     
     # Increase y-axis by 10% to accommodate legend
     ymax = max(np.histogram(t0_errors, bins=bins)[0]) * 1.1
