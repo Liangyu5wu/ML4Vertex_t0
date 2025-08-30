@@ -4,7 +4,7 @@
 model_name: "baseline_analysis_track"
 
 # Data parameters
-data_dir: "../selected_h5_with_jets/"
+data_dir: "../../selected_h5_with_jets/"
 num_files: 43
 max_cells: 40
 min_cells: 1
