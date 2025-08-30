@@ -600,7 +600,7 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     logger.info(f"Baseline plots saved to {baseline_plots_dir}")
 
 
-def create_feature_comparison_plots(raw_cell_data: List, t0_errors: np.ndarray, 
+def create_feature_comparison_plots(raw_cell_data: List, baseline_t0: np.ndarray, t0_errors: np.ndarray, 
                                   config: BaselineAnalysisConfig, output_dir: Path, 
                                   logger: logging.Logger):
     """Create feature distribution comparison plots between best and worst events."""
@@ -880,7 +880,7 @@ def main():
         create_baseline_plots(baseline_t0, vertex_times, t0_errors, config, output_dir, logger)
         
         # Create feature comparison plots
-        create_feature_comparison_plots(raw_cell_data, t0_errors, config, output_dir, logger)
+        create_feature_comparison_plots(raw_cell_data, baseline_t0, t0_errors, config, output_dir, logger)
         
         # Create additional analysis plots
         create_additional_analysis_plots(raw_cell_data, baseline_t0, vertex_times, 
