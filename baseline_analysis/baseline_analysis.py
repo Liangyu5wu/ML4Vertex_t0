@@ -128,7 +128,7 @@ def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger)
                 total_cells_before += len(event_cells)
                 
                 # Apply filtering based on configuration
-                filtered_cells = apply_cell_filtering(event_cells, config)
+                filtered_cells = apply_cell_filtering(event_cells, vertex_time, config)
                 
                 if len(filtered_cells) < config.min_cells:
                     continue
@@ -162,19 +162,33 @@ def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger)
                 all_cell_sequences.append(cell_sequence)
                 all_vertex_times.append(vertex_time)
     
-    logger.info(f"Data loading summary:")
+    logger.info(f"Data loading and filtering summary:")
     logger.info(f"  Total events: {total_events}")
-    logger.info(f"  Valid events: {valid_events}")
+    logger.info(f"  Valid events after filtering: {valid_events}")
     logger.info(f"  Total cells before filtering: {total_cells_before}")
     logger.info(f"  Total cells after filtering: {total_cells_after}")
+    if total_events > 0:
+        event_retention_rate = (valid_events / total_events) * 100
+        logger.info(f"  Event retention rate: {event_retention_rate:.1f}%")
     if total_cells_before > 0:
-        retention_rate = (total_cells_after / total_cells_before) * 100
-        logger.info(f"  Cell retention rate: {retention_rate:.1f}%")
+        cell_retention_rate = (total_cells_after / total_cells_before) * 100
+        logger.info(f"  Cell retention rate: {cell_retention_rate:.1f}%")
+    
+    logger.info(f"Applied filters:")
+    logger.info(f"  - Valid cells: {config.require_valid_cells}")
+    if config.use_track_features:
+        logger.info(f"  - Track matching: {config.use_cell_track_matching}")
+    if config.use_jet_features:
+        logger.info(f"  - Jet matching: {config.use_cell_jet_matching}")
+    logger.info(f"  - Time quality cut: {config.use_time_quality_cut}")
+    if config.use_time_quality_cut:
+        logger.info(f"    └─ Threshold: ±{config.time_quality_n_sigma}σ × {config.vertex_time_sigma} ps = ±{config.time_quality_n_sigma * config.vertex_time_sigma:.1f} ps")
+    logger.info(f"  - Layer filtering: layers 1, 2, 3 only")
     
     return all_cell_sequences, np.array(all_vertex_times), all_raw_cell_data
 
 
-def apply_cell_filtering(event_cells, config: BaselineAnalysisConfig):
+def apply_cell_filtering(event_cells, vertex_time: float, config: BaselineAnalysisConfig):
     """Apply cell filtering based on configuration."""
     mask = np.ones(len(event_cells), dtype=bool)
     
@@ -190,6 +204,14 @@ def apply_cell_filtering(event_cells, config: BaselineAnalysisConfig):
     elif config.use_jet_features and config.use_cell_jet_matching:
         jet_matching_mask = event_cells['cell_jet_matched'] == True
         mask = mask & jet_matching_mask
+    
+    # Apply time quality cut
+    if config.use_time_quality_cut:
+        cell_times = event_cells['Cell_time_TOF_corrected']
+        time_diff = np.abs(cell_times - vertex_time)
+        time_threshold = config.time_quality_n_sigma * config.vertex_time_sigma
+        time_quality_mask = time_diff <= time_threshold
+        mask = mask & time_quality_mask
     
     return event_cells[mask]
 
@@ -872,6 +894,28 @@ def main():
         
         # Calculate baseline t0
         baseline_t0, t0_errors = calculate_baseline_t0(calibrated_sequences, vertex_times, config, logger)
+        
+        # Apply baseline method filtering if enabled
+        if config.use_baseline_method_filter:
+            baseline_filter_mask = np.abs(t0_errors) <= config.baseline_method_threshold
+            
+            logger.info(f"Baseline method filtering:")
+            logger.info(f"  Threshold: ±{config.baseline_method_threshold:.1f} ps")
+            logger.info(f"  Events before filtering: {len(baseline_t0)}")
+            logger.info(f"  Events after filtering: {np.sum(baseline_filter_mask)}")
+            
+            if np.sum(baseline_filter_mask) == 0:
+                logger.error("No events pass baseline method filter. Exiting.")
+                return
+            
+            # Filter all arrays
+            baseline_t0 = baseline_t0[baseline_filter_mask]
+            vertex_times = vertex_times[baseline_filter_mask]
+            t0_errors = t0_errors[baseline_filter_mask]
+            calibrated_sequences = [calibrated_sequences[i] for i in range(len(calibrated_sequences)) if baseline_filter_mask[i]]
+            raw_cell_data = [raw_cell_data[i] for i in range(len(raw_cell_data)) if baseline_filter_mask[i]]
+        else:
+            logger.info("Baseline method filtering: disabled")
         
         # Analyze worst events
         analyze_worst_events(baseline_t0, vertex_times, raw_cell_data, config, logger)
