@@ -31,6 +31,10 @@ ML4Vertex_t0/
 │   ├── evaluate.py           # Evaluation script (auto-detects model type)
 │   ├── parameter_sweep.py    # Optimized parameter sweeps with data caching
 │   └── analyze_sweep.py      # Simplified results analysis
+├── baseline_analysis/        # Standalone baseline method analysis 🆕
+│   ├── baseline_analysis.py      # Comprehensive baseline reconstruction analysis
+│   ├── baseline_analysis_config.yaml  # Configurable parameters for analysis
+│   └── README.md             # Usage documentation and examples
 ├── jobs/                    # SLURM job submission scripts
 │   ├── sweep_optimized.sh   # Efficient parameter sweeps
 │   ├── sweep_dnn_comparison.sh  # DNN vs Transformer comparison
@@ -116,6 +120,20 @@ python scripts/parameter_sweep.py --config config/configs/experiment_with_jets.y
 python scripts/analyze_sweep.py results/sweep_20250101_123456/
 ```
 
+### Baseline Method Analysis 🆕
+
+```bash
+# Comprehensive baseline reconstruction analysis (track matching by default)
+cd baseline_analysis
+python baseline_analysis.py
+
+# Custom configuration (e.g., jet matching)
+python baseline_analysis.py --config my_config.yaml
+
+# Override parameters
+python baseline_analysis.py --top-events 50 --sample-size 5000
+```
+
 ### SLURM Job Submission
 
 ```bash
@@ -151,6 +169,13 @@ sbatch jobs/sweep_dnn_comparison.sh
 - **Residual Learning**: Learns corrections instead of predictions from scratch
 - **Domain Knowledge**: Incorporates detector calibration and track matching
 - **Robust Performance**: Handles imperfect baseline predictions gracefully
+
+### 🔍 **Baseline Analysis Tools** 🆕  
+- **Standalone Analysis**: Comprehensive baseline method reconstruction analysis
+- **Configurable Matching**: Support for track-matching or jet-matching via YAML
+- **Event Investigation**: Detailed analysis of worst-performing events
+- **Feature Comparisons**: Best vs worst event feature distribution analysis
+- **Multi-level Plotting**: Standard baseline plots + feature comparisons + correlation analysis
 
 ## Configuration
 
@@ -262,6 +287,12 @@ Parameter sweeps in `results/sweep_YYYYMMDD_HHMMSS/`:
 - `analysis_summary.txt`: Best results and comparisons
 - `analysis/`: Performance plots and model comparisons
 
+Baseline analysis in `../../bad_events_check/baseline_analysis_YYYYMMDD_HHMMSS/`: 🆕
+- `analysis_log.txt`: Complete analysis log with worst events details
+- `baseline_plots/`: Standard baseline check plots (3 plots)
+- `feature_comparison/`: Best vs worst events feature distribution comparisons
+- `additional_analysis/`: Correlation analysis plots (error vs event properties)
+
 ## Performance Benchmarks
 
 ### Attention Mask Benefits
@@ -288,4 +319,8 @@ python scripts/parameter_sweep.py --config config/configs/experiment_dnn.yaml --
 python scripts/evaluate.py --model-dir ../models/transformer_test --load-data
 python scripts/evaluate.py --model-dir ../models/dnn_test --load-data
 python scripts/evaluate.py --model-dir ../models/baseline_guided_test --load-data
+
+# Analyze baseline reconstruction failures  🆕
+cd baseline_analysis
+python baseline_analysis.py --top-events 20 --sample-size 2000
 ```

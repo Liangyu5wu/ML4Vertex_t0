@@ -61,6 +61,19 @@ python scripts/parameter_sweep.py --config config/configs/experiment_with_jets.y
 python scripts/analyze_sweep.py results/sweep_20250101_123456/
 ```
 
+### Baseline Method Analysis
+```bash
+# Comprehensive baseline reconstruction analysis (track matching by default)
+cd baseline_analysis
+python baseline_analysis.py
+
+# Custom configuration with different parameters
+python baseline_analysis.py --config baseline_analysis_config.yaml --top-events 50 --sample-size 5000
+
+# For understanding reconstruction failures and event characteristics
+python baseline_analysis.py --top-events 20 --sample-size 2000
+```
+
 ### SLURM Job Submission (NERSC)
 ```bash
 # Submit parameter sweeps
@@ -221,6 +234,14 @@ External calibration files in `calibration_data/`:
 - `HStrackmatching_calibration.txt` - Cell-track calibration
 - `cell_jet_calibration.txt` - Cell-jet calibration
 
+### Baseline Analysis
+Standalone analysis tool in `baseline_analysis/`:
+- `baseline_analysis.py` - Comprehensive baseline reconstruction analysis
+- `baseline_analysis_config.yaml` - Configurable parameters
+- `README.md` - Usage documentation
+- Outputs to `../../bad_events_check/` with timestamped directories
+- Supports both track and jet matching analysis
+
 ## Development Best Practices
 
 ### Configuration Changes
@@ -244,3 +265,10 @@ External calibration files in `calibration_data/`:
 - Use appropriate time limits based on experiment size
 - Monitor GPU memory usage with TensorFlow
 - Check logs in `../logs/` directory
+
+### Baseline Analysis
+- Use `baseline_analysis.py` for understanding reconstruction failures
+- Configure track vs jet matching via YAML config
+- Output includes detailed event logs and multi-level plotting
+- Best used for investigating why certain events have poor reconstruction
+- Results saved to `../../bad_events_check/` with timestamped directories
