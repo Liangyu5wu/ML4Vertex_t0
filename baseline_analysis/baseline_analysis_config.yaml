@@ -37,7 +37,7 @@ calibration_data_file: "HStrackmatching_calibration.txt"
 
 # Analysis parameters
 top_worst_events: 20             # Number of worst events to display in detail
-feature_comparison_sample_size: 2000  # Number of events for best/worst comparison plots
+feature_comparison_sample_size: 1000  # Number of events for best/worst comparison plots
 gaussian_fit_range: 200         # Range for Gaussian fit in error plots
 
 # Output parameters

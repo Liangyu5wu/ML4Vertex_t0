@@ -367,12 +367,46 @@ def analyze_worst_events(baseline_t0: np.ndarray, vertex_times: np.ndarray,
                    f"min={np.min(cell_energies):.2f}, "
                    f"max={np.max(cell_energies):.2f} GeV")
         
-        # Cell time statistics (before calibration)
-        cell_times = [cell['Cell_time_TOF_corrected'] for cell in event_cells]
-        logger.info(f"  Cell times: mean={np.mean(cell_times):.2f}, "
-                   f"std={np.std(cell_times):.2f}, "
-                   f"min={np.min(cell_times):.2f}, "
-                   f"max={np.max(cell_times):.2f} ps")
+        # Calculate calibrated times for this event
+        param_lookup = {
+            (1, 1): config.calibration_data['EMB1_params'],
+            (1, 2): config.calibration_data['EMB2_params'], 
+            (1, 3): config.calibration_data['EMB3_params'],
+            (0, 1): config.calibration_data['EME1_params'],
+            (0, 2): config.calibration_data['EME2_params'],
+            (0, 3): config.calibration_data['EME3_params'],
+        }
+        
+        original_cell_times = []
+        calibrated_cell_times = []
+        
+        for cell in event_cells:
+            time_tof = cell['Cell_time_TOF_corrected']
+            energy = cell['Cell_e']
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            
+            original_cell_times.append(time_tof)
+            
+            # Apply calibration
+            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+            energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
+            calibration_value = detector_params[energy_bin_idx]
+            calibrated_time = time_tof - calibration_value
+            calibrated_cell_times.append(calibrated_time)
+        
+        # Print all cell times before and after calibration
+        original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
+        logger.info(f"  Original cell times (before calibration): {original_times_str} ps")
+        
+        calibrated_times_str = ", ".join([f'{t:.1f}' for t in calibrated_cell_times])  
+        logger.info(f"  Calibrated cell times (after calibration): {calibrated_times_str} ps")
+        
+        # Cell time statistics
+        logger.info(f"  Cell time statistics - Original: mean={np.mean(original_cell_times):.2f}, "
+                   f"std={np.std(original_cell_times):.2f} ps")
+        logger.info(f"  Cell time statistics - Calibrated: mean={np.mean(calibrated_cell_times):.2f}, "
+                   f"std={np.std(calibrated_cell_times):.2f} ps")
         
         # Layer distribution
         layers = [cell['Cell_layer'] for cell in event_cells]
@@ -413,13 +447,16 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     if np.sum(mask) > 10:
         fit_data = t0_errors[mask]
         try:
-            # Calculate histogram bin width to scale Gaussian properly
-            bin_width = (plot_range[1] - plot_range[0]) / config.plot_bins
-            
             # Estimate Gaussian parameters from data
             fit_mean = np.mean(fit_data)
             fit_std = np.std(fit_data)
-            fit_amplitude = len(fit_data) * bin_width / (fit_std * np.sqrt(2 * np.pi))
+            
+            # Use the same bins as the original histogram for amplitude calculation
+            fit_bins_count = 50  # Number of bins for fitting
+            fit_bin_width = (2 * fit_range) / fit_bins_count
+            
+            # Calculate proper amplitude: total counts in fit range * bin_width / (std * sqrt(2*pi))
+            fit_amplitude = len(fit_data) * fit_bin_width / (fit_std * np.sqrt(2 * np.pi))
             
             # Fit Gaussian to data using scipy.optimize.curve_fit on the actual data distribution
             from scipy.stats import norm
@@ -432,10 +469,9 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
             # Initial guess based on data statistics
             initial_guess = [fit_amplitude, fit_mean, fit_std]
             
-            # Use the original histogram data for fitting
-            hist_values, bin_edges = np.histogram(fit_data, bins=np.linspace(-fit_range, fit_range, 50))
+            # Use the original histogram data for fitting  
+            hist_values, bin_edges = np.histogram(fit_data, bins=np.linspace(-fit_range, fit_range, fit_bins_count))
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            bin_width_fit = bin_edges[1] - bin_edges[0]
             
             # Only fit non-zero bins
             nonzero_mask = hist_values > 0
@@ -458,8 +494,9 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
             # Fallback: simple analytical Gaussian based on data statistics
             fit_mean = np.mean(fit_data)
             fit_std = np.std(fit_data)
-            bin_width = (plot_range[1] - plot_range[0]) / config.plot_bins
-            fit_amplitude = len(fit_data) * bin_width / (fit_std * np.sqrt(2 * np.pi))
+            fit_bins_count = 50
+            fit_bin_width = (2 * fit_range) / fit_bins_count
+            fit_amplitude = len(fit_data) * fit_bin_width / (fit_std * np.sqrt(2 * np.pi))
             
             x_fit = np.linspace(-fit_range, fit_range, 200)
             y_fit = fit_amplitude * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
@@ -641,33 +678,34 @@ def create_feature_comparison_plots(raw_cell_data: List, t0_errors: np.ndarray,
         plt.savefig(feature_plots_dir / f'{feature}_comparison.png', dpi=300, bbox_inches='tight')
         plt.close()
     
-    # Create reco-truth comparison plots
-    best_errors = t0_errors[best_indices]
-    worst_errors = t0_errors[worst_indices]
+    # Create reconstruction time distribution comparison plots
+    # Get the actual reconstruction times for best and worst events
+    best_reco_times = baseline_t0[best_indices] 
+    worst_reco_times = baseline_t0[worst_indices]
     
     plt.figure(figsize=(12, 6))
     bins = np.linspace(-2000, 2000, 100)
-    plt.hist(best_errors, bins=bins, alpha=0.7, color='green', 
-            label=f'Best events (N={len(best_errors)})')
-    plt.hist(worst_errors, bins=bins, alpha=0.7, color='red', 
-            label=f'Worst events (N={len(worst_errors)})')
+    plt.hist(best_reco_times, bins=bins, alpha=0.7, color='green', 
+            label=f'Best events (N={len(best_reco_times)})')
+    plt.hist(worst_reco_times, bins=bins, alpha=0.7, color='red', 
+            label=f'Worst events (N={len(worst_reco_times)})')
     
-    plt.xlabel('Reco - Truth [ps]')
+    plt.xlabel('Reconstructed Time [ps]')
     plt.ylabel('Count')
-    plt.title('Error Distribution Comparison')
+    plt.title('Reconstruction Time Distribution Comparison')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    best_err_mean, best_err_std = np.mean(best_errors), np.std(best_errors)
-    worst_err_mean, worst_err_std = np.mean(worst_errors), np.std(worst_errors)
+    best_reco_mean, best_reco_std = np.mean(best_reco_times), np.std(best_reco_times)
+    worst_reco_mean, worst_reco_std = np.mean(worst_reco_times), np.std(worst_reco_times)
     
-    stats_text = f"Best: μ={best_err_mean:.2f}, σ={best_err_std:.2f}\nWorst: μ={worst_err_mean:.2f}, σ={worst_err_std:.2f}"
+    stats_text = f"Best: μ={best_reco_mean:.2f}, σ={best_reco_std:.2f}\nWorst: μ={worst_reco_mean:.2f}, σ={worst_reco_std:.2f}"
     plt.text(0.95, 0.95, stats_text, transform=plt.gca().transAxes,
             verticalalignment='top', horizontalalignment='right',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
     
     plt.tight_layout()
-    plt.savefig(feature_plots_dir / 'error_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig(feature_plots_dir / 'reconstruction_time_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     logger.info(f"Feature comparison plots saved to {feature_plots_dir}")
@@ -693,9 +731,8 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.title('Reconstruction Error vs Number of Cells')
     plt.grid(True, alpha=0.3)
     
-    # Add correlation
-    correlation = np.corrcoef(cell_counts, t0_errors)[0, 1]
-    plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
+    # Add data size info
+    plt.text(0.05, 0.95, f'N = {len(cell_counts):,} events', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
     
@@ -716,8 +753,7 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.title('Reconstruction Error vs Cell Energy Spread')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(energy_spreads, t0_errors)[0, 1]
-    plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
+    plt.text(0.05, 0.95, f'N = {len(energy_spreads):,} events', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
     
@@ -738,8 +774,7 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.title('Reconstruction Error vs Cell Time Spread')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(time_spreads, t0_errors)[0, 1]
-    plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
+    plt.text(0.05, 0.95, f'N = {len(time_spreads):,} events', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
     
@@ -769,8 +804,7 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.title('Reconstruction Error vs Layer 1 Cell Fraction')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(layer_compositions, t0_errors)[0, 1]
-    plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
+    plt.text(0.05, 0.95, f'N = {len(layer_compositions):,} events', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
     
