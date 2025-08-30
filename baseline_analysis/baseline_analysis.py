@@ -413,29 +413,76 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     if np.sum(mask) > 10:
         fit_data = t0_errors[mask]
         try:
-            fit_bins = np.linspace(-fit_range, fit_range, 50)
-            hist_fit, fit_bin_edges = np.histogram(fit_data, bins=fit_bins)
-            bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
+            # Calculate histogram bin width to scale Gaussian properly
+            bin_width = (plot_range[1] - plot_range[0]) / config.plot_bins
             
-            nonzero_mask = hist_fit > 0
-            if np.sum(nonzero_mask) > 3:
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
+            # Estimate Gaussian parameters from data
+            fit_mean = np.mean(fit_data)
+            fit_std = np.std(fit_data)
+            fit_amplitude = len(fit_data) * bin_width / (fit_std * np.sqrt(2 * np.pi))
+            
+            # Fit Gaussian to data using scipy.optimize.curve_fit on the actual data distribution
+            from scipy.stats import norm
+            x_fit = np.linspace(-fit_range, fit_range, 200)
+            
+            # Create a proper normalized Gaussian fit
+            def gaussian_pdf_scaled(x, amplitude, mean, std):
+                return amplitude * np.exp(-0.5 * ((x - mean) / std) ** 2)
+            
+            # Initial guess based on data statistics
+            initial_guess = [fit_amplitude, fit_mean, fit_std]
+            
+            # Use the original histogram data for fitting
+            hist_values, bin_edges = np.histogram(fit_data, bins=np.linspace(-fit_range, fit_range, 50))
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            bin_width_fit = bin_edges[1] - bin_edges[0]
+            
+            # Only fit non-zero bins
+            nonzero_mask = hist_values > 0
+            if np.sum(nonzero_mask) >= 3:
+                popt, _ = curve_fit(gaussian_pdf_scaled, bin_centers[nonzero_mask], 
+                                  hist_values[nonzero_mask], p0=initial_guess, maxfev=2000)
                 
-                fit_mean, fit_std = popt[1], abs(popt[2])
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = gaussian_func(x_fit, *popt)
+                fit_amplitude, fit_mean, fit_std = popt
+                fit_std = abs(fit_std)
+                
+                y_fit = gaussian_pdf_scaled(x_fit, fit_amplitude, fit_mean, fit_std)
                 plt.plot(x_fit, y_fit, 'r-', linewidth=2,
                         label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-        except Exception:
-            pass
+            else:
+                # Fallback: simple analytical Gaussian
+                y_fit = fit_amplitude * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
+                plt.plot(x_fit, y_fit, 'r--', linewidth=2, alpha=0.7,
+                        label=f'Analytical fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+        except Exception as e:
+            # Fallback: simple analytical Gaussian based on data statistics
+            fit_mean = np.mean(fit_data)
+            fit_std = np.std(fit_data)
+            bin_width = (plot_range[1] - plot_range[0]) / config.plot_bins
+            fit_amplitude = len(fit_data) * bin_width / (fit_std * np.sqrt(2 * np.pi))
+            
+            x_fit = np.linspace(-fit_range, fit_range, 200)
+            y_fit = fit_amplitude * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
+            plt.plot(x_fit, y_fit, 'r--', linewidth=2, alpha=0.7,
+                    label=f'Analytical fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
     
     mean_error = np.mean(t0_errors)
     std_error = np.std(t0_errors)
     plt.xlabel('Baseline t0 - True t0 [ps]')
     plt.ylabel('Count')
     plt.title('Baseline t0 Error Distribution')
-    plt.legend([f'All data: μ={mean_error:.2f}, σ={std_error:.2f}, N={len(t0_errors)}'])
+    
+    # Add data statistics as text
+    plt.text(0.02, 0.98, f'All data: μ={mean_error:.2f}, σ={std_error:.2f}, N={len(t0_errors)}',
+             transform=plt.gca().transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
+             fontsize=10)
+    
+    # Show legend only if there are fit lines
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend(loc='upper right')
+    
     plt.grid(True, alpha=0.3)
     plt.xlim(plot_range[0], plot_range[1])
     
@@ -640,14 +687,14 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     cell_counts = [len(event_cells) for event_cells in raw_cell_data]
     
     plt.figure(figsize=(10, 6))
-    plt.scatter(cell_counts, np.abs(t0_errors), alpha=0.5, s=1)
+    plt.scatter(cell_counts, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Number of Cells per Event')
-    plt.ylabel('|Reconstruction Error| [ps]')
+    plt.ylabel('Reconstruction Error [ps]')
     plt.title('Reconstruction Error vs Number of Cells')
     plt.grid(True, alpha=0.3)
     
     # Add correlation
-    correlation = np.corrcoef(cell_counts, np.abs(t0_errors))[0, 1]
+    correlation = np.corrcoef(cell_counts, t0_errors)[0, 1]
     plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
@@ -663,13 +710,13 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
         energy_spreads.append(np.std(energies))
     
     plt.figure(figsize=(10, 6))
-    plt.scatter(energy_spreads, np.abs(t0_errors), alpha=0.5, s=1)
+    plt.scatter(energy_spreads, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Cell Energy Spread (std) [GeV]')
-    plt.ylabel('|Reconstruction Error| [ps]')
+    plt.ylabel('Reconstruction Error [ps]')
     plt.title('Reconstruction Error vs Cell Energy Spread')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(energy_spreads, np.abs(t0_errors))[0, 1]
+    correlation = np.corrcoef(energy_spreads, t0_errors)[0, 1]
     plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
@@ -685,13 +732,13 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
         time_spreads.append(np.std(times))
     
     plt.figure(figsize=(10, 6))
-    plt.scatter(time_spreads, np.abs(t0_errors), alpha=0.5, s=1)
+    plt.scatter(time_spreads, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Cell Time Spread (std) [ps]')
-    plt.ylabel('|Reconstruction Error| [ps]')
+    plt.ylabel('Reconstruction Error [ps]')
     plt.title('Reconstruction Error vs Cell Time Spread')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(time_spreads, np.abs(t0_errors))[0, 1]
+    correlation = np.corrcoef(time_spreads, t0_errors)[0, 1]
     plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
@@ -716,13 +763,13 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
             layer_compositions.append(0.0)
     
     plt.figure(figsize=(10, 6))
-    plt.scatter(layer_compositions, np.abs(t0_errors), alpha=0.5, s=1)
+    plt.scatter(layer_compositions, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Fraction of Layer 1 Cells')
-    plt.ylabel('|Reconstruction Error| [ps]')
+    plt.ylabel('Reconstruction Error [ps]')
     plt.title('Reconstruction Error vs Layer 1 Cell Fraction')
     plt.grid(True, alpha=0.3)
     
-    correlation = np.corrcoef(layer_compositions, np.abs(t0_errors))[0, 1]
+    correlation = np.corrcoef(layer_compositions, t0_errors)[0, 1]
     plt.text(0.05, 0.95, f'Correlation = {correlation:.4f}', 
              transform=plt.gca().transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
