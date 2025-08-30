@@ -12,6 +12,7 @@ import sys
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import yaml
 from pathlib import Path
 import argparse
@@ -20,6 +21,23 @@ from scipy.optimize import curve_fit
 from typing import List, Tuple, Dict, Any
 import shutil
 import logging
+
+# Set matplotlib style to match compare_delta_t0.py
+mpl.rcParams['figure.dpi'] = 120
+mpl.rcParams['savefig.dpi'] = 300
+mpl.rcParams['font.size'] = 10
+mpl.rcParams['axes.linewidth'] = 1.2
+mpl.rcParams['xtick.major.width'] = 1.0
+mpl.rcParams['ytick.major.width'] = 1.0
+mpl.rcParams['lines.linewidth'] = 1.5
+mpl.rcParams['lines.markersize'] = 6
+mpl.rcParams['legend.frameon'] = True
+mpl.rcParams['legend.framealpha'] = 0.9
+mpl.rcParams['legend.edgecolor'] = 'gray'
+mpl.rcParams['legend.fancybox'] = True
+mpl.rcParams['savefig.format'] = 'png'
+mpl.rcParams['savefig.bbox'] = 'tight'
+mpl.rcParams['savefig.pad_inches'] = 0.1
 
 # Add the src directory to the path to import DataLoader and BaseConfig
 sys.path.append(str(Path(__file__).parent.parent / "src"))
@@ -583,9 +601,9 @@ def analyze_worst_events(baseline_t0: np.ndarray, vertex_times: np.ndarray,
         logger.info(f"  Detector region: {barrel_counts}")
 
 
-def gaussian_func(x, a, mu, sigma):
-    """Gaussian function for fitting."""
-    return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+def gaussian(x, amplitude, mean, sigma):
+    """Gaussian function for fitting, matching compare_delta_t0.py style."""
+    return amplitude * np.exp(-0.5 * ((x - mean) / sigma) ** 2)
 
 
 def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray, 
@@ -600,111 +618,120 @@ def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray,
     plot_range = config.plot_x_range
     bins = np.linspace(plot_range[0], plot_range[1], config.plot_bins)
     
-    # Plot 1: t0 error distribution
-    plt.figure(figsize=(10, 6))
-    counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
+    # Plot 1: t0 error distribution (styled like compare_delta_t0.py)
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Gaussian fit on restricted range
-    fit_range = config.gaussian_fit_range
-    mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
+    # Plot histogram with style matching compare_delta_t0.py
+    ax.hist(t0_errors, bins=bins, histtype='stepfilled', 
+            color='#4682B4', edgecolor='blue', linewidth=2, alpha=0.5)
+    
+    # Set up fitting range
+    fit_min = -config.gaussian_fit_range
+    fit_max = config.gaussian_fit_range
+    
+    # Fit t0 error histogram
+    mask = (t0_errors >= fit_min) & (t0_errors <= fit_max)
     
     if np.sum(mask) > 10:
-        fit_data = t0_errors[mask]
         try:
-            # Estimate Gaussian parameters from data
-            fit_mean = np.mean(fit_data)
-            fit_std = np.std(fit_data)
+            fit_data = t0_errors[mask]
             
-            # Use the same bins as the original histogram for amplitude calculation
-            fit_bins_count = 50  # Number of bins for fitting
-            fit_bin_width = (2 * fit_range) / fit_bins_count
-            
-            # Calculate proper amplitude: total counts in fit range * bin_width / (std * sqrt(2*pi))
-            fit_amplitude = len(fit_data) * fit_bin_width / (fit_std * np.sqrt(2 * np.pi))
-            
-            # Fit Gaussian to data using scipy.optimize.curve_fit on the actual data distribution
-            from scipy.stats import norm
-            x_fit = np.linspace(-fit_range, fit_range, 200)
-            
-            # Create a proper normalized Gaussian fit
-            def gaussian_pdf_scaled(x, amplitude, mean, std):
-                return amplitude * np.exp(-0.5 * ((x - mean) / std) ** 2)
-            
-            # Initial guess based on data statistics
-            initial_guess = [fit_amplitude, fit_mean, fit_std]
-            
-            # Use the original histogram data for fitting  
-            hist_values, bin_edges = np.histogram(fit_data, bins=np.linspace(-fit_range, fit_range, fit_bins_count))
+            # Create histogram for fitting
+            fit_bins_count = 50
+            hist_values, bin_edges = np.histogram(fit_data, bins=np.linspace(fit_min, fit_max, fit_bins_count))
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            
+            # Calculate errors for fitting (following compare_delta_t0.py approach)
+            hist_error = np.sqrt(hist_values)
+            hist_error[hist_error == 0] = 1
+            
+            # Initial parameters for fit (amplitude, mean, sigma)
+            initial_mean = np.mean(fit_data)
+            initial_std = np.std(fit_data)
+            initial_amplitude = np.max(hist_values)
             
             # Only fit non-zero bins
             nonzero_mask = hist_values > 0
             if np.sum(nonzero_mask) >= 3:
-                popt, _ = curve_fit(gaussian_pdf_scaled, bin_centers[nonzero_mask], 
-                                  hist_values[nonzero_mask], p0=initial_guess, maxfev=2000)
+                popt, pcov = curve_fit(gaussian, bin_centers[nonzero_mask], 
+                                      hist_values[nonzero_mask], 
+                                      p0=[initial_amplitude, initial_mean, initial_std],
+                                      sigma=hist_error[nonzero_mask], absolute_sigma=True)
+                perr = np.sqrt(np.diag(pcov))
                 
                 fit_amplitude, fit_mean, fit_std = popt
+                fit_amplitude_err, fit_mean_err, fit_std_err = perr
                 fit_std = abs(fit_std)
                 
-                y_fit = gaussian_pdf_scaled(x_fit, fit_amplitude, fit_mean, fit_std)
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-            else:
-                # Fallback: simple analytical Gaussian
-                y_fit = fit_amplitude * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
-                plt.plot(x_fit, y_fit, 'r--', linewidth=2, alpha=0.7,
-                        label=f'Analytical fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-        except Exception as e:
-            # Fallback: simple analytical Gaussian based on data statistics
-            fit_mean = np.mean(fit_data)
-            fit_std = np.std(fit_data)
-            fit_bins_count = 50
-            fit_bin_width = (2 * fit_range) / fit_bins_count
-            fit_amplitude = len(fit_data) * fit_bin_width / (fit_std * np.sqrt(2 * np.pi))
+                # Plot the fitted curve
+                x_fit = np.linspace(fit_min, fit_max, 1000)
+                y_fit = gaussian(x_fit, fit_amplitude, fit_mean, fit_std)
+                
+                ax.plot(x_fit, y_fit, 'r--', linewidth=2)
+                
+                # Add fit parameters to legend (matching compare_delta_t0.py style)
+                fit_label = f'Gaussian fit (±{config.gaussian_fit_range}): μ = {fit_mean:.2f} ± {fit_mean_err:.2f}, σ = {fit_std:.2f} ± {fit_std_err:.2f} ps'
             
-            x_fit = np.linspace(-fit_range, fit_range, 200)
-            y_fit = fit_amplitude * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
-            plt.plot(x_fit, y_fit, 'r--', linewidth=2, alpha=0.7,
-                    label=f'Analytical fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
+        except Exception as e:
+            print(f"Error during fitting: {e}")
+            fit_label = None
     
+    # Set axis labels and title
+    ax.set_xlabel("$\\Delta t_0$ [ps]", fontsize=12)
+    ax.set_ylabel("Counts", fontsize=12)
+    ax.set_title("Baseline $\\Delta t_0$ Distribution", fontsize=14)
+    
+    # Increase y-axis by 10% to accommodate legend
+    ymax = ax.get_ylim()[1] * 1.1
+    ax.set_ylim(0, ymax)
+    
+    # Calculate overall statistics
     mean_error = np.mean(t0_errors)
     std_error = np.std(t0_errors)
-    plt.xlabel('Baseline t0 - True t0 [ps]')
-    plt.ylabel('Count')
-    plt.title('Baseline t0 Error Distribution')
     
-    # Add data statistics as text
-    plt.text(0.02, 0.98, f'All data: μ={mean_error:.2f}, σ={std_error:.2f}, N={len(t0_errors)}',
-             transform=plt.gca().transAxes, verticalalignment='top',
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
-             fontsize=10)
+    # Create legend elements (matching compare_delta_t0.py style)
+    blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch]  # Empty handle for first line
+    legend_labels = [f'All data: μ = {mean_error:.2f}, σ = {std_error:.2f}, N = {len(t0_errors)}',
+                     'Baseline $\\Delta t_0$']
     
-    # Show legend only if there are fit lines
-    handles, labels = plt.gca().get_legend_handles_labels()
-    if handles:
-        plt.legend(loc='upper right')
+    # Add fit line to legend if available
+    if 'fit_label' in locals() and fit_label:
+        red_line = plt.Line2D([0], [0], color='red', linestyle='--', linewidth=2)
+        legend_handles.append(red_line)
+        legend_labels.append(fit_label)
     
-    plt.grid(True, alpha=0.3)
-    plt.xlim(plot_range[0], plot_range[1])
+    ax.legend(legend_handles, legend_labels, 
+              loc='upper right', fontsize=9, framealpha=0.9)
+    
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(plot_range[0], plot_range[1])
     
     plt.tight_layout()
     plt.savefig(baseline_plots_dir / 't0_error.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    # Plot 2: Baseline t0 distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(baseline_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
+    # Plot 2: Baseline t0 distribution (styled)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(baseline_t0, bins=bins, histtype='stepfilled', 
+            color='#D46A6A', edgecolor='red', linewidth=2, alpha=0.5)
     
     mean_t0 = np.mean(baseline_t0)
     std_t0 = np.std(baseline_t0)
-    plt.xlabel('Baseline t0 [ps]')
-    plt.ylabel('Count')
-    plt.title('Baseline t0 Distribution')
-    plt.text(0.05, 0.95, f'μ={mean_t0:.2f}, σ={std_t0:.2f}, N={len(baseline_t0)}',
-             transform=plt.gca().transAxes, verticalalignment='top',
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
-    plt.grid(True, alpha=0.3)
-    plt.xlim(plot_range[0], plot_range[1])
+    ax.set_xlabel('Baseline $t_0$ [ps]', fontsize=12)
+    ax.set_ylabel('Counts', fontsize=12)
+    ax.set_title('Baseline $t_0$ Distribution', fontsize=14)
+    
+    # Add statistics in legend style
+    red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), red_patch]
+    legend_labels = [f'μ = {mean_t0:.2f}, σ = {std_t0:.2f}, N = {len(baseline_t0)}',
+                     'Baseline $t_0$']
+    ax.legend(legend_handles, legend_labels, 
+              loc='upper right', fontsize=9, framealpha=0.9)
+    
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(plot_range[0], plot_range[1])
     
     plt.tight_layout()
     plt.savefig(baseline_plots_dir / 'traditional_t0_distribution.png', dpi=300, bbox_inches='tight')
@@ -815,10 +842,12 @@ def create_feature_comparison_plots(raw_cell_data: List, baseline_t0: np.ndarray
         all_data = np.concatenate([best_data, worst_data])
         bins = np.linspace(np.percentile(all_data, 1), np.percentile(all_data, 99), 50)
         
-        # Plot histograms
-        plt.hist(best_data, bins=bins, alpha=0.7, color='green', 
+        # Plot histograms with improved styling
+        plt.hist(best_data, bins=bins, histtype='stepfilled', 
+                color='#4682B4', edgecolor='blue', linewidth=1.5, alpha=0.5,
                 label=f'Best events (N={len(best_data)})')
-        plt.hist(worst_data, bins=bins, alpha=0.7, color='red', 
+        plt.hist(worst_data, bins=bins, histtype='stepfilled', 
+                color='#D46A6A', edgecolor='red', linewidth=1.5, alpha=0.5,
                 label=f'Worst events (N={len(worst_data)})')
         
         # Calculate statistics
@@ -849,9 +878,11 @@ def create_feature_comparison_plots(raw_cell_data: List, baseline_t0: np.ndarray
     
     plt.figure(figsize=(12, 6))
     bins = np.linspace(-2000, 2000, 100)
-    plt.hist(best_reco_times, bins=bins, alpha=0.7, color='green', 
+    plt.hist(best_reco_times, bins=bins, histtype='stepfilled', 
+            color='#4682B4', edgecolor='blue', linewidth=1.5, alpha=0.5,
             label=f'Best events (N={len(best_reco_times)})')
-    plt.hist(worst_reco_times, bins=bins, alpha=0.7, color='red', 
+    plt.hist(worst_reco_times, bins=bins, histtype='stepfilled', 
+            color='#D46A6A', edgecolor='red', linewidth=1.5, alpha=0.5,
             label=f'Worst events (N={len(worst_reco_times)})')
     
     plt.xlabel('Reconstructed Time [ps]')
@@ -872,6 +903,147 @@ def create_feature_comparison_plots(raw_cell_data: List, baseline_t0: np.ndarray
     plt.savefig(feature_plots_dir / 'reconstruction_time_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
+    # Create eta vs phi 2D histogram for best and worst events
+    best_eta_data = []
+    best_phi_data = []
+    worst_eta_data = []
+    worst_phi_data = []
+    
+    # Collect eta and phi data for best and worst events
+    for idx in best_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_eta' in cell.dtype.names and 'Cell_phi' in cell.dtype.names:
+                best_eta_data.append(cell['Cell_eta'])
+                best_phi_data.append(cell['Cell_phi'])
+    
+    for idx in worst_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_eta' in cell.dtype.names and 'Cell_phi' in cell.dtype.names:
+                worst_eta_data.append(cell['Cell_eta'])
+                worst_phi_data.append(cell['Cell_phi'])
+    
+    # Create eta vs phi 2D histogram if data is available
+    if len(best_eta_data) > 0 and len(worst_eta_data) > 0:
+        plt.figure(figsize=(12, 8))
+        
+        # Define common bins for both histograms
+        eta_bins = np.linspace(-2.5, 2.5, 50)
+        phi_bins = np.linspace(-np.pi, np.pi, 50)
+        
+        # Create 2D histograms with white background for empty areas
+        hist_best, _, _ = np.histogram2d(best_eta_data, best_phi_data, bins=[eta_bins, phi_bins])
+        hist_worst, _, _ = np.histogram2d(worst_eta_data, worst_phi_data, bins=[eta_bins, phi_bins])
+        
+        # Plot best events (green/blue colormap)
+        im1 = plt.imshow(hist_best.T, origin='lower', 
+                        extent=[-2.5, 2.5, -np.pi, np.pi],
+                        cmap='Greens', alpha=0.7, aspect='auto',
+                        vmin=0, vmax=np.max([hist_best.max(), hist_worst.max()]))
+        
+        # Plot worst events (red colormap)
+        im2 = plt.imshow(hist_worst.T, origin='lower', 
+                        extent=[-2.5, 2.5, -np.pi, np.pi],
+                        cmap='Reds', alpha=0.7, aspect='auto',
+                        vmin=0, vmax=np.max([hist_best.max(), hist_worst.max()]))
+        
+        plt.xlabel('η')
+        plt.ylabel('φ')
+        plt.title('Cell Distribution: η vs φ (Best & Worst Events)')
+        
+        # Add colorbars and legend
+        cbar = plt.colorbar(im1, label='Cell Count')
+        
+        # Create custom legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor='green', alpha=0.7, label=f'Best events (N cells = {len(best_eta_data)})'),
+                          Patch(facecolor='red', alpha=0.7, label=f'Worst events (N cells = {len(worst_eta_data)})')]
+        plt.legend(handles=legend_elements, loc='upper right')
+        
+        plt.tight_layout()
+        plt.savefig(feature_plots_dir / 'eta_vs_phi_2d_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    # Create layer vs barrel 2D histogram subplots for best and worst events
+    best_layer_data = []
+    best_barrel_data = []
+    worst_layer_data = []
+    worst_barrel_data = []
+    
+    # Collect layer and barrel data
+    for idx in best_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_layer' in cell.dtype.names and 'Cell_Barrel' in cell.dtype.names:
+                best_layer_data.append(cell['Cell_layer'])
+                best_barrel_data.append(cell['Cell_Barrel'])
+    
+    for idx in worst_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_layer' in cell.dtype.names and 'Cell_Barrel' in cell.dtype.names:
+                worst_layer_data.append(cell['Cell_layer'])
+                worst_barrel_data.append(cell['Cell_Barrel'])
+    
+    # Create layer vs barrel 2D histogram subplots if data is available
+    if len(best_layer_data) > 0 and len(worst_layer_data) > 0:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Define bins (layer: 1,2,3; barrel: 0,1)
+        layer_bins = np.linspace(0.5, 3.5, 4)
+        barrel_bins = np.linspace(-0.5, 1.5, 3)
+        
+        # Best events subplot
+        hist_best_lb, _, _ = np.histogram2d(best_layer_data, best_barrel_data, 
+                                           bins=[layer_bins, barrel_bins])
+        im1 = ax1.imshow(hist_best_lb.T, origin='lower', 
+                        extent=[0.5, 3.5, -0.5, 1.5],
+                        cmap='Greens', aspect='auto', vmin=0)
+        ax1.set_xlabel('Layer')
+        ax1.set_ylabel('Barrel (0=Endcap, 1=Barrel)')
+        ax1.set_title(f'Best Events: Layer vs Barrel\n(N cells = {len(best_layer_data)})')
+        ax1.set_xticks([1, 2, 3])
+        ax1.set_yticks([0, 1])
+        ax1.set_yticklabels(['Endcap', 'Barrel'])
+        
+        # Add text annotations for cell counts in each bin
+        for i in range(len(layer_bins)-1):
+            for j in range(len(barrel_bins)-1):
+                count = hist_best_lb[i, j]
+                if count > 0:
+                    ax1.text(i+1, j, f'{int(count)}', ha='center', va='center', 
+                            color='white' if count > hist_best_lb.max()/2 else 'black', fontweight='bold')
+        
+        # Worst events subplot
+        hist_worst_lb, _, _ = np.histogram2d(worst_layer_data, worst_barrel_data, 
+                                            bins=[layer_bins, barrel_bins])
+        im2 = ax2.imshow(hist_worst_lb.T, origin='lower', 
+                        extent=[0.5, 3.5, -0.5, 1.5],
+                        cmap='Reds', aspect='auto', vmin=0)
+        ax2.set_xlabel('Layer')
+        ax2.set_ylabel('Barrel (0=Endcap, 1=Barrel)')
+        ax2.set_title(f'Worst Events: Layer vs Barrel\n(N cells = {len(worst_layer_data)})')
+        ax2.set_xticks([1, 2, 3])
+        ax2.set_yticks([0, 1])
+        ax2.set_yticklabels(['Endcap', 'Barrel'])
+        
+        # Add text annotations for cell counts in each bin
+        for i in range(len(layer_bins)-1):
+            for j in range(len(barrel_bins)-1):
+                count = hist_worst_lb[i, j]
+                if count > 0:
+                    ax2.text(i+1, j, f'{int(count)}', ha='center', va='center', 
+                            color='white' if count > hist_worst_lb.max()/2 else 'black', fontweight='bold')
+        
+        # Add colorbars
+        plt.colorbar(im1, ax=ax1, label='Cell Count')
+        plt.colorbar(im2, ax=ax2, label='Cell Count')
+        
+        plt.tight_layout()
+        plt.savefig(feature_plots_dir / 'layer_vs_barrel_2d_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
     logger.info(f"Feature comparison plots saved to {feature_plots_dir}")
 
 
@@ -891,8 +1063,8 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.figure(figsize=(10, 6))
     plt.scatter(cell_counts, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Number of Cells per Event')
-    plt.ylabel('Reconstruction Error [ps]')
-    plt.title('Reconstruction Error vs Number of Cells')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Number of Cells')
     plt.grid(True, alpha=0.3)
     
     # Add data size info
@@ -913,8 +1085,8 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.figure(figsize=(10, 6))
     plt.scatter(energy_spreads, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Cell Energy Spread (std) [GeV]')
-    plt.ylabel('Reconstruction Error [ps]')
-    plt.title('Reconstruction Error vs Cell Energy Spread')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Cell Energy Spread')
     plt.grid(True, alpha=0.3)
     
     plt.text(0.05, 0.95, f'N = {len(energy_spreads):,} events', 
@@ -934,8 +1106,8 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.figure(figsize=(10, 6))
     plt.scatter(time_spreads, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Cell Time Spread (std) [ps]')
-    plt.ylabel('Reconstruction Error [ps]')
-    plt.title('Reconstruction Error vs Cell Time Spread')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Cell Time Spread')
     plt.grid(True, alpha=0.3)
     
     plt.text(0.05, 0.95, f'N = {len(time_spreads):,} events', 
@@ -964,8 +1136,8 @@ def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarra
     plt.figure(figsize=(10, 6))
     plt.scatter(layer_compositions, t0_errors, alpha=0.5, s=1)
     plt.xlabel('Fraction of Layer 1 Cells')
-    plt.ylabel('Reconstruction Error [ps]')
-    plt.title('Reconstruction Error vs Layer 1 Cell Fraction')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Layer 1 Cell Fraction')
     plt.grid(True, alpha=0.3)
     
     plt.text(0.05, 0.95, f'N = {len(layer_compositions):,} events', 
