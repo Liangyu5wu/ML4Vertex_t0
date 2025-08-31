@@ -52,14 +52,26 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-## Model Architectures
+## Model Architectures & Inputs
+
+### Model Input Summary
+
+| Model | Input Count | Input Types | Input Names |
+|-------|------------|-------------|-------------|
+| **Transformer** | 2-3 | Cells + Vertex + (Mask) | `cell_sequence`, `vertex_features`, `attention_mask` |
+| **Two-Stage DNN** | 2-3 | Cells + Vertex + (Mask) | `cell_sequence`, `vertex_features`, `attention_mask` |
+| **Baseline-Guided DNN** | 3 | Cells + Vertex + Baseline | `cell_sequence`, `vertex_features`, `baseline_prediction` |
+| **Multi-Input DNN** | 5 | Cells + Vertex + Jets + Tracks + Mask | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` |
+| **Multi-Input Transformer** | 5 | Cells + Vertex + Jets + Tracks + Mask | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` |
 
 ### Transformer Model
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
 ```
 Variable cells → Attention Mask → Transformer Blocks → Global Pooling → Dense → Vertex Time
 ```
 
-### Two-Stage DNN Model
+### Two-Stage DNN Model  
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
 ```
 Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Vertex Time
 ```
@@ -68,6 +80,7 @@ Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Ve
 - Smart padding uses feature-specific values
 
 ### Baseline-Guided DNN Model 🆕
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `baseline_prediction` (1)
 ```
 Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline → Residual Learning → Vertex Time
                                                         ↑
@@ -80,6 +93,7 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 - **Robust Performance**: Works even with imperfect baseline predictions
 
 ### Multi-Input DNN/Transformer Models 🆕
+**Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `mask_inputs` (N)
 ```
 Cells → Cell-level Processing → Pooling
 Jets → Configurable Encoder → Global Pool    } → Concat → Event-level MLP → Vertex Time
@@ -93,6 +107,13 @@ Attention Mask → Masking
 - **Specialized Calibration**: Uses `multi_input_calibration.txt` for non jet/track-matching models
 - **Flexible Design**: Available in both DNN and Transformer variants
 - **Advanced Filtering**: Time quality cuts with specialized detector calibration
+
+### Input Dimensions
+- **N**: Max cells (configurable, default 60)
+- **F**: Cell features (7: eta, phi, barrel, layer, time, energy, significance)  
+- **V**: Vertex features (varies based on configuration)
+- **J**: Max jets (7)
+- **T**: Max tracks (30)
 
 ## Quick Start
 

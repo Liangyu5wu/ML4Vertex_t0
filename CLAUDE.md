@@ -113,10 +113,23 @@ There is no dedicated test suite. Verification is done through:
   - `config/dnn_config.py` - Two-stage DNN parameters
 - **YAML Configs**: `config/configs/` - Experiment-specific settings
 
-### Model Architecture
-Five main model types with advanced features:
+### Model Architecture & Input Structure
+Five main model types with different input requirements:
+
+#### Model Input Summary
+
+| Model | Input Count | Input Names | Tensor Shapes |
+|-------|------------|-------------|---------------|
+| **Transformer** | 2-3 | `cell_sequence`, `vertex_features`, `attention_mask` | (N,F), (V,), (N,) |
+| **Two-Stage DNN** | 2-3 | `cell_sequence`, `vertex_features`, `attention_mask` | (N,F), (V,), (N,) |
+| **Baseline-Guided DNN** | 3 | `cell_sequence`, `vertex_features`, `baseline_prediction` | (N,F), (V,), (1,) |
+| **Multi-Input DNN** | 5 | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` | (N,F), (V,), (J,4), (T,5), (N,) |
+| **Multi-Input Transformer** | 5 | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` | (N,F), (V,), (J,4), (T,5), (N,) |
+
+**Legend**: N=max_cells(60), F=cell_features(7), V=vertex_features(varies), J=max_jets(7), T=max_tracks(30)
 
 #### Transformer Model (`src/models/transformer_model.py`)
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
 ```
 Variable cells → Attention Mask → Transformer Blocks → Global Pooling → Dense → Vertex Time
 ```
@@ -125,6 +138,7 @@ Variable cells → Attention Mask → Transformer Blocks → Global Pooling → 
 - Smart padding with feature-specific values
 
 #### Two-Stage DNN Model (`src/models/dnn_model.py`)
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
 ```
 Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Vertex Time
 ```
@@ -133,6 +147,7 @@ Cells → Cell-level MLP → Masked Attention Pooling → Event-level MLP → Ve
 - Alternative to traditional sigma-weighted pooling
 
 #### Baseline-Guided DNN Model (`src/models/baseline_guided_model.py`)
+**Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `baseline_prediction` (1)
 ```
 Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline → Residual Learning → Vertex Time
                                                         ↑
@@ -146,6 +161,7 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 - **Configuration**: Use `model_architecture: "baseline_guided_dnn"` in config files
 
 #### Multi-Input DNN Model (`src/models/multi_input_dnn_model.py`)
+**Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `mask_inputs` (N)
 ```
 Cells → Cell-level MLP → Masked Attention Pooling
 Jets → Configurable MLP → Global Average Pooling        } → Concat → Event-level MLP → Vertex Time
@@ -162,6 +178,7 @@ Attention Mask → Masking Support
 - **Configuration**: Use `model_architecture: "multi_input_dnn"` in config files
 
 #### Multi-Input Transformer Model (`src/models/multi_input_transformer_model.py`)
+**Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `mask_inputs` (N)
 ```
 Cells → Transformer Blocks → Masked Global Pooling
 Jets → Dense Processing → Global Average Pooling     } → Concat → Dense Layers → Vertex Time
