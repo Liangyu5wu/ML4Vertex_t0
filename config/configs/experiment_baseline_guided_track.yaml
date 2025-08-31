@@ -23,7 +23,8 @@ use_physics_informed_features: false # Disable physics weighting (baseline handl
 require_valid_cells: true
 use_cell_track_matching: true       # Track-based cell filtering
 use_cell_jet_matching: false        # Jet-based cell filtering
-additional_cell_filters: {}
+additional_cell_filters: 
+  Cell_e: 2.0  # Energy threshold of 2 GeV
 
 # Time quality cut parameters
 use_time_quality_cut: true    # Enable time-based quality filtering
@@ -74,7 +75,7 @@ epochs: 200                         # Default training epochs
 learning_rate: 0.001                # Default learning rate
 lr_reduction_factor: 0.5
 early_stopping_patience: 20
-lr_patience: 5
+lr_patience: 8
 min_lr: 0.0000001
 
 # Feature definitions

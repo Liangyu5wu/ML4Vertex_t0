@@ -43,10 +43,20 @@ class BaseConfig:
     min_cells: int = 3
     cell_selection_feature: str = 'Cell_e'
     
+    # NEW: Jet and track parameters
+    max_jets: int = 7
+    min_jets: int = 1
+    max_tracks: int = 30
+    min_tracks: int = 1
+    
     # Feature selection parameters
     use_spatial_features: bool = False
     use_track_features: bool = True   # NEW: Include track matching features
     use_jet_features: bool = False    # NEW: Include jet matching features
+    
+    # NEW: Event-level jet and track features
+    use_event_jets: bool = False      # Use event-level jet features
+    use_event_tracks: bool = False    # Use event-level track features
     
     # Cell filtering parameters
     require_valid_cells: bool = True
@@ -92,6 +102,13 @@ class BaseConfig:
     all_cell_features: List[str] = None
     track_features: List[str] = None      # NEW: Track matching features
     jet_features: List[str] = None        # NEW: Jet matching features
+    
+    # NEW: Event-level jet and track features
+    event_jet_features: List[str] = None
+    event_track_features: List[str] = None
+    jet_padding_values: Dict[str, float] = None
+    track_padding_values: Dict[str, float] = None
+    
     skip_normalization: List[str] = None
     
     def __post_init__(self):
@@ -137,6 +154,30 @@ class BaseConfig:
             
         if self.additional_cell_filters is None:
             self.additional_cell_filters = {}
+            
+        # NEW: Initialize event-level jet and track features
+        if self.event_jet_features is None:
+            self.event_jet_features = ['pt', 'eta', 'phi', 'width']
+            
+        if self.event_track_features is None:
+            self.event_track_features = ['pt', 'eta', 'phi', 'd0', 'z0']
+            
+        if self.jet_padding_values is None:
+            self.jet_padding_values = {
+                'pt': -1.0,
+                'eta': -999.0,
+                'phi': -999.0,
+                'width': -1.0
+            }
+            
+        if self.track_padding_values is None:
+            self.track_padding_values = {
+                'pt': -1.0,
+                'eta': -999.0,
+                'phi': -999.0,
+                'd0': -999.0,
+                'z0': -999.0
+            }
     
     @property
     def cell_features(self) -> List[str]:

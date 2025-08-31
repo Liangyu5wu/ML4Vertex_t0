@@ -111,6 +111,23 @@ class DNNModel:
         """
         return self._build_model_internal(feature_dim, vertex_dim, use_mask=True)
     
+    def build_model_with_jets_tracks(self, feature_dim: int, vertex_dim: int, 
+                                     jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Build the DNN model architecture with jets and tracks support.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features  
+            jet_feature_dim: Dimension of jet features
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        return self._build_model_with_jets_tracks_internal(feature_dim, vertex_dim, 
+                                                          jet_feature_dim, track_feature_dim)
+    
     def _build_model_internal(self, feature_dim: int, vertex_dim: int, use_mask: bool = False) -> tf.keras.Model:
         """
         Internal method to build the DNN model architecture.
@@ -221,6 +238,102 @@ class DNNModel:
             model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
         
         # Compile model with configurable loss function
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
+        model.compile(
+            optimizer=optimizer,
+            loss=self._get_loss_function(),
+            metrics=get_standard_metrics()
+        )
+        
+        self.model = model
+        return model
+    
+    def _build_model_with_jets_tracks_internal(self, feature_dim: int, vertex_dim: int,
+                                              jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Internal method to build the DNN model with jets and tracks.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features
+            jet_feature_dim: Dimension of jet features  
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        # Stage 1: Input layers
+        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_inputs')
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_inputs') 
+        jet_inputs = layers.Input(shape=(self.config.max_jets, jet_feature_dim), name='jet_inputs')
+        track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
+        mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
+        
+        # Stage 2: Cell processing
+        x = cell_inputs
+        for i, units in enumerate(self.config.cell_encoder_units):
+            x = layers.Dense(units, activation=self.config.cell_activation, name=f'cell_encoder_{i}')(x)
+            x = layers.Dropout(self.config.cell_dropout_rate, name=f'cell_dropout_{i}')(x)
+        
+        # Cell attention pooling (masked)
+        if self.config.use_attention_pooling:
+            cell_representation = MaskedAttentionPooling(
+                hidden_units=self.config.attention_hidden_units,
+                name='cell_attention_pooling'
+            )(x, mask=mask_inputs)
+        else:
+            # Use masked global average pooling
+            mask_expanded = tf.expand_dims(tf.cast(mask_inputs, tf.float32), axis=-1)
+            masked_sum = tf.reduce_sum(x * mask_expanded, axis=1)
+            mask_count = tf.reduce_sum(mask_expanded, axis=1)
+            mask_count = tf.maximum(mask_count, 1.0)
+            cell_representation = masked_sum / mask_count
+        
+        # Stage 3: Jet processing
+        jet_x = jet_inputs
+        jet_x = layers.Dense(64, activation='relu', name='jet_encoder_0')(jet_x)
+        jet_x = layers.Dropout(0.1, name='jet_dropout_0')(jet_x)
+        jet_x = layers.Dense(32, activation='relu', name='jet_encoder_1')(jet_x) 
+        jet_x = layers.Dropout(0.1, name='jet_dropout_1')(jet_x)
+        jet_representation = layers.GlobalAveragePooling1D(name='jet_global_pool')(jet_x)
+        
+        # Stage 4: Track processing
+        track_x = track_inputs
+        track_x = layers.Dense(64, activation='relu', name='track_encoder_0')(track_x)
+        track_x = layers.Dropout(0.1, name='track_dropout_0')(track_x)
+        track_x = layers.Dense(32, activation='relu', name='track_encoder_1')(track_x)
+        track_x = layers.Dropout(0.1, name='track_dropout_1')(track_x)
+        track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
+        
+        # Stage 5: Feature combination  
+        # Don't use vertex features as specified in requirements
+        combined = layers.Concatenate(name='combine_all_features')([
+            cell_representation, jet_representation, track_representation
+        ])
+        
+        # Stage 6: Event-level processing
+        x = combined
+        for i, (units, dropout_rate) in enumerate(zip(
+            self.config.event_encoder_units,
+            self.config.event_dropout_rates
+        )):
+            x = layers.Dense(units, activation='relu', name=f'event_encoder_{i}')(x)
+            
+            if self.config.use_batch_norm:
+                x = layers.BatchNormalization(name=f'event_bn_{i}')(x)
+                
+            x = layers.Dropout(dropout_rate, name=f'event_dropout_{i}')(x)
+        
+        # Output layer
+        output = layers.Dense(1, name='vertex_time')(x)
+        
+        # Create model with all inputs
+        model = models.Model(
+            inputs=[cell_inputs, vertex_inputs, jet_inputs, track_inputs, mask_inputs], 
+            outputs=output
+        )
+        
+        # Compile model
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
         model.compile(
             optimizer=optimizer,

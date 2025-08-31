@@ -161,7 +161,11 @@ class DataLoader:
         if self.config.additional_cell_filters:
             for filter_key, filter_value in self.config.additional_cell_filters.items():
                 if filter_key in event_cells.dtype.names:
-                    additional_mask = event_cells[filter_key] == filter_value
+                    # Support >= filtering for energy thresholds
+                    if filter_key == 'Cell_e' and isinstance(filter_value, (int, float)):
+                        additional_mask = event_cells[filter_key] >= filter_value
+                    else:
+                        additional_mask = event_cells[filter_key] == filter_value
                     mask = mask & additional_mask
                 else:
                     print(f"Warning: Filter key '{filter_key}' not found in cell data. Skipping this filter.")
@@ -455,12 +459,28 @@ class DataLoader:
         """
         Load data from HDF5 files with configurable cell filtering.
         
+        For backward compatibility, this method loads only cell data.
+        Use load_data_with_jets_and_tracks_from_files for multi-input models.
+        """
+        result = self.load_data_with_jets_and_tracks_from_files(file_paths, print_filtering_stats)
+        # Return only the first 4 elements for backward compatibility
+        return result[:4]
+    
+    def load_data_with_jets_and_tracks_from_files(
+        self, 
+        file_paths: Optional[List[str]] = None,
+        print_filtering_stats: bool = True
+    ) -> Tuple[List[List[List[float]]], np.ndarray, np.ndarray, np.ndarray, 
+               Optional[List[List[List[float]]]], Optional[List[List[List[float]]]]]:
+        """
+        Load data from HDF5 files with jets and tracks support.
+        
         Args:
             file_paths: List of file paths to load. If None, uses default paths.
             print_filtering_stats: Whether to print cell filtering statistics
             
         Returns:
-            Tuple of (cell_sequences, vertex_features, vertex_times, sequence_lengths)
+            Tuple of (cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences)
         """
         if file_paths is None:
             file_paths = self.get_file_paths()
@@ -468,40 +488,19 @@ class DataLoader:
         all_cell_sequences = []
         all_vertex_features = []
         all_vertex_times = []
+        all_jet_sequences = [] if hasattr(self.config, 'use_event_jets') and self.config.use_event_jets else None
+        all_track_sequences = [] if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks else None
         sequence_lengths = []
         
-        # Statistics for monitoring filtering effectiveness
-        filtering_stats = {
-            'total_events': 0,
-            'events_with_cells': 0,
-            'events_after_min_cells_filter': 0,
-            'events_after_baseline_filter': 0,  # NEW
-            'total_cells_before_filtering': 0,
-            'total_cells_after_filtering': 0,
-            'cells_removed_by_valid_filter': 0,
-            'cells_removed_by_track_filter': 0,
-            'cells_removed_by_jet_filter': 0,  # NEW
-            'cells_removed_by_time_quality_filter': 0,  # NEW
-            'cells_removed_by_additional_filters': 0
-        }
-        
-        print(f"Cell filtering configuration:")
-        print(f"  Require valid cells: {self.config.require_valid_cells}")
-        print(f"  Use cell-track matching: {self.config.use_cell_track_matching}")
-        print(f"  Use cell-jet matching: {self.config.use_cell_jet_matching}")  # NEW
-        print(f"  Use time quality cut: {self.config.use_time_quality_cut}")  # NEW
-        if self.config.use_time_quality_cut:
-            print(f"    σ_vertex: {self.config.vertex_time_sigma} ps")
-            print(f"    Cut threshold: {self.config.time_quality_n_sigma}σ")
-        print(f"  Use baseline method filter: {self.config.use_baseline_method_filter}")  # NEW
-        if self.config.use_baseline_method_filter:
-            print(f"    Baseline error threshold: ±{self.config.baseline_method_threshold} ps")
-        print(f"  Additional filters: {self.config.additional_cell_filters}")
-        print(f"  Filtering description: {self.config.get_cell_filtering_description()}")
-        print(f"Using spatial features: {self.config.use_spatial_features}")
-        print(f"Using jet features: {self.config.use_jet_features}")  # NEW
-        print(f"Cell features used: {self.config.cell_features}")
-        print(f"Min cells required: {self.config.min_cells}, Max cells considered: {self.config.max_cells}")
+        # Print configuration
+        print(f"Data loading configuration:")
+        print(f"  Cell features used: {self.config.cell_features}")
+        print(f"  Use event jets: {getattr(self.config, 'use_event_jets', False)}")
+        print(f"  Use event tracks: {getattr(self.config, 'use_event_tracks', False)}")
+        if hasattr(self.config, 'use_event_jets') and self.config.use_event_jets:
+            print(f"  Max jets per event: {self.config.max_jets}, Min jets: {self.config.min_jets}")
+        if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks:
+            print(f"  Max tracks per event: {self.config.max_tracks}, Min tracks: {self.config.min_tracks}")
         
         for file_path in file_paths:
             if not os.path.exists(file_path):
@@ -510,15 +509,18 @@ class DataLoader:
                 
             print(f"Processing {file_path}...")
             try:
-                cell_seq, vertex_feat, vertex_time, seq_len, file_stats = self._process_file(file_path)
+                result = self._process_file_with_jets_tracks(file_path)
+                if all_jet_sequences is not None and all_track_sequences is not None:
+                    cell_seq, vertex_feat, vertex_time, seq_len, jet_seq, track_seq = result
+                    all_jet_sequences.extend(jet_seq)
+                    all_track_sequences.extend(track_seq)
+                else:
+                    cell_seq, vertex_feat, vertex_time, seq_len, _, _ = result
+                    
                 all_cell_sequences.extend(cell_seq)
                 all_vertex_features.extend(vertex_feat)
                 all_vertex_times.extend(vertex_time)
                 sequence_lengths.extend(seq_len)
-                
-                # Accumulate statistics
-                for key in filtering_stats:
-                    filtering_stats[key] += file_stats.get(key, 0)
                     
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
@@ -527,14 +529,9 @@ class DataLoader:
         sequence_lengths = np.array(sequence_lengths)
         print(f"Processed {len(all_vertex_times)} valid events")
         
-        # Print filtering statistics
-        if print_filtering_stats and filtering_stats['total_events'] > 0:
-            self._print_filtering_statistics(filtering_stats)
-        
-        self._print_sequence_statistics(sequence_lengths)
-        
         return (all_cell_sequences, np.array(all_vertex_features), 
-                np.array(all_vertex_times), sequence_lengths)
+                np.array(all_vertex_times), sequence_lengths,
+                all_jet_sequences, all_track_sequences)
     
     def load_data_with_baselines_from_files(
         self, 
@@ -699,6 +696,142 @@ class DataLoader:
                 sequence_lengths.append(len(sequence))
         
         return cell_sequences, vertex_features, vertex_times, sequence_lengths, file_stats
+    
+    def _process_file_with_jets_tracks(self, file_path: str) -> Tuple[List, List, List, List, List, List]:
+        """Process a single HDF5 file with jets and tracks support."""
+        cell_sequences = []
+        vertex_features = []
+        vertex_times = []
+        sequence_lengths = []
+        jet_sequences = []
+        track_sequences = []
+        
+        with h5py.File(file_path, 'r') as f:
+            vertex_data = f['HSvertex'][:]
+            cells_data = f['cells'][:]
+            
+            # Load jets and tracks data if enabled
+            jets_data = f.get('jets', None) if hasattr(self.config, 'use_event_jets') and self.config.use_event_jets else None
+            tracks_data = f.get('tracks', None) if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks else None
+            
+            for i in range(len(vertex_data)):
+                # Extract vertex features (not using spatial features for new models)
+                vertex_reco = [0.0, 0.0, 0.0]
+                
+                # Process cells for this event
+                event_cells = cells_data[i]
+                valid_cells = self.apply_cell_filtering(event_cells)
+                
+                # Skip events with too few cells
+                if len(valid_cells) < self.config.min_cells:
+                    continue
+                
+                # Apply baseline method filter if enabled
+                vertex_time = vertex_data[i]['HSvertex_time']
+                if not self.apply_baseline_method_filter(valid_cells, vertex_time):
+                    continue
+                
+                # Process cells
+                sequence = self._process_event_cells(valid_cells)
+                if sequence is None:
+                    continue
+                
+                # Process jets if enabled
+                jet_sequence = []
+                if jets_data is not None:
+                    event_jets = jets_data[i]
+                    jet_sequence = self._process_event_jets(event_jets)
+                
+                # Process tracks if enabled
+                track_sequence = []
+                if tracks_data is not None:
+                    event_tracks = tracks_data[i]
+                    track_sequence = self._process_event_tracks(event_tracks)
+                
+                cell_sequences.append(sequence)
+                vertex_features.append(vertex_reco)
+                vertex_times.append(vertex_time)
+                sequence_lengths.append(len(sequence))
+                jet_sequences.append(jet_sequence)
+                track_sequences.append(track_sequence)
+        
+        return cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences
+    
+    def _process_event_jets(self, event_jets: np.ndarray) -> List[List[float]]:
+        """Process jets for a single event."""
+        # Filter jets: AntiKt4EMTopoJets_selected=1 and valid=true
+        valid_mask = (event_jets['valid'] == True) & (event_jets['AntiKt4EMTopoJets_selected'] == 1)
+        valid_jets = event_jets[valid_mask]
+        
+        # Sort by pt (descending)
+        sorted_indices = np.argsort(-valid_jets['AntiKt4EMTopoJets_pt'])
+        sorted_jets = valid_jets[sorted_indices]
+        
+        # Take up to max_jets
+        n_jets_to_use = min(len(sorted_jets), self.config.max_jets)
+        
+        # Create jet sequence
+        jet_sequence = []
+        for jet_idx in range(n_jets_to_use):
+            jet = sorted_jets[jet_idx]
+            jet_features = [
+                jet['AntiKt4EMTopoJets_pt'],
+                jet['AntiKt4EMTopoJets_eta'],
+                jet['AntiKt4EMTopoJets_phi'],
+                jet['AntiKt4EMTopoJets_width']
+            ]
+            jet_sequence.append(jet_features)
+        
+        # Pad to max_jets if necessary
+        while len(jet_sequence) < self.config.max_jets:
+            padding_values = [
+                self.config.jet_padding_values['pt'],
+                self.config.jet_padding_values['eta'],
+                self.config.jet_padding_values['phi'],
+                self.config.jet_padding_values['width']
+            ]
+            jet_sequence.append(padding_values)
+        
+        return jet_sequence
+    
+    def _process_event_tracks(self, event_tracks: np.ndarray) -> List[List[float]]:
+        """Process tracks for a single event."""
+        # Filter tracks: valid=true and Track_isGoodFromHS_old_files=1
+        valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS_old_files'] == 1)
+        valid_tracks = event_tracks[valid_mask]
+        
+        # Sort by pt (descending) to get top N tracks
+        sorted_indices = np.argsort(-valid_tracks['Track_pt'])
+        sorted_tracks = valid_tracks[sorted_indices]
+        
+        # Take up to max_tracks
+        n_tracks_to_use = min(len(sorted_tracks), self.config.max_tracks)
+        
+        # Create track sequence
+        track_sequence = []
+        for track_idx in range(n_tracks_to_use):
+            track = sorted_tracks[track_idx]
+            track_features = [
+                track['Track_pt'],
+                track['Track_eta'],
+                track['Track_phi'],
+                track['Track_d0'],
+                track['Track_z0']
+            ]
+            track_sequence.append(track_features)
+        
+        # Pad to max_tracks if necessary
+        while len(track_sequence) < self.config.max_tracks:
+            padding_values = [
+                self.config.track_padding_values['pt'],
+                self.config.track_padding_values['eta'],
+                self.config.track_padding_values['phi'],
+                self.config.track_padding_values['d0'],
+                self.config.track_padding_values['z0']
+            ]
+            track_sequence.append(padding_values)
+        
+        return track_sequence
     
     def _process_event_cells(self, valid_cells: np.ndarray) -> Optional[List[List[float]]]:
         """Process cells for a single event."""

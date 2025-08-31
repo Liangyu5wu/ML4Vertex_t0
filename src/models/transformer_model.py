@@ -99,6 +99,23 @@ class TransformerModel:
         """
         return self._build_model_internal(feature_dim, vertex_dim, use_mask=True)
     
+    def build_model_with_jets_tracks(self, feature_dim: int, vertex_dim: int, 
+                                     jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Build the transformer model architecture with jets and tracks support.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features  
+            jet_feature_dim: Dimension of jet features
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        return self._build_model_with_jets_tracks_internal(feature_dim, vertex_dim, 
+                                                          jet_feature_dim, track_feature_dim)
+    
     def _build_model_internal(self, feature_dim: int, vertex_dim: int, use_mask: bool = False) -> tf.keras.Model:
         """
         Internal method to build the transformer model architecture.
@@ -201,6 +218,107 @@ class TransformerModel:
             model = models.Model(inputs=[cell_inputs, vertex_inputs, mask_inputs], outputs=output)
         else:
             model = models.Model(inputs=[cell_inputs, vertex_inputs], outputs=output)
+
+        loss_function = get_loss_function(self.config.loss_function, self.config.huber_delta)
+        
+        # Compile model
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
+        model.compile(
+            optimizer=optimizer,
+            loss=loss_function,
+            metrics=get_standard_metrics()
+        )
+        
+        self.model = model
+        return model
+    
+    def _build_model_with_jets_tracks_internal(self, feature_dim: int, vertex_dim: int,
+                                              jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Internal method to build the transformer model with jets and tracks.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features
+            jet_feature_dim: Dimension of jet features  
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        # Validate configuration
+        self.config.validate_config()
+        
+        # Input layers
+        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_sequence')
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
+        jet_inputs = layers.Input(shape=(self.config.max_jets, jet_feature_dim), name='jet_inputs')
+        track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
+        mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
+        
+        # Stage 1: Cell processing with transformer
+        # Input projection to d_model dimensions
+        x = layers.Dense(self.config.d_model, activation='linear', name='input_projection')(cell_inputs)
+        
+        # Add positional encoding
+        x = PositionalEncoding(max_position=self.config.max_position_encoding, d_model=self.config.d_model)(x)
+        
+        # Apply transformer blocks
+        for i in range(self.config.num_layers):
+            x = TransformerBlock(
+                d_model=self.config.d_model,
+                num_heads=self.config.num_heads,
+                dff=self.config.dff,
+                rate=self.config.dropout_rate,
+                name=f'transformer_block_{i}'
+            )(x, mask=mask_inputs)
+        
+        # Global pooling with mask support
+        cell_representation = MaskedGlobalAveragePooling1D(name='masked_global_pool')(x, mask=mask_inputs)
+        
+        # Stage 2: Jet processing
+        jet_x = jet_inputs
+        jet_x = layers.Dense(64, activation='relu', name='jet_encoder_0')(jet_x)
+        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_0')(jet_x)
+        jet_x = layers.Dense(32, activation='relu', name='jet_encoder_1')(jet_x) 
+        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_1')(jet_x)
+        jet_representation = layers.GlobalAveragePooling1D(name='jet_global_pool')(jet_x)
+        
+        # Stage 3: Track processing
+        track_x = track_inputs
+        track_x = layers.Dense(64, activation='relu', name='track_encoder_0')(track_x)
+        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_0')(track_x)
+        track_x = layers.Dense(32, activation='relu', name='track_encoder_1')(track_x)
+        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_1')(track_x)
+        track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
+        
+        # Stage 4: Feature combination  
+        # Don't use vertex features as specified in requirements
+        combined = layers.Concatenate(name='combine_all_features')([
+            cell_representation, jet_representation, track_representation
+        ])
+        
+        # Stage 5: Final prediction layers
+        x = combined
+        for i, (units, dropout_rate) in enumerate(zip(
+            self.config.final_dense_units, 
+            self.config.final_dropout_rates
+        )):
+            x = layers.Dense(units, activation='relu', name=f'final_dense_{i}')(x)
+            
+            if self.config.use_batch_norm:
+                x = layers.BatchNormalization(name=f'final_bn_{i}')(x)
+                
+            x = layers.Dropout(dropout_rate, name=f'final_dropout_{i}')(x)
+        
+        # Output layer
+        output = layers.Dense(1, name='vertex_time')(x)
+        
+        # Create model with all inputs
+        model = models.Model(
+            inputs=[cell_inputs, vertex_inputs, jet_inputs, track_inputs, mask_inputs], 
+            outputs=output
+        )
 
         loss_function = get_loss_function(self.config.loss_function, self.config.huber_delta)
         
