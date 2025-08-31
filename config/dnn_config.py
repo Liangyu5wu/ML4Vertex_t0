@@ -36,18 +36,15 @@ class DNNConfig(BaseConfig):
     loss_function: str = 'mse'
     huber_delta: float = 1.0
     
-    # Detector calibration parameters (inherited from BaseConfig)
+    # Detector calibration parameters
     use_detector_params: bool = False
-    calibration_data_file: str = "cell_jet_calibration.txt"
+    calibration_data_file: str = "HStrackmatching_calibration.txt"
     
     # Calibration validation parameters
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap
     validation_layer: int = 1  # 1, 2, or 3
     gaussian_fit_range: float = 120  # Range for Gaussian fitting
-    
-    # Model name override
-    model_name: str = "dnn_model"
     
     def __post_init__(self):
         """Initialize additional parameters."""

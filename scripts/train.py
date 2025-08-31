@@ -78,6 +78,12 @@ def create_config_from_yaml(yaml_path):
         if yaml_data.get('model_architecture') == 'baseline_guided_dnn':
             config = DNNConfig.from_yaml(yaml_path)
             logger.info(f"Loaded baseline-guided DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'multi_input_dnn':
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded multi-input DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'multi_input_transformer':
+            config = TransformerConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded multi-input Transformer configuration from: {yaml_path}")
         elif yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
             config = DNNConfig.from_yaml(yaml_path)
             logger.info(f"Loaded DNN configuration from: {yaml_path}")
