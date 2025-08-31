@@ -352,11 +352,12 @@ def main():
                 test_cell_sequences_orig = [cell_sequences[i] for i in test_indices]
                 test_vertex_times_orig = vertex_times[test_indices]
                 
-                # Calculate baseline predictions using original sequences
-                test_baselines = temp_data_loader.calculate_baseline_method_predictions(
+                # Use existing calculate_traditional_t0 method from data processor
+                # This reuses the well-tested baseline method calculation
+                test_baselines, _ = data_processor.calculate_traditional_t0(
                     test_cell_sequences_orig, test_vertex_times_orig
                 )
-                print(f"Calculated baseline predictions for {len(test_baselines)} test events")
+                print(f"Calculated baseline predictions for {len(test_baselines)} test events using existing method")
                 
             except Exception as e:
                 print(f"Warning: Could not calculate baseline method predictions: {e}")
