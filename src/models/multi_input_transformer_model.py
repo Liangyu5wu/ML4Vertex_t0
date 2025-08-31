@@ -161,3 +161,7 @@ class MultiInputTransformerModel:
         if self.model is None:
             return "Model not built yet"
         return get_model_summary_string(self.model)
+    
+    def count_parameters(self) -> Dict[str, int]:
+        """Count model parameters."""
+        return count_model_parameters(self.model)
