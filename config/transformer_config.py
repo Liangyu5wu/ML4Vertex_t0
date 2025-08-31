@@ -43,9 +43,6 @@ class TransformerConfig(BaseConfig):
     track_activation: str = 'relu'
     track_use_batch_norm: bool = False
     
-    # Positional encoding parameters
-    max_position_encoding: int = 100  # Maximum sequence length for positional encoding
-    
     # Calibration validation parameters
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap

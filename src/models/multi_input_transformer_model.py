@@ -60,7 +60,7 @@ class MultiInputTransformerModel:
         
         # Cell processing with transformer
         x = layers.Dense(self.config.d_model, activation='linear', name='input_projection')(cell_inputs)
-        x = PositionalEncoding(max_position=self.config.max_position_encoding, d_model=self.config.d_model)(x)
+        x = PositionalEncoding(max_position=self.config.max_position, d_model=self.config.d_model)(x)
         
         # Apply transformer blocks
         for i in range(self.config.num_transformer_blocks):
