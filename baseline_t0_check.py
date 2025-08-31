@@ -373,55 +373,149 @@ def gaussian_func(x, a, mu, sigma):
     return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
-def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
-    """Plot traditional t0 distribution with Gaussian fit."""
-    plt.figure(figsize=(10, 6))
+def plot_combined_t0_distribution(traditional_t0: np.ndarray, vertex_times: np.ndarray, save_path: str, matching_type: str):
+    """Plot traditional t0 distribution with both baseline and truth data using reference style (no fit)."""
+    # Set matplotlib parameters to match the reference style  
+    import matplotlib as mpl
+    mpl.rcParams['figure.dpi'] = 120
+    mpl.rcParams['savefig.dpi'] = 300
+    mpl.rcParams['font.size'] = 10
+    mpl.rcParams['axes.linewidth'] = 1.2
+    mpl.rcParams['xtick.major.width'] = 1.0
+    mpl.rcParams['ytick.major.width'] = 1.0
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['lines.markersize'] = 6
+    mpl.rcParams['legend.frameon'] = True
+    mpl.rcParams['legend.framealpha'] = 0.9
+    mpl.rcParams['legend.edgecolor'] = 'gray'
+    mpl.rcParams['legend.fancybox'] = True
+    mpl.rcParams['savefig.format'] = 'png'
+    mpl.rcParams['savefig.bbox'] = 'tight'
+    mpl.rcParams['savefig.pad_inches'] = 0.1
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     # Create histogram with bin width = 10, limited to ±2000 range
     bins = np.arange(-2000, 2010, 10)
     
-    counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
+    # Plot both histograms with stepfilled style to match reference (no fits)
+    baseline_counts, bin_edges = np.histogram(traditional_t0, bins=bins)
+    truth_counts, _ = np.histogram(vertex_times, bins=bins)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
-    # Calculate actual bin width from the histogram
-    bin_width = bin_edges[1] - bin_edges[0]
+    # Plot baseline method reconstruction
+    ax.hist(bin_centers, bins=bin_edges, weights=baseline_counts, 
+            histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+            linewidth=2, alpha=0.5)
+    
+    # Plot truth vertex times
+    ax.hist(bin_centers, bins=bin_edges, weights=truth_counts, 
+            histtype='stepfilled', color='#D46A6A', edgecolor='red', 
+            linewidth=2, alpha=0.5)
+    
+    # Calculate statistics
+    baseline_mean = np.mean(traditional_t0)
+    baseline_std = np.std(traditional_t0)
+    truth_mean = np.mean(vertex_times)
+    truth_std = np.std(vertex_times)
+    
+    # Set axis labels and title
+    ax.set_xlabel("Time [ps]", fontsize=12)
+    ax.set_ylabel("Counts", fontsize=12)
+    ax.set_title("Reco. t0", fontsize=14)
+    
+    # Increase y-axis by 10% to accommodate legend
+    ymax = max(np.max(baseline_counts), np.max(truth_counts)) * 1.1
+    ax.set_ylim(0, ymax)
+    ax.set_xlim(-2000, 2000)
+    
+    # Add custom legend with statistics (no fit curves)
+    blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+    red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
+    
+    legend_labels = [
+        f"Events: N = {len(traditional_t0)}",
+        "Baseline method",
+        "Truth vertex time",
+        f"Baseline: μ = {baseline_mean:.2f}, σ = {baseline_std:.2f} ps",
+        f"Truth: μ = {truth_mean:.2f}, σ = {truth_std:.2f} ps"
+    ]
+    
+    # Add handles for legend
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, red_patch,
+                     plt.Rectangle((0,0),0,0,alpha=0.0), plt.Rectangle((0,0),0,0,alpha=0.0)]
+    
+    ax.legend(legend_handles, legend_labels, 
+             loc='upper left', fontsize=9, framealpha=0.9)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Combined traditional t0 distribution plot saved to: {save_path}")
+
+
+def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
+    """Plot traditional t0 distribution (kept for backward compatibility, no fit)."""
+    # Set matplotlib parameters to match the reference style  
+    import matplotlib as mpl
+    mpl.rcParams['figure.dpi'] = 120
+    mpl.rcParams['savefig.dpi'] = 300
+    mpl.rcParams['font.size'] = 10
+    mpl.rcParams['axes.linewidth'] = 1.2
+    mpl.rcParams['xtick.major.width'] = 1.0
+    mpl.rcParams['ytick.major.width'] = 1.0
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['lines.markersize'] = 6
+    mpl.rcParams['legend.frameon'] = True
+    mpl.rcParams['legend.framealpha'] = 0.9
+    mpl.rcParams['legend.edgecolor'] = 'gray'
+    mpl.rcParams['legend.fancybox'] = True
+    mpl.rcParams['savefig.format'] = 'png'
+    mpl.rcParams['savefig.bbox'] = 'tight'
+    mpl.rcParams['savefig.pad_inches'] = 0.1
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Create histogram with bin width = 10, limited to ±2000 range
+    bins = np.arange(-2000, 2010, 10)
+    
+    # Plot histogram with stepfilled style to match reference (no fit)
+    counts, bin_edges = np.histogram(traditional_t0, bins=bins)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    ax.hist(bin_centers, bins=bin_edges, weights=counts, 
+            histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+            linewidth=2, alpha=0.5)
     
     # Calculate basic statistics
     mean_all = np.mean(traditional_t0)
     std_all = np.std(traditional_t0)
     
-    # Global Gaussian fit (use all data)
-    try:
-        # Use the same binning as the histogram for fitting
-        hist_fit, fit_bin_edges = np.histogram(traditional_t0, bins=bins)
-        bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
-        
-        # Only use non-zero bins for fitting
-        nonzero_mask = hist_fit > 0
-        if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
-            # Fit Gaussian
-            initial_guess = [np.max(hist_fit), mean_all, std_all]
-            popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
-            
-            fit_mean, fit_std = popt[1], abs(popt[2])
-            
-            # Plot fitted Gaussian over the full range
-            x_fit = np.linspace(-2000, 2000, 1000)
-            y_fit = gaussian_func(x_fit, *popt)
-            plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
-                    label=f'Global Gaussian fit: μ={fit_mean:.2f}, σ={fit_std:.2f}')
-        else:
-            fit_mean, fit_std = mean_all, std_all
-        
-    except Exception:
-        fit_mean, fit_std = mean_all, std_all
+    # Set axis labels and title
+    ax.set_xlabel("Time [ps]", fontsize=12)
+    ax.set_ylabel("Counts", fontsize=12)
+    ax.set_title("Reco. t0", fontsize=14)
     
-    plt.xlabel('Traditional t0 [ps]')
-    plt.ylabel('Count')
-    plt.title(f'Traditional t0 Distribution ({matching_type.capitalize()} Matching)')
-    plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
-               f'Global fit: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
-    plt.grid(True, alpha=0.3)
-    plt.xlim(-2000, 2000)
+    # Increase y-axis by 10% to accommodate legend
+    ymax = np.max(counts) * 1.1
+    ax.set_ylim(0, ymax)
+    ax.set_xlim(-2000, 2000)
+    
+    # Add custom legend with statistics (no fit curves)
+    blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+    
+    legend_labels = [
+        f"Events: N = {len(traditional_t0)}",
+        "Baseline method",
+        f"Data: μ = {mean_all:.2f}, σ = {std_all:.2f} ps"
+    ]
+    
+    # Add empty handle for the events count line
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch,
+                     plt.Rectangle((0,0),0,0,alpha=0.0)]
+    
+    ax.legend(legend_handles, legend_labels, 
+             loc='upper left', fontsize=9, framealpha=0.9)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -430,16 +524,37 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
 
 
 def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
-    """Plot t0 error distribution with Gaussian fit."""
-    plt.figure(figsize=(10, 6))
+    """Plot t0 error distribution with Gaussian fit using compare_delta_t0.py style."""
+    # Set matplotlib parameters to match the reference style
+    import matplotlib as mpl
+    mpl.rcParams['figure.dpi'] = 120
+    mpl.rcParams['savefig.dpi'] = 300
+    mpl.rcParams['font.size'] = 10
+    mpl.rcParams['axes.linewidth'] = 1.2
+    mpl.rcParams['xtick.major.width'] = 1.0
+    mpl.rcParams['ytick.major.width'] = 1.0
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['lines.markersize'] = 6
+    mpl.rcParams['legend.frameon'] = True
+    mpl.rcParams['legend.framealpha'] = 0.9
+    mpl.rcParams['legend.edgecolor'] = 'gray'
+    mpl.rcParams['legend.fancybox'] = True
+    mpl.rcParams['savefig.format'] = 'png'
+    mpl.rcParams['savefig.bbox'] = 'tight'
+    mpl.rcParams['savefig.pad_inches'] = 0.1
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     # Create histogram with bin width = 10, limited to ±2000 range
     bins = np.arange(-2000, 2010, 10)
     
-    counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
+    # Plot histogram with stepfilled style to match reference
+    counts, bin_edges = np.histogram(t0_errors, bins=bins)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
-    # Calculate actual bin width from the histogram
-    bin_width = bin_edges[1] - bin_edges[0]
+    ax.hist(bin_centers, bins=bin_edges, weights=counts, 
+            histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+            linewidth=2, alpha=0.5)
     
     # Calculate basic statistics
     mean_all = np.mean(t0_errors)
@@ -447,47 +562,62 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     
     # Gaussian fit on restricted range
     fit_range = config.gaussian_fit_range
-    mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
+    mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
     
-    if np.sum(mask) > 10:
-        fit_data = t0_errors[mask]
+    if np.sum(mask) > 3:
+        fit_x = bin_centers[mask]
+        fit_y = counts[mask]
+        fit_error = np.sqrt(fit_y)
+        fit_error[fit_error == 0] = 1
+        
         try:
-            # Create histogram for fitting using the same binning approach
-            fit_bins = np.arange(-fit_range, fit_range + bin_width, bin_width)
-            hist_fit, fit_bin_edges = np.histogram(fit_data, bins=fit_bins)
-            bin_centers = (fit_bin_edges[:-1] + fit_bin_edges[1:]) / 2
+            # Initial parameters for fit (amplitude, mean, sigma)
+            p0 = [np.max(fit_y), mean_all, std_all]
             
-            # Only use non-zero bins for fitting
-            nonzero_mask = hist_fit > 0
-            if np.sum(nonzero_mask) > 3:  # Need at least 3 points for Gaussian fitting
-                # Fit Gaussian
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(gaussian_func, bin_centers[nonzero_mask], hist_fit[nonzero_mask], p0=initial_guess)
-                
-                fit_mean, fit_std = popt[1], abs(popt[2])
-                
-                # Plot fitted Gaussian with proper scaling
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = gaussian_func(x_fit, *popt)
-                
-                # Plot fitted Gaussian with proper scaling - fix the scaling to match histogram better
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-            else:
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
+            popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
+                                  p0=p0, sigma=fit_error, absolute_sigma=True)
+            perr = np.sqrt(np.diag(pcov))
+            
+            fit_mean, fit_std = popt[1], abs(popt[2])
+            
+            # Plot fitted curve
+            x_fit = np.linspace(-fit_range, fit_range, 1000)
+            y_fit = gaussian_func(x_fit, *popt)
+            
+            ax.plot(x_fit, y_fit, 'b--', linewidth=2)
             
         except Exception:
-            fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
+            fit_mean, fit_std = mean_all, std_all
     else:
         fit_mean, fit_std = mean_all, std_all
     
-    plt.xlabel('Traditional t0 - True t0 [ps]')
-    plt.ylabel('Count')
-    plt.title(f'Traditional t0 Error Distribution ({matching_type.capitalize()} Matching)')
-    plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
-               f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
-    plt.grid(True, alpha=0.3)
-    plt.xlim(-2000, 2000)
+    # Set axis labels and title
+    ax.set_xlabel("Time [ps]", fontsize=12)
+    ax.set_ylabel("Counts", fontsize=12)
+    ax.set_title("Reco. t0", fontsize=14)
+    
+    # Increase y-axis by 10% to accommodate legend
+    ymax = np.max(counts) * 1.1
+    ax.set_ylim(0, ymax)
+    ax.set_xlim(-2000, 2000)
+    
+    # Add custom legend with fit parameters
+    blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+    blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
+    
+    legend_labels = [
+        f"Events: N = {len(t0_errors)}",
+        "Delta t0",
+        f"Data: μ = {mean_all:.2f}, σ = {std_all:.2f} ps",
+        f"Fit: μ = {fit_mean:.2f}, σ = {fit_std:.2f} ps"
+    ]
+    
+    # Add empty handle for the events count line
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, 
+                     plt.Rectangle((0,0),0,0,alpha=0.0), blue_line]
+    
+    ax.legend(legend_handles, legend_labels, 
+             loc='upper left', fontsize=9, framealpha=0.9)
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -631,10 +761,10 @@ def run_analysis(config: SimpleConfig, output_dir: Path, matching_type: str) -> 
         matching_type
     )
     
-    # Plot 1: Traditional t0 distribution
-    plot_t0_distribution(
+    # Plot 1: Combined traditional t0 distribution (baseline + truth)
+    plot_combined_t0_distribution(
         traditional_t0, 
-        config, 
+        vertex_times,
         output_dir / 'traditional_t0_distribution.png', 
         matching_type
     )
