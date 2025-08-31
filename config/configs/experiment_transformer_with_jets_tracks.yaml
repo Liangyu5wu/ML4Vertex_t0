@@ -45,7 +45,7 @@ use_baseline_method_filter: false   # Disable baseline method filtering
 
 # Detector calibration parameters - needed for time quality cut
 use_detector_params: true           # Enable for time quality cut
-calibration_data_file: "HStrackmatching_calibration.txt"
+calibration_data_file: "multi_input_calibration.txt"
 
 # Model architecture parameters
 use_attention_mask: true            # Use attention mask for padding
