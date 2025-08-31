@@ -1,6 +1,6 @@
 # Vertex Time Prediction Models
 
-A framework for training Transformer, DNN, and Baseline-Guided models for vertex t0 prediction with LAr Calorimeter in ATLAS. Features optimized parameter sweeps, attention mask support, and physics-informed residual learning.
+A framework for training Transformer, DNN, Multi-Input, and Baseline-Guided models for vertex t0 prediction with LAr Calorimeter in ATLAS. Features optimized parameter sweeps, attention mask support, physics-informed residual learning, and event-level jets/tracks integration.
 
 ## Project Structure
 
@@ -19,11 +19,12 @@ ML4Vertex_t0/
 │       └── test_fast.yaml     # Fast testing configuration
 ├── calibration_data/          # External calibration data files
 │   ├── HStrackmatching_calibration.txt    # Cell-track matching calibration
-│   └── cell_jet_calibration.txt           # Cell-jet matching calibration 
+│   ├── cell_jet_calibration.txt           # Cell-jet matching calibration
+│   └── multi_input_calibration.txt        # Multi-input model calibration 🆕
 ├── src/                       # Source code
 │   ├── __init__.py            # Source package initialization
 │   ├── data/                  # Data loading and processing
-│   ├── models/                # Model architectures (Transformer + DNN + Baseline-Guided)
+│   ├── models/                # Model architectures (Transformer + DNN + Multi-Input + Baseline-Guided)
 │   ├── training/              # Training utilities
 │   └── evaluation/            # Evaluation and visualization
 ├── scripts/                   # Main execution scripts
@@ -78,6 +79,20 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 - **Simplified Processing**: Global average pooling instead of complex attention
 - **Robust Performance**: Works even with imperfect baseline predictions
 
+### Multi-Input DNN/Transformer Models 🆕
+```
+Cells → Cell-level Processing → Pooling
+Jets → Jet-level Processing → Global Pool    } → Concat → Event-level MLP → Vertex Time
+Tracks → Track-level Processing → Global Pool
+Vertex Features → Dense Processing
+Attention Mask → Masking
+```
+- **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
+- **Event-Level Features**: Integrates jets (pt, eta, phi, width) and tracks (pt, eta, phi, d0, z0)
+- **Specialized Calibration**: Uses `multi_input_calibration.txt` for non jet/track-matching models
+- **Flexible Design**: Available in both DNN and Transformer variants
+- **Advanced Filtering**: Time quality cuts with specialized detector calibration
+
 ## Quick Start
 
 ### Training Models
@@ -92,6 +107,12 @@ python scripts/train.py --config-file config/configs/experiment_dnn.yaml
 # Train Baseline-Guided DNN model 🆕
 python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml
 
+# Train Multi-Input DNN model 🆕
+python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tracks.yaml
+
+# Train Multi-Input Transformer model 🆕
+python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml
+
 # Override parameters
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
@@ -99,11 +120,15 @@ python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epoch
 ### Evaluation (Auto-detects Model Type)
 
 ```bash
-# Evaluate any model - automatically detects Transformer/DNN/Baseline-Guided
+# Evaluate any model - automatically detects Transformer/DNN/Multi-Input/Baseline-Guided
 python scripts/evaluate.py --model-dir ../models/your_model --load-data
 
 # Evaluate baseline-guided model 🆕
 python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks --load-data
+
+# Evaluate multi-input models 🆕
+python scripts/evaluate.py --model-dir ../models/multi_input_dnn_with_jets_tracks --load-data
+python scripts/evaluate.py --model-dir ../models/multi_input_transformer_with_jets_tracks --load-data
 ```
 
 ### Optimized Parameter Sweeps ⚡
@@ -143,6 +168,10 @@ sbatch jobs/sweep_optimized.sh dnn_full 50
 
 # Quick comparison
 sbatch jobs/sweep_dnn_comparison.sh
+
+# Multi-input model training 🆕
+sbatch jobs/model_multi_input_dnn_nersc.sh
+sbatch jobs/model_multi_input_transformer_nersc.sh
 ```
 
 ## Key Features
@@ -249,6 +278,64 @@ use_cell_jet_matching: true
 calibration_data_file: "cell_jet_calibration.txt"
 ```
 
+### Multi-Input DNN Configuration 🆕
+```yaml
+model_name: "multi_input_dnn_with_jets_tracks"
+model_architecture: "multi_input_dnn"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Multi-input parameters
+max_jets: 7
+max_tracks: 30
+use_event_jets: true      # Event-level jet features
+use_event_tracks: true    # Event-level track features
+
+# Cell-level processing (same as DNN)
+cell_encoder_units: [128, 64, 32]
+use_attention_pooling: true
+attention_pooling_masked: true
+
+# Event-level processing
+event_encoder_units: [128, 64, 32, 16]
+event_dropout_rates: [0.2, 0.2, 0.1, 0.1]
+
+# Specialized calibration for no jet/track matching
+calibration_data_file: "multi_input_calibration.txt"
+
+# Jet and track features
+jet_features: ["pt", "eta", "phi", "width"]
+track_features: ["pt", "eta", "phi", "d0", "z0"]
+```
+
+### Multi-Input Transformer Configuration 🆕
+```yaml
+model_name: "multi_input_transformer_with_jets_tracks"
+model_architecture: "multi_input_transformer"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Multi-input parameters  
+max_jets: 7
+max_tracks: 30
+use_event_jets: true      # Event-level jet features
+use_event_tracks: true    # Event-level track features
+
+# Transformer architecture
+d_model: 128
+num_heads: 8
+num_layers: 4
+dff: 512
+dropout_rate: 0.1
+
+# Specialized calibration for no jet/track matching
+calibration_data_file: "multi_input_calibration.txt"
+
+# Jet and track features
+jet_features: ["pt", "eta", "phi", "width"]
+track_features: ["pt", "eta", "phi", "d0", "z0"]
+```
+
 ### Configuration Parameters
 
 | Parameter | Default | Description |
@@ -261,7 +348,11 @@ calibration_data_file: "cell_jet_calibration.txt"
 | `calibration_validation` | `false` | Generate calibration validation plots |
 | `use_baseline_method_filter` | `false` | Filter events by baseline method performance |
 | `baseline_method_threshold` | `500.0` | Baseline error threshold in ps (±500 ps default) |
-| `model_architecture` | `"two_stage_dnn"` | Model type: `transformer`, `two_stage_dnn`, `baseline_guided_dnn` |
+| `model_architecture` | `"two_stage_dnn"` | Model type: `transformer`, `two_stage_dnn`, `baseline_guided_dnn`, `multi_input_dnn`, `multi_input_transformer` |
+| `max_jets` | `7` | Maximum number of jets per event (multi-input models) |
+| `max_tracks` | `30` | Maximum number of tracks per event (multi-input models) |
+| `use_event_jets` | `false` | Enable event-level jet features (multi-input models) |
+| `use_event_tracks` | `false` | Enable event-level track features (multi-input models) |
 
 ## Parameter Sweep Types
 
@@ -307,10 +398,12 @@ Baseline analysis in `../../bad_events_check/baseline_analysis_YYYYMMDD_HHMMSS/`
 ## Examples
 
 ```bash
-# Train and compare all three models
+# Train and compare all model types
 python scripts/train.py --config-file config/configs/experiment_with_jets.yaml --model-name transformer_test
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --model-name dnn_test
 python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml --model-name baseline_guided_test
+python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tracks.yaml --model-name multi_input_dnn_test
+python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml --model-name multi_input_transformer_test
 
 # Run efficient parameter sweep  
 python scripts/parameter_sweep.py --config config/configs/experiment_dnn.yaml --grid comparison --max-exp 20
@@ -319,6 +412,8 @@ python scripts/parameter_sweep.py --config config/configs/experiment_dnn.yaml --
 python scripts/evaluate.py --model-dir ../models/transformer_test --load-data
 python scripts/evaluate.py --model-dir ../models/dnn_test --load-data
 python scripts/evaluate.py --model-dir ../models/baseline_guided_test --load-data
+python scripts/evaluate.py --model-dir ../models/multi_input_dnn_test --load-data
+python scripts/evaluate.py --model-dir ../models/multi_input_transformer_test --load-data
 
 # Analyze baseline reconstruction failures  🆕
 cd baseline_analysis

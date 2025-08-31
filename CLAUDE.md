@@ -35,17 +35,27 @@ python scripts/train.py --config-file config/configs/experiment_dnn.yaml
 # Train Baseline-Guided DNN model
 python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml
 
+# Train Multi-Input DNN model
+python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tracks.yaml
+
+# Train Multi-Input Transformer model
+python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml
+
 # Train with parameter overrides
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
 
 ### Running Evaluations
 ```bash
-# Evaluate any model (auto-detects Transformer/DNN/Baseline-Guided)
+# Evaluate any model (auto-detects Transformer/DNN/Multi-Input/Baseline-Guided)
 python scripts/evaluate.py --model-dir ../models/your_model --load-data
 
 # Evaluate baseline-guided model
 python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks --load-data
+
+# Evaluate multi-input models
+python scripts/evaluate.py --model-dir ../models/multi_input_dnn_with_jets_tracks --load-data
+python scripts/evaluate.py --model-dir ../models/multi_input_transformer_with_jets_tracks --load-data
 ```
 
 ### Parameter Sweeps
@@ -84,6 +94,8 @@ sbatch jobs/sweep_dnn_quick.sh
 sbatch jobs/model_dnn_nersc.sh
 sbatch jobs/model_nersc.sh
 sbatch jobs/model_baseline_guided_track_nersc.sh
+sbatch jobs/model_multi_input_dnn_nersc.sh
+sbatch jobs/model_multi_input_transformer_nersc.sh
 ```
 
 ### Testing
@@ -102,7 +114,7 @@ There is no dedicated test suite. Verification is done through:
 - **YAML Configs**: `config/configs/` - Experiment-specific settings
 
 ### Model Architecture
-Three main model types with advanced features:
+Five main model types with advanced features:
 
 #### Transformer Model (`src/models/transformer_model.py`)
 ```
@@ -133,15 +145,47 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 - **Robust to Baseline Quality**: Can handle imperfect baseline predictions through residual learning
 - **Configuration**: Use `model_architecture: "baseline_guided_dnn"` in config files
 
+#### Multi-Input DNN Model (`src/models/multi_input_dnn_model.py`)
+```
+Cells → Cell-level MLP → Masked Attention Pooling
+Jets → Jet-level MLP → Global Average Pooling        } → Concat → Event-level MLP → Vertex Time
+Tracks → Track-level MLP → Global Average Pooling
+Vertex Features → Dense Processing
+Attention Mask → Masking Support
+```
+- **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
+- **Event-Level Integration**: Processes jets (pt, eta, phi, width) and tracks (pt, eta, phi, d0, z0) separately
+- **Specialized Calibration**: Uses `multi_input_calibration.txt` for models without jet/track-matching
+- **Flexible Filtering**: Supports 1-7 jets and 1-30 tracks per event with smart padding
+- **Advanced Processing**: Combines cell attention pooling with jet/track global pooling
+- **Configuration**: Use `model_architecture: "multi_input_dnn"` in config files
+
+#### Multi-Input Transformer Model (`src/models/multi_input_transformer_model.py`)
+```
+Cells → Transformer Blocks → Masked Global Pooling
+Jets → Dense Processing → Global Average Pooling     } → Concat → Dense Layers → Vertex Time
+Tracks → Dense Processing → Global Average Pooling
+Vertex Features → Dense Processing
+Attention Mask → Transformer Masking
+```
+- **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
+- **Transformer Processing**: Applies transformer blocks to cell sequences with attention masking
+- **Event-Level Integration**: Jets and tracks processed through dense layers then global pooled
+- **Specialized Calibration**: Uses `multi_input_calibration.txt` for models without jet/track-matching
+- **Scalable Design**: Handles variable numbers of jets/tracks through padding and masking
+- **Configuration**: Use `model_architecture: "multi_input_transformer"` in config files
+
 ### Data Pipeline
 - **Data Loading**: `src/data/data_loader.py` - HDF5 file processing with cell filtering
+- **Multi-Input Loading**: `src/data/multi_input_data_loader.py` - Jets and tracks data processing
 - **Data Processing**: `src/data/data_processor.py` - Feature normalization, train/val/test splits
+- **Multi-Input Processing**: `src/data/multi_input_data_processor.py` - Jets/tracks normalization and dataset creation
 - **Smart Padding**: Feature-specific padding values instead of zeros
 
 ### Training Infrastructure
-- **Trainer**: `src/training/trainer.py` - Unified training loop for both model types
+- **Trainer**: `src/training/trainer.py` - Unified training loop for all model types
 - **Parameter Sweeps**: `scripts/parameter_sweep.py` - Optimized data caching and batch training
-- **Evaluation**: `src/evaluation/` - Performance analysis and visualization
+- **Evaluation**: `src/evaluation/` - Performance analysis and visualization with auto-detection
 
 ## Model Features
 
@@ -203,6 +247,8 @@ Choose model type via `model_architecture` parameter:
 - `"transformer"` - Use transformer_config.py
 - `"two_stage_dnn"` - Use dnn_config.py  
 - `"baseline_guided_dnn"` - Use dnn_config.py (baseline-guided variant)
+- `"multi_input_dnn"` - Use dnn_config.py (multi-input DNN variant)
+- `"multi_input_transformer"` - Use transformer_config.py (multi-input Transformer variant)
 
 ### Loss Functions
 - **MSE**: `loss_function: "mse"` (default)
@@ -213,6 +259,8 @@ Use descriptive model names that reflect configuration:
 - `transformer_with_jets` - Transformer with jet features
 - `dnn_with_jets` - DNN with jet matching
 - `baseline_guided_dnn_with_tracks` - Baseline-guided model with track features
+- `multi_input_dnn_with_jets_tracks` - Multi-input DNN with jets and tracks
+- `multi_input_transformer_with_jets_tracks` - Multi-input Transformer with jets and tracks
 - `baseline_test` - Quick testing configuration
 
 ## File Structure Notes
@@ -233,6 +281,7 @@ SLURM scripts in `jobs/` are configured for NERSC Perlmutter:
 External calibration files in `calibration_data/`:
 - `HStrackmatching_calibration.txt` - Cell-track calibration
 - `cell_jet_calibration.txt` - Cell-jet calibration
+- `multi_input_calibration.txt` - Multi-input model calibration (no jet/track matching)
 
 ### Baseline Analysis
 Standalone analysis tool in `baseline_analysis/`:
