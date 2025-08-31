@@ -352,7 +352,7 @@ def main():
             elif is_multi_input:
                 # Load multi-input data (cells, vertex, jets, tracks)
                 cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
-                    data_loader.load_multi_input_data_from_files()
+                    data_loader.load_data_from_files()
                 baseline_predictions = None
             else:
                 # Standard data loading
