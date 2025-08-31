@@ -375,21 +375,18 @@ class Visualizer:
         ax.set_ylim(0, ymax)
         ax.set_xlim(-2000, 2000)
         
-        # Add custom legend with statistics
+        # Add custom legend with statistics (inline format)
         blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
         red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
         
         legend_labels = [
             f"Events: N = {len(y_true):,}",
-            "Actual",
-            "Predicted", 
-            f"Actual: μ = {true_mean:.2f}, σ = {true_std:.2f} ps",
-            f"Predicted: μ = {pred_mean:.2f}, σ = {pred_std:.2f} ps"
+            f"Actual (μ = {true_mean:.2f}, σ = {true_std:.2f} ps)",
+            f"Predicted (μ = {pred_mean:.2f}, σ = {pred_std:.2f} ps)"
         ]
         
         # Add handles for legend
-        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, red_patch,
-                         plt.Rectangle((0,0),0,0,alpha=0.0), plt.Rectangle((0,0),0,0,alpha=0.0)]
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, red_patch]
         
         ax.legend(legend_handles, legend_labels, 
                  loc='upper left', fontsize=9, framealpha=0.9)
@@ -490,8 +487,8 @@ class Visualizer:
                                       p0=p0, sigma=fit_error, absolute_sigma=True)
                 ml_fit_mean, ml_fit_std = popt[1], abs(popt[2])
                 
-                # Plot fitted curve
-                x_fit = np.linspace(-fit_range, fit_range, 1000)
+                # Plot fitted curve extended to ±2000ps display range
+                x_fit = np.linspace(-2000, 2000, 1000)
                 y_fit = gaussian_func(x_fit, *popt)
                 ax.plot(x_fit, y_fit, 'b--', linewidth=2)
             else:
@@ -516,7 +513,7 @@ class Visualizer:
                                           p0=p0, sigma=fit_error, absolute_sigma=True)
                     baseline_fit_mean, baseline_fit_std = popt[1], abs(popt[2])
                     
-                    x_fit = np.linspace(-fit_range, fit_range, 1000)
+                    x_fit = np.linspace(-2000, 2000, 1000)
                     y_fit = gaussian_func(x_fit, *popt)
                     ax.plot(x_fit, y_fit, 'r--', linewidth=2)
                 else:

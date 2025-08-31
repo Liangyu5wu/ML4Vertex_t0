@@ -525,7 +525,7 @@ def plot_t0_distribution(traditional_t0: np.ndarray, config: SimpleConfig, save_
 
 def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_path: str, matching_type: str):
     """Plot t0 error distribution with Gaussian fit using compare_delta_t0.py style."""
-    # Set matplotlib parameters to match the reference style
+    # Set matplotlib parameters to match the reference style exactly
     import matplotlib as mpl
     mpl.rcParams['figure.dpi'] = 120
     mpl.rcParams['savefig.dpi'] = 300
@@ -545,76 +545,71 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Create histogram with bin width = 10, limited to ±2000 range
+    # Create histogram data with bin width = 10, limited to ±2000 range
     bins = np.arange(-2000, 2010, 10)
+    event_data, event_edges = np.histogram(t0_errors, bins=bins)
+    event_centers = (event_edges[:-1] + event_edges[1:]) / 2
     
-    # Plot histogram with stepfilled style to match reference
-    counts, bin_edges = np.histogram(t0_errors, bins=bins)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-    ax.hist(bin_centers, bins=bin_edges, weights=counts, 
+    # Plot histogram with stepfilled style exactly like reference
+    ax.hist(event_centers, bins=event_edges, weights=event_data, 
             histtype='stepfilled', color='#4682B4', edgecolor='blue', 
             linewidth=2, alpha=0.5)
     
-    # Calculate basic statistics
-    mean_all = np.mean(t0_errors)
-    std_all = np.std(t0_errors)
+    # Set up fitting range
+    fit_min = -120
+    fit_max = 120
     
-    # Gaussian fit on restricted range
-    fit_range = config.gaussian_fit_range
-    mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+    # Fit event time histogram exactly like reference
+    event_mask = (event_centers >= fit_min) & (event_centers <= fit_max)
     
-    if np.sum(mask) > 3:
-        fit_x = bin_centers[mask]
-        fit_y = counts[mask]
-        fit_error = np.sqrt(fit_y)
-        fit_error[fit_error == 0] = 1
+    event_x = event_centers[event_mask]
+    event_y = event_data[event_mask]
+    event_error = np.sqrt(event_y)
+    event_error[event_error == 0] = 1
+    
+    # Initial parameters for fit (amplitude, mean, sigma)
+    event_p0 = [np.max(event_y), 0, 100]
+    
+    try:
+        event_popt, event_pcov = curve_fit(gaussian_func, event_x, event_y, 
+                                          p0=event_p0, sigma=event_error, absolute_sigma=True)
+        event_perr = np.sqrt(np.diag(event_pcov))
         
-        try:
-            # Initial parameters for fit (amplitude, mean, sigma)
-            p0 = [np.max(fit_y), mean_all, std_all]
-            
-            popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
-                                  p0=p0, sigma=fit_error, absolute_sigma=True)
-            perr = np.sqrt(np.diag(pcov))
-            
-            fit_mean, fit_std = popt[1], abs(popt[2])
-            
-            # Plot fitted curve
-            x_fit = np.linspace(-fit_range, fit_range, 1000)
-            y_fit = gaussian_func(x_fit, *popt)
-            
-            ax.plot(x_fit, y_fit, 'b--', linewidth=2)
-            
-        except Exception:
-            fit_mean, fit_std = mean_all, std_all
-    else:
-        fit_mean, fit_std = mean_all, std_all
+        # Plot the fitted curve exactly like reference
+        x_fit = np.linspace(min(fit_min, event_centers.min()),
+                           max(fit_max, event_centers.max()), 1000)
+        
+        event_fit = gaussian_func(x_fit, *event_popt)
+        ax.plot(x_fit, event_fit, 'b--', linewidth=2)
+        
+    except Exception as e:
+        print(f"Error during fitting: {e}")
+        event_popt = [0, 0, 0]
+        event_perr = [0, 0, 0]
     
-    # Set axis labels and title
+    # Set axis labels and title exactly like reference
     ax.set_xlabel("Time [ps]", fontsize=12)
     ax.set_ylabel("Counts", fontsize=12)
     ax.set_title("Reco. t0", fontsize=14)
     
     # Increase y-axis by 10% to accommodate legend
-    ymax = np.max(counts) * 1.1
+    ymax = np.max(event_data) * 1.1
     ax.set_ylim(0, ymax)
     ax.set_xlim(-2000, 2000)
     
-    # Add custom legend with fit parameters
+    # Add custom legend with fit parameters exactly like reference
     blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
     blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
     
+    energy_cut = 1.0  # Default energy cut value
     legend_labels = [
-        f"Events: N = {len(t0_errors)}",
+        f"Cell energy > {energy_cut} GeV",
         "Delta t0",
-        f"Data: μ = {mean_all:.2f}, σ = {std_all:.2f} ps",
-        f"Fit: μ = {fit_mean:.2f}, σ = {fit_std:.2f} ps"
+        f"Delta t0: μ = {event_popt[1]:.2f} ± {event_perr[1]:.2f}, σ = {event_popt[2]:.2f} ± {event_perr[2]:.2f} ps"
     ]
     
-    # Add empty handle for the events count line
-    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, 
-                     plt.Rectangle((0,0),0,0,alpha=0.0), blue_line]
+    # Add handles exactly like reference
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, blue_line]
     
     ax.legend(legend_handles, legend_labels, 
              loc='upper left', fontsize=9, framealpha=0.9)
