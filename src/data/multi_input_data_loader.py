@@ -154,8 +154,15 @@ class MultiInputDataLoader:
                     # Process tracks  
                     track_sequence = self._process_event_tracks(tracks_data[i])
                     
-                    # Vertex features (not used but included for interface consistency)
-                    vertex_reco = [0.0, 0.0, 0.0]
+                    # Vertex features based on spatial features configuration
+                    if self.config.use_spatial_features:
+                        vertex_reco = [
+                            vertex_data[i]['HSvertex_reco_x'],
+                            vertex_data[i]['HSvertex_reco_y'],
+                            vertex_data[i]['HSvertex_reco_z']
+                        ]
+                    else:
+                        vertex_reco = [0.0, 0.0, 0.0]
                     vertex_time = vertex_data[i]['HSvertex_time']
                     
                     all_cell_sequences.append(cell_sequence)
