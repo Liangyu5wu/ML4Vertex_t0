@@ -104,6 +104,33 @@ class MultiInputDataProcessor(DataProcessor):
             (train_times, val_times, test_times)
         )
     
+    def _pad_sequences_with_masks(self, cell_sequences):
+        """
+        Pad cell sequences and create attention masks.
+        
+        Args:
+            cell_sequences: Variable-length cell sequences
+            
+        Returns:
+            Tuple of (padded_sequences, attention_masks)
+        """
+        if not cell_sequences:
+            return np.array([]), np.array([])
+        
+        # Find maximum sequence length
+        max_seq_len = max(len(seq) for seq in cell_sequences)
+        
+        # Feature dimension
+        feature_dim = len(self.config.cell_features)
+        
+        # Apply smart padding using parent class method
+        padded_cells = self.apply_smart_padding(cell_sequences, max_seq_len, feature_dim)
+        
+        # Create attention mask using parent class method
+        attention_masks = self.create_attention_mask(cell_sequences, max_seq_len)
+        
+        return padded_cells, attention_masks
+    
     def create_multi_input_dataset(self, cell_sequences, vertex_features, 
                                   jet_sequences, track_sequences, vertex_times, 
                                   shuffle=True):
