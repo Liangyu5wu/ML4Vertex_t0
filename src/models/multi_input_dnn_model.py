@@ -104,9 +104,9 @@ class MultiInputDNNModel:
         track_x = layers.Dropout(0.1, name='track_dropout_1')(track_x)
         track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
         
-        # Feature combination (not using vertex features as specified)
+        # Feature combination (including vertex features)
         combined = layers.Concatenate(name='combine_all_features')([
-            cell_representation, jet_representation, track_representation
+            cell_representation, vertex_inputs, jet_representation, track_representation
         ])
         
         # Event-level processing
