@@ -255,23 +255,40 @@ class Trainer:
         """
         print("Validating training datasets...")
         
+        # Get sample batch to detect dataset format
+        sample_batch = next(iter(train_dataset))
+        input_keys = list(sample_batch[0].keys())
+        
+        # Detect dataset format
+        if 'cell_inputs' in input_keys:
+            # Multi-input dataset format
+            cell_key = 'cell_inputs'
+            vertex_key = 'vertex_inputs'
+            is_multi_input = True
+            print("Detected multi-input dataset format")
+        else:
+            # Regular dataset format
+            cell_key = 'cell_sequence'
+            vertex_key = 'vertex_features'
+            is_multi_input = False
+            print("Detected regular dataset format")
+        
         # Count batches and samples
         train_batches = 0
         train_samples = 0
         for batch in train_dataset:
             train_batches += 1
-            train_samples += batch[0]['cell_sequence'].shape[0]
+            train_samples += batch[0][cell_key].shape[0]
         
         val_batches = 0
         val_samples = 0
         for batch in val_dataset:
             val_batches += 1
-            val_samples += batch[0]['cell_sequence'].shape[0]
+            val_samples += batch[0][cell_key].shape[0]
         
-        # Get sample batch to check shapes
-        sample_batch = next(iter(train_dataset))
-        cell_shape = sample_batch[0]['cell_sequence'].shape
-        vertex_shape = sample_batch[0]['vertex_features'].shape
+        # Get shapes from sample batch
+        cell_shape = sample_batch[0][cell_key].shape
+        vertex_shape = sample_batch[0][vertex_key].shape
         target_shape = sample_batch[1].shape
         
         stats = {
@@ -281,13 +298,28 @@ class Trainer:
             'val_samples': val_samples,
             'cell_sequence_shape': cell_shape,
             'vertex_features_shape': vertex_shape,
-            'target_shape': target_shape
+            'target_shape': target_shape,
+            'is_multi_input': is_multi_input
         }
         
         print(f"Training dataset: {train_batches} batches, {train_samples} samples")
         print(f"Validation dataset: {val_batches} batches, {val_samples} samples")
         print(f"Cell sequence shape: {cell_shape}")
         print(f"Vertex features shape: {vertex_shape}")
+        
+        if is_multi_input:
+            jet_shape = sample_batch[0]['jet_inputs'].shape
+            track_shape = sample_batch[0]['track_inputs'].shape
+            mask_shape = sample_batch[0]['attention_mask'].shape
+            print(f"Jet inputs shape: {jet_shape}")
+            print(f"Track inputs shape: {track_shape}")
+            print(f"Attention mask shape: {mask_shape}")
+            stats.update({
+                'jet_inputs_shape': jet_shape,
+                'track_inputs_shape': track_shape,
+                'attention_mask_shape': mask_shape
+            })
+            
         print(f"Target shape: {target_shape}")
         
         return stats
