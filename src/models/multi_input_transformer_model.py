@@ -52,8 +52,8 @@ class MultiInputTransformerModel:
         self.config.validate_config()
         
         # Input layers
-        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_sequence')
-        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
+        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_inputs')
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_inputs')
         jet_inputs = layers.Input(shape=(self.config.max_jets, jet_feature_dim), name='jet_inputs')
         track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
         mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
