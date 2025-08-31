@@ -46,17 +46,6 @@ class MaskedAttentionPooling(layers.Layer):
         
         return output
     
-    def compute_output_spec(self, input_spec, **kwargs):
-        """Compute output spec for shape inference."""
-        if isinstance(input_spec, tf.TensorSpec):
-            # Output shape: [batch_size, feature_dim]
-            output_shape = (input_spec.shape[0], input_spec.shape[-1])
-        else:
-            # Handle KerasTensor case
-            output_shape = (None, input_spec.shape[-1])
-        
-        return tf.TensorSpec(shape=output_shape, dtype=input_spec.dtype)
-    
     def compute_output_shape(self, input_shape):
         """Compute output shape for backward compatibility."""
         # Input shape: [batch_size, sequence_length, feature_dim]
