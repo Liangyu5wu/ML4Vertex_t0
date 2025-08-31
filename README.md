@@ -82,13 +82,14 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 ### Multi-Input DNN/Transformer Models 🆕
 ```
 Cells → Cell-level Processing → Pooling
-Jets → Jet-level Processing → Global Pool    } → Concat → Event-level MLP → Vertex Time
-Tracks → Track-level Processing → Global Pool
+Jets → Configurable Encoder → Global Pool    } → Concat → Event-level MLP → Vertex Time
+Tracks → Configurable Encoder → Global Pool
 Vertex Features → Dense Processing
 Attention Mask → Masking
 ```
 - **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
 - **Event-Level Features**: Integrates jets (pt, eta, phi, width) and tracks (pt, eta, phi, d0, z0)
+- **Configurable Encoders**: Jet/track encoder architecture fully configurable via YAML parameters
 - **Specialized Calibration**: Uses `multi_input_calibration.txt` for non jet/track-matching models
 - **Flexible Design**: Available in both DNN and Transformer variants
 - **Advanced Filtering**: Time quality cuts with specialized detector calibration
@@ -299,6 +300,18 @@ attention_pooling_masked: true
 # Event-level processing
 event_encoder_units: [128, 64, 32, 16]
 event_dropout_rates: [0.2, 0.2, 0.1, 0.1]
+
+# Configurable jet encoder parameters 🆕
+jet_encoder_units: [64, 32]        # Hidden layer sizes
+jet_dropout_rates: [0.1, 0.1]      # Dropout rates per layer
+jet_activation: "relu"              # Activation function
+jet_use_batch_norm: false           # Batch normalization
+
+# Configurable track encoder parameters 🆕
+track_encoder_units: [64, 32]      # Hidden layer sizes
+track_dropout_rates: [0.1, 0.1]    # Dropout rates per layer
+track_activation: "relu"            # Activation function
+track_use_batch_norm: false         # Batch normalization
 
 # Specialized calibration for no jet/track matching
 calibration_data_file: "multi_input_calibration.txt"

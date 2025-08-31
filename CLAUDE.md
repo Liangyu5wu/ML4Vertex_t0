@@ -148,13 +148,14 @@ Cells → Cell-level MLP → Global Average Pooling → Combine with Baseline �
 #### Multi-Input DNN Model (`src/models/multi_input_dnn_model.py`)
 ```
 Cells → Cell-level MLP → Masked Attention Pooling
-Jets → Jet-level MLP → Global Average Pooling        } → Concat → Event-level MLP → Vertex Time
-Tracks → Track-level MLP → Global Average Pooling
+Jets → Configurable MLP → Global Average Pooling        } → Concat → Event-level MLP → Vertex Time
+Tracks → Configurable MLP → Global Average Pooling
 Vertex Features → Dense Processing
 Attention Mask → Masking Support
 ```
 - **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
 - **Event-Level Integration**: Processes jets (pt, eta, phi, width) and tracks (pt, eta, phi, d0, z0) separately
+- **Configurable Encoders**: Jet/track encoder architecture fully configurable via YAML
 - **Specialized Calibration**: Uses `multi_input_calibration.txt` for models without jet/track-matching
 - **Flexible Filtering**: Supports 1-7 jets and 1-30 tracks per event with smart padding
 - **Advanced Processing**: Combines cell attention pooling with jet/track global pooling
@@ -226,6 +227,16 @@ Attention Mask → Transformer Masking
 - **Model Architecture**: Set `model_architecture: "baseline_guided_dnn"`
 - **Baseline Features**: Often combined with track matching for optimal performance
 - **Loss Functions**: Both MSE and Huber loss supported for residual learning
+
+### Multi-Input Model Features
+
+#### Configurable Encoder Architecture
+- **Jet Encoder Parameters**: `jet_encoder_units`, `jet_dropout_rates`, `jet_activation`, `jet_use_batch_norm`
+- **Track Encoder Parameters**: `track_encoder_units`, `track_dropout_rates`, `track_activation`, `track_use_batch_norm`
+- **Flexible Architecture**: Fully configurable hidden layer sizes and dropout rates
+- **Default Configuration**: [64, 32] units with [0.1, 0.1] dropout rates for both encoders
+- **Batch Normalization**: Optional batch normalization support for improved training stability
+- **Activation Functions**: Configurable activation functions (default: ReLU)
 
 ## Performance Optimization
 
