@@ -502,144 +502,166 @@ class DataProcessor:
         print(f"Using: {cal_label} | {filter_label}")
     
     def _plot_traditional_t0_distribution(self, traditional_t0: np.ndarray, save_dir: str):
-        """Plot traditional t0 distribution with Gaussian fit."""
-        plt.figure(figsize=(10, 6))
+        """Plot traditional t0 distribution using reference style (no fit)."""
+        # Set matplotlib parameters to match the reference style exactly
+        import matplotlib as mpl
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
         
         # Create histogram with bin width = 10, limited to ±2000 range
-        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
-        bin_width = bins[1] - bins[0]
+        bins = np.arange(-2000, 2010, 10)
         
-        # Plot histogram with correct label
-        counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', 
-                                       edgecolor='black', label='Data')
+        # Plot histogram with stepfilled style to match reference (no fit)
+        counts, bin_edges = np.histogram(traditional_t0, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        ax.hist(bin_centers, bins=bin_edges, weights=counts, 
+                histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+                linewidth=2, alpha=0.5)
         
         # Calculate basic statistics
         mean_all = np.mean(traditional_t0)
         std_all = np.std(traditional_t0)
         
-        # Improved Gaussian fit on restricted range
-        fit_range = self.config.gaussian_fit_range
-        mask = (traditional_t0 >= -fit_range) & (traditional_t0 <= fit_range)
-        if np.sum(mask) > 20:  # Need enough points for fitting
-            fit_data = traditional_t0[mask]
-            try:
-                # Use robust fitting approach
-                from scipy import stats
-                
-                # Remove extreme outliers for better fit
-                z_scores = np.abs(stats.zscore(fit_data))
-                clean_data = fit_data[z_scores < 3]
-                
-                if len(clean_data) > 10:
-                    fit_mean = np.mean(clean_data)
-                    fit_std = np.std(clean_data)
-                else:
-                    fit_mean = np.mean(fit_data)
-                    fit_std = np.std(fit_data)
-                
-                # Generate fitted curve properly scaled
-                x_fit = np.linspace(-fit_range, fit_range, 400)
-                # Scale to match histogram counts
-                scale_factor = len(fit_data) * bin_width / np.sqrt(2 * np.pi * fit_std**2)
-                y_fit = scale_factor * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
-                
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2, 
-                        label=f'Gaussian Fit (±{fit_range}ps): μ={fit_mean:.1f}, σ={fit_std:.1f}')
-                
-            except Exception as e:
-                print(f"Warning: Gaussian fit failed: {e}")
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
-        else:
-            fit_mean, fit_std = mean_all, std_all
+        # Set axis labels and title
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
         
-        # Get labels for title and annotation
-        cal_label, filter_label = self._get_display_labels()
+        # Increase y-axis by 10% to accommodate legend
+        ymax = np.max(counts) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
         
-        plt.xlabel('Traditional t0 [ps]')
-        plt.ylabel('Count')
-        plt.title(f'Traditional t0 Distribution\n{cal_label} | {filter_label}')
+        # Add custom legend with statistics (no fit curves)
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
         
-        # Create proper legend with data statistics in text box
-        stats_text = f'All Data:\nμ={mean_all:.1f}ps, σ={std_all:.1f}ps\nN={len(traditional_t0):,} events'
-        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
-                verticalalignment='top', fontsize=9,
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', alpha=0.8))
+        legend_labels = [
+            f"Events: N = {len(traditional_t0)}",
+            "Baseline method",
+            f"Data: μ = {mean_all:.2f}, σ = {std_all:.2f} ps"
+        ]
         
-        plt.legend(fontsize=9)
-        plt.grid(True, alpha=0.3)
-        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
+        # Add empty handle for the events count line
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch,
+                         plt.Rectangle((0,0),0,0,alpha=0.0)]
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 'traditional_t0_distribution.png'), dpi=300, bbox_inches='tight')
         plt.close()
     
     def _plot_t0_error_distribution(self, t0_errors: np.ndarray, save_dir: str):
-        """Plot t0 error distribution with Gaussian fit."""
-        plt.figure(figsize=(10, 6))
+        """Plot t0 error distribution using reference style."""
+        # Set matplotlib parameters to match the reference style exactly
+        import matplotlib as mpl
+        from scipy.optimize import curve_fit
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
         
-        # Create histogram with bin width = 10, limited to ±2000 range
-        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
-        bin_width = bins[1] - bins[0]
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Plot histogram with correct label
-        counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', 
-                                       edgecolor='black', label='Error Data')
+        # Create histogram data with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)
+        event_data, event_edges = np.histogram(t0_errors, bins=bins)
+        event_centers = (event_edges[:-1] + event_edges[1:]) / 2
         
-        # Calculate basic statistics
-        mean_all = np.mean(t0_errors)
-        std_all = np.std(t0_errors)
+        # Plot histogram with stepfilled style exactly like reference
+        ax.hist(event_centers, bins=event_edges, weights=event_data, 
+                histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+                linewidth=2, alpha=0.5)
         
-        # Improved Gaussian fit on restricted range
-        fit_range = self.config.gaussian_fit_range
-        mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
-        if np.sum(mask) > 20:  # Need enough points for fitting
-            fit_data = t0_errors[mask]
-            try:
-                # Use robust fitting approach
-                from scipy import stats
-                
-                # Remove extreme outliers for better fit
-                z_scores = np.abs(stats.zscore(fit_data))
-                clean_data = fit_data[z_scores < 3]
-                
-                if len(clean_data) > 10:
-                    fit_mean = np.mean(clean_data)
-                    fit_std = np.std(clean_data)
-                else:
-                    fit_mean = np.mean(fit_data)
-                    fit_std = np.std(fit_data)
-                
-                # Generate fitted curve properly scaled
-                x_fit = np.linspace(-fit_range, fit_range, 400)
-                # Scale to match histogram counts
-                scale_factor = len(fit_data) * bin_width / np.sqrt(2 * np.pi * fit_std**2)
-                y_fit = scale_factor * np.exp(-0.5 * ((x_fit - fit_mean) / fit_std) ** 2)
-                
-                plt.plot(x_fit, y_fit, 'r-', linewidth=2,
-                        label=f'Gaussian Fit (±{fit_range}ps): μ={fit_mean:.1f}, σ={fit_std:.1f}')
-                
-            except Exception as e:
-                print(f"Warning: Gaussian fit failed: {e}")
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
-        else:
-            fit_mean, fit_std = mean_all, std_all
+        # Set up fitting range
+        fit_min = -120
+        fit_max = 120
         
-        # Get labels for title
-        cal_label, filter_label = self._get_display_labels()
+        # Gaussian function for fitting
+        def gaussian_func(x, a, mu, sigma):
+            return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
         
-        plt.xlabel('Traditional t0 - True t0 [ps]')
-        plt.ylabel('Count')
-        plt.title(f'Traditional t0 Error Distribution\n{cal_label} | {filter_label}')
+        # Fit event time histogram exactly like reference
+        event_mask = (event_centers >= fit_min) & (event_centers <= fit_max)
         
-        # Create proper legend with data statistics in text box  
-        stats_text = f'All Error Data:\nμ={mean_all:.1f}ps, σ={std_all:.1f}ps\nN={len(t0_errors):,} events'
-        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
-                verticalalignment='top', fontsize=9,
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.8))
+        event_x = event_centers[event_mask]
+        event_y = event_data[event_mask]
+        event_error = np.sqrt(event_y)
+        event_error[event_error == 0] = 1
         
-        plt.legend(fontsize=9)
-        plt.grid(True, alpha=0.3)
-        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
+        # Initial parameters for fit (amplitude, mean, sigma)
+        event_p0 = [np.max(event_y), 0, 100]
+        
+        try:
+            event_popt, event_pcov = curve_fit(gaussian_func, event_x, event_y, 
+                                              p0=event_p0, sigma=event_error, absolute_sigma=True)
+            event_perr = np.sqrt(np.diag(event_pcov))
+            
+            # Plot the fitted curve exactly like reference with fixed ±2000ps range
+            x_fit = np.linspace(-2000, 2000, 1000)
+            
+            event_fit = gaussian_func(x_fit, *event_popt)
+            ax.plot(x_fit, event_fit, 'b--', linewidth=2)
+            
+        except Exception as e:
+            print(f"Error during fitting: {e}")
+            event_popt = [0, 0, 0]
+            event_perr = [0, 0, 0]
+        
+        # Set axis labels and title exactly like reference
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
+        
+        # Increase y-axis by 10% to accommodate legend
+        ymax = np.max(event_data) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
+        
+        # Add custom legend with fit parameters exactly like reference
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+        blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
+        
+        energy_cut = 1.0  # Default energy cut value
+        legend_labels = [
+            f"Cell energy > {energy_cut} GeV",
+            "Delta t0",
+            f"Delta t0: μ = {event_popt[1]:.2f} ± {event_perr[1]:.2f}, σ = {event_popt[2]:.2f} ± {event_perr[2]:.2f} ps"
+        ]
+        
+        # Add handles exactly like reference
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, blue_line]
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 't0_error_distribution.png'), dpi=300, bbox_inches='tight')

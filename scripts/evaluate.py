@@ -273,7 +273,7 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
         # processed data to avoid reprocessing
         print("Warning: --load-data not specified. You must provide processed data.")
         print("For now, will load and process data anyway...")
-        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=False)
+        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=is_multi_input)
 
 
 def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None, test_jets_norm=None, test_tracks_norm=None):

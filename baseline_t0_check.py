@@ -575,9 +575,8 @@ def plot_error_distribution(t0_errors: np.ndarray, config: SimpleConfig, save_pa
                                           p0=event_p0, sigma=event_error, absolute_sigma=True)
         event_perr = np.sqrt(np.diag(event_pcov))
         
-        # Plot the fitted curve exactly like reference
-        x_fit = np.linspace(min(fit_min, event_centers.min()),
-                           max(fit_max, event_centers.max()), 1000)
+        # Plot the fitted curve exactly like reference with fixed ±2000ps range
+        x_fit = np.linspace(-2000, 2000, 1000)
         
         event_fit = gaussian_func(x_fit, *event_popt)
         ax.plot(x_fit, event_fit, 'b--', linewidth=2)

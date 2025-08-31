@@ -75,20 +75,26 @@ class MultiInputTransformerModel:
         # Global pooling with mask support
         cell_representation = MaskedGlobalAveragePooling1D(name='masked_global_pool')(x, mask=mask_inputs)
         
-        # Jet processing
+        # Jet processing with configurable architecture
         jet_x = jet_inputs
-        jet_x = layers.Dense(64, activation='relu', name='jet_encoder_0')(jet_x)
-        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_0')(jet_x)
-        jet_x = layers.Dense(32, activation='relu', name='jet_encoder_1')(jet_x) 
-        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_1')(jet_x)
+        for i, (units, dropout_rate) in enumerate(zip(self.config.jet_encoder_units, self.config.jet_dropout_rates)):
+            jet_x = layers.Dense(units, activation=self.config.jet_activation, name=f'jet_encoder_{i}')(jet_x)
+            
+            if self.config.jet_use_batch_norm:
+                jet_x = layers.BatchNormalization(name=f'jet_bn_{i}')(jet_x)
+                
+            jet_x = layers.Dropout(dropout_rate, name=f'jet_dropout_{i}')(jet_x)
         jet_representation = layers.GlobalAveragePooling1D(name='jet_global_pool')(jet_x)
         
-        # Track processing
+        # Track processing with configurable architecture
         track_x = track_inputs
-        track_x = layers.Dense(64, activation='relu', name='track_encoder_0')(track_x)
-        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_0')(track_x)
-        track_x = layers.Dense(32, activation='relu', name='track_encoder_1')(track_x)
-        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_1')(track_x)
+        for i, (units, dropout_rate) in enumerate(zip(self.config.track_encoder_units, self.config.track_dropout_rates)):
+            track_x = layers.Dense(units, activation=self.config.track_activation, name=f'track_encoder_{i}')(track_x)
+            
+            if self.config.track_use_batch_norm:
+                track_x = layers.BatchNormalization(name=f'track_bn_{i}')(track_x)
+                
+            track_x = layers.Dropout(dropout_rate, name=f'track_dropout_{i}')(track_x)
         track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
         
         # Feature combination (including vertex features)

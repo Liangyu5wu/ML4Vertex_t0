@@ -120,3 +120,15 @@ track_padding_values:
   z0: -999.0
 
 skip_normalization: ["Cell_Barrel", "Cell_layer"]
+
+# NEW: Jet encoder parameters
+jet_encoder_units: [64, 32]
+jet_dropout_rates: [0.1, 0.1]
+jet_activation: "relu"
+jet_use_batch_norm: false
+
+# NEW: Track encoder parameters
+track_encoder_units: [64, 32] 
+track_dropout_rates: [0.1, 0.1]
+track_activation: "relu"
+track_use_batch_norm: false

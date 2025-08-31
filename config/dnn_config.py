@@ -43,6 +43,18 @@ class DNNConfig(BaseConfig):
     use_detector_params: bool = False
     calibration_data_file: str = "HStrackmatching_calibration.txt"
     
+    # Jet encoder parameters (for multi-input models)
+    jet_encoder_units: List[int] = None
+    jet_dropout_rates: List[float] = None
+    jet_activation: str = 'relu'
+    jet_use_batch_norm: bool = False
+    
+    # Track encoder parameters (for multi-input models)
+    track_encoder_units: List[int] = None
+    track_dropout_rates: List[float] = None
+    track_activation: str = 'relu'
+    track_use_batch_norm: bool = False
+    
     # Calibration validation parameters
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap
@@ -61,6 +73,18 @@ class DNNConfig(BaseConfig):
             
         if self.event_dropout_rates is None:
             self.event_dropout_rates = [0.3, 0.2, 0.1]
+        
+        # Initialize jet encoder defaults
+        if self.jet_encoder_units is None:
+            self.jet_encoder_units = [64, 32]
+        if self.jet_dropout_rates is None:
+            self.jet_dropout_rates = [0.1, 0.1]
+            
+        # Initialize track encoder defaults
+        if self.track_encoder_units is None:
+            self.track_encoder_units = [64, 32]
+        if self.track_dropout_rates is None:
+            self.track_dropout_rates = [0.1, 0.1]
     
     def validate_config(self):
         """Validate DNN-specific configuration."""
@@ -76,6 +100,23 @@ class DNNConfig(BaseConfig):
             "event_encoder_units and event_dropout_rates must have same length"
         assert all(0 <= rate < 1 for rate in self.event_dropout_rates), \
             "All dropout rates must be between 0 and 1"
+        
+        # Jet encoder validations (for multi-input models)
+        if hasattr(self, 'model_architecture') and 'multi_input' in getattr(self, 'model_architecture', ''):
+            assert len(self.jet_encoder_units) > 0, "jet_encoder_units cannot be empty for multi-input models"
+            assert all(units > 0 for units in self.jet_encoder_units), "All jet encoder units must be positive"
+            assert len(self.jet_encoder_units) == len(self.jet_dropout_rates), \
+                "jet_encoder_units and jet_dropout_rates must have same length"
+            assert all(0 <= rate < 1 for rate in self.jet_dropout_rates), \
+                "All jet dropout rates must be between 0 and 1"
+            
+            # Track encoder validations (for multi-input models)
+            assert len(self.track_encoder_units) > 0, "track_encoder_units cannot be empty for multi-input models"
+            assert all(units > 0 for units in self.track_encoder_units), "All track encoder units must be positive"
+            assert len(self.track_encoder_units) == len(self.track_dropout_rates), \
+                "track_encoder_units and track_dropout_rates must have same length"
+            assert all(0 <= rate < 1 for rate in self.track_dropout_rates), \
+                "All track dropout rates must be between 0 and 1"
         
         # Attention parameters
         assert self.attention_hidden_units > 0, "attention_hidden_units must be positive"
