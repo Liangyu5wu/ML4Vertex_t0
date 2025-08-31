@@ -119,11 +119,23 @@ def print_model_info(model, is_dnn_model):
         input_names = ["unknown"]
     
     model_type = "DNN" if is_dnn_model else "Transformer"
-    mask_enabled = "Mask-enabled" if num_inputs == 3 else "Traditional"
+    
+    if num_inputs == 2:
+        mask_type = "Traditional"
+    elif num_inputs == 3:
+        mask_type = "Mask-enabled"
+    elif num_inputs == 5:
+        mask_type = "Multi-input (jets+tracks)"
+    else:
+        mask_type = f"Unknown ({num_inputs} inputs)"
     
     print(f"\nModel Information:")
-    print(f"  Type: {model_type} ({mask_enabled})")
+    print(f"  Type: {model_type} ({mask_type})")
     print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
+    
+    # For multi-input models, show a warning about evaluation support
+    if num_inputs == 5:
+        print(f"  WARNING: Evaluation for multi-input models is not yet fully implemented!")
 
 
 def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False):

@@ -467,8 +467,12 @@ class BaseConfig:
             Dictionary with calibration parameters and sigma values
         """
         # Default calibration file for baseline calculations
-        if not hasattr(self, 'calibration_data_file'):
+        if not hasattr(self, 'calibration_data_file') or not self.calibration_data_file:
             self.calibration_data_file = "HStrackmatching_calibration.txt"
+        
+        # Check if calibration file name is empty or None
+        if not self.calibration_data_file or self.calibration_data_file.strip() == "":
+            raise FileNotFoundError("Calibration data file name is empty or not specified")
         
         calibration_path = os.path.join("calibration_data", self.calibration_data_file)
         

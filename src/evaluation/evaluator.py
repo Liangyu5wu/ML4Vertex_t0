@@ -21,15 +21,15 @@ class Evaluator:
         """
         self.config = config
         
-    def _detect_model_type(self, model: tf.keras.Model) -> bool:
+    def _detect_model_type(self, model: tf.keras.Model) -> str:
         """
-        Detect if model uses attention mask by checking input count.
+        Detect model type by checking input count.
         
         Args:
             model: Keras model to analyze
             
         Returns:
-            True if model uses attention mask, False otherwise
+            Model type: 'traditional', 'mask', or 'multi_input'
         """
         # Check number of inputs
         if hasattr(model, 'input'):
@@ -41,12 +41,25 @@ class Evaluator:
             # Fallback: check input spec
             num_inputs = len(model.input_spec) if hasattr(model, 'input_spec') and model.input_spec else 2
         
-        # Traditional model: [cell_sequence, vertex_features] = 2 inputs
-        # Mask model: [cell_sequence, vertex_features, attention_mask] = 3 inputs
-        uses_mask = (num_inputs == 3)
+        # Determine model type based on input count
+        if num_inputs == 2:
+            model_type = 'traditional'  # [cell_sequence, vertex_features]
+        elif num_inputs == 3:
+            model_type = 'mask'         # [cell_sequence, vertex_features, attention_mask] 
+        elif num_inputs == 5:
+            model_type = 'multi_input'  # [cell_sequence, vertex_features, jets, tracks, attention_mask]
+        else:
+            # Default to traditional for unknown types
+            model_type = 'traditional'
+            print(f"Warning: Unknown model type with {num_inputs} inputs, defaulting to traditional")
         
-        print(f"Model detected: {'Mask-enabled' if uses_mask else 'Traditional'} ({num_inputs} inputs)")
-        return uses_mask
+        type_names = {
+            'traditional': 'Traditional',
+            'mask': 'Mask-enabled', 
+            'multi_input': 'Multi-input (jets+tracks)'
+        }
+        print(f"Model detected: {type_names.get(model_type, 'Unknown')} ({num_inputs} inputs)")
+        return model_type
         
     def evaluate_model(
         self,
@@ -106,13 +119,17 @@ class Evaluator:
         print("Making predictions on test data...")
         
         # Detect model type
-        uses_mask = self._detect_model_type(model)
+        model_type = self._detect_model_type(model)
         
         # Make predictions in batches using appropriate method
         y_pred_list = []
         y_true_list = []
         
-        if uses_mask:
+        if model_type == 'multi_input':
+            print("Using multi-input prediction batches...")
+            # For multi-input models, we need different data loading
+            raise NotImplementedError("Multi-input model evaluation not yet implemented")
+        elif model_type == 'mask':
             print("Using mask-enabled prediction batches...")
             batch_iterator = data_processor.create_prediction_batches_with_mask(
                 cell_sequences, vertex_features, vertex_times
@@ -163,9 +180,13 @@ class Evaluator:
             Test dataset compatible with the model
         """
         # Detect model type
-        uses_mask = self._detect_model_type(model)
+        model_type = self._detect_model_type(model)
         
-        if uses_mask:
+        if model_type == 'multi_input':
+            print("Creating multi-input test dataset...")
+            # For multi-input models, we need different data loading
+            raise NotImplementedError("Multi-input model evaluation not yet implemented")
+        elif model_type == 'mask':
             print("Creating test dataset with mask support...")
             return data_processor.create_padded_dataset_with_mask(
                 cell_sequences, vertex_features, vertex_times, shuffle=False
