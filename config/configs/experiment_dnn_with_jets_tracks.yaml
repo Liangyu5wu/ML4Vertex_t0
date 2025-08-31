@@ -9,7 +9,7 @@ huber_delta: 100.0
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
 num_files: 43
-max_cells: 40
+max_cells: 60
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
@@ -68,7 +68,7 @@ attention_hidden_units: 32
 
 # Event-level processing parameters
 event_encoder_units: [128, 64, 32, 16]
-event_dropout_rates: [0.2, 0.2, 0.1, 0.1]
+event_dropout_rates: [0.2, 0.1, 0.1, 0.1]
 use_batch_norm: true
 
 # Training parameters
@@ -125,10 +125,10 @@ skip_normalization: ["Cell_Barrel", "Cell_layer"]
 jet_encoder_units: [64, 32]
 jet_dropout_rates: [0.1, 0.1]
 jet_activation: "relu"
-jet_use_batch_norm: false
+jet_use_batch_norm: true
 
 # NEW: Track encoder parameters
 track_encoder_units: [64, 32] 
 track_dropout_rates: [0.1, 0.1]
 track_activation: "relu"
-track_use_batch_norm: false
+track_use_batch_norm: true
