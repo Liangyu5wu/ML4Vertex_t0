@@ -95,6 +95,7 @@ class BaseConfig:
     # Model save parameters - Updated to use external directories
     models_base_dir: str = None  # Will be set in __post_init__
     model_name: str = "base_model"
+    model_architecture: str = "transformer"  # Default to transformer
     
     # Feature definitions
     spatial_features: List[str] = None

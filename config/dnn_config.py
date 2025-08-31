@@ -36,6 +36,9 @@ class DNNConfig(BaseConfig):
     loss_function: str = 'mse'
     huber_delta: float = 1.0
     
+    # Model architecture override
+    model_architecture: str = 'two_stage_dnn'  # Default to two-stage DNN
+    
     # Detector calibration parameters
     use_detector_params: bool = False
     calibration_data_file: str = "HStrackmatching_calibration.txt"
