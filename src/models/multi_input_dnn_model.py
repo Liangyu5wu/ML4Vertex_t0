@@ -186,56 +186,7 @@ class MultiInputDNNModel:
         custom_objects = get_common_custom_objects()
         custom_objects['MaskedAttentionPooling'] = MaskedAttentionPooling
         
-        try:
-            # First, try normal loading
-            return load_model_with_fallback(filepath, custom_objects)
-        except ValueError as e:
-            if "`inputs` not connected to `outputs`" in str(e):
-                print("Model architecture is corrupted. Attempting to rebuild from config and load weights...")
-                # Try to rebuild model from config file in the same directory
-                import os
-                model_dir = os.path.dirname(filepath)
-                config_path = os.path.join(model_dir, "config.yaml")
-                
-                if os.path.exists(config_path):
-                    try:
-                        # Load config
-                        from config.dnn_config import DNNConfig
-                        config = DNNConfig.load_config(model_dir)
-                        
-                        # Rebuild model
-                        model_builder = MultiInputDNNModel(config)
-                        
-                        # We need dummy data to build the model properly
-                        # Create dummy inputs matching expected shapes
-                        import numpy as np
-                        dummy_cells = np.random.random((1, config.max_cells, len(config.cell_features)))
-                        dummy_vertex = np.random.random((1, 3))  # Assuming 3 vertex features
-                        dummy_jets = np.random.random((1, config.max_jets, 4))
-                        dummy_tracks = np.random.random((1, config.max_tracks, 5))
-                        dummy_mask = np.ones((1, config.max_cells))
-                        
-                        rebuilt_model = model_builder.build_model(
-                            feature_dim=len(config.cell_features),
-                            vertex_dim=3,
-                            jet_feature_dim=4,
-                            track_feature_dim=5
-                        )
-                        
-                        # Try to load weights only
-                        print("Loading weights into rebuilt model...")
-                        rebuilt_model.load_weights(filepath)
-                        print("Successfully loaded weights into rebuilt model")
-                        return rebuilt_model
-                        
-                    except Exception as rebuild_error:
-                        print(f"Failed to rebuild model: {rebuild_error}")
-                        raise e
-                else:
-                    print("No config file found for model rebuilding")
-                    raise e
-            else:
-                raise e
+        return load_model_with_fallback(filepath, custom_objects)
     
     def get_model_summary(self) -> str:
         if self.model is None:
