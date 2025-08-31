@@ -118,9 +118,12 @@ def load_config_and_model(model_dir):
             keras_model = TransformerModel.load_model(model_path)
         print(f"Loaded model from: {model_path}")
         
-        # Display model type information
+        # Display model type information and get corrected multi-input status
         is_dnn_model = is_baseline_guided or (hasattr(config, 'model_architecture') and 'dnn' in getattr(config, 'model_architecture', ''))
-        print_model_info(keras_model, is_dnn_model, is_multi_input)
+        actual_is_multi_input = print_model_info(keras_model, is_dnn_model, is_multi_input)
+        
+        # Use the corrected multi-input status
+        is_multi_input = actual_is_multi_input
         
         return config, keras_model, is_baseline_guided, is_multi_input
         
@@ -130,7 +133,7 @@ def load_config_and_model(model_dir):
 
 
 def print_model_info(model, is_dnn_model, is_multi_input=False):
-    """Print information about the loaded model."""
+    """Print information about the loaded model and return corrected multi-input status."""
     # Detect model type
     if hasattr(model, 'input'):
         if isinstance(model.input, list):
@@ -145,16 +148,27 @@ def print_model_info(model, is_dnn_model, is_multi_input=False):
     
     model_type = "DNN" if is_dnn_model else "Transformer"
     
-    if is_multi_input:
+    # Check if the model is actually a multi-input model based on actual inputs
+    actual_is_multi_input = is_multi_input and num_inputs == 5
+    
+    if actual_is_multi_input:
         model_subtype = "Multi-input (jets+tracks)"
     elif num_inputs == 3:
         model_subtype = "Mask-enabled"
+        # Override multi-input flag if model only has 3 inputs
+        actual_is_multi_input = False
     else:
         model_subtype = "Traditional"
+        actual_is_multi_input = False
     
     print(f"\nModel Information:")
     print(f"  Type: {model_type} ({model_subtype})")
     print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
+    
+    if is_multi_input and not actual_is_multi_input:
+        print(f"  Note: Model was configured as multi-input but only has {num_inputs} inputs. Treating as {model_subtype.lower()}.")
+    
+    return actual_is_multi_input
 
 
 def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False, is_multi_input=False):
