@@ -60,6 +60,7 @@ def load_model_with_fallback(filepath: str, custom_objects: Dict[str, Any] = Non
     if custom_objects is None:
         custom_objects = get_common_custom_objects()
     
+    # First try: Load with compilation intact
     try:
         model = models.load_model(filepath, custom_objects=custom_objects)
         print(f"Model loaded successfully with compilation intact.")
@@ -67,7 +68,7 @@ def load_model_with_fallback(filepath: str, custom_objects: Dict[str, Any] = Non
     except Exception as e:
         print(f"Error loading model from {filepath}: {e}")
         
-        # Try alternative loading method for .h5 files
+        # Second try: Load without compilation for .h5 files
         if filepath.endswith('.h5'):
             print("Attempting alternative loading method for .h5 file...")
             try:
@@ -85,7 +86,31 @@ def load_model_with_fallback(filepath: str, custom_objects: Dict[str, Any] = Non
                 return model
             except Exception as e2:
                 print(f"Alternative loading method also failed: {e2}")
-                raise e2
+                
+                # Third try: More aggressive fallback with minimal custom objects
+                print("Attempting minimal custom objects loading...")
+                try:
+                    minimal_custom_objects = {
+                        'root_mean_squared_error': root_mean_squared_error,
+                        'mse': tf.keras.losses.MeanSquaredError(),
+                        'mae': tf.keras.metrics.MeanAbsoluteError(),
+                    }
+                    minimal_custom_objects.update(custom_objects)
+                    
+                    model = tf.keras.models.load_model(filepath, custom_objects=minimal_custom_objects, compile=False)
+                    print("Model loaded with minimal custom objects. Re-compiling...")
+                    
+                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+                    model.compile(
+                        optimizer=optimizer,
+                        loss='mse',
+                        metrics=['mae']  # Simplified metrics
+                    )
+                    print("Model re-compiled with minimal configuration.")
+                    return model
+                except Exception as e3:
+                    print(f"All loading methods failed: {e3}")
+                    raise e3
         else:
             raise e
 

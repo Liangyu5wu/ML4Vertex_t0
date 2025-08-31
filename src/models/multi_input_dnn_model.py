@@ -26,15 +26,42 @@ class MaskedAttentionPooling(layers.Layer):
         attention_scores = self.attention_net(inputs)
         
         if mask is not None:
-            mask = tf.cast(mask, tf.float32)
-            mask = tf.expand_dims(mask, axis=-1)
-            attention_scores += (1.0 - mask) * -1e9
+            # Handle both tensor and string mask inputs for backward compatibility
+            if isinstance(mask, (list, tuple)) and len(mask) > 0 and isinstance(mask[0], str):
+                # Skip invalid string mask data from saved models
+                print("Warning: Ignoring invalid string mask data in MaskedAttentionPooling")
+                mask = None
+            else:
+                try:
+                    mask = tf.cast(mask, tf.float32)
+                    mask = tf.expand_dims(mask, axis=-1)
+                    attention_scores += (1.0 - mask) * -1e9
+                except (TypeError, ValueError) as e:
+                    print(f"Warning: Could not process mask in MaskedAttentionPooling: {e}")
+                    mask = None
         
         attention_weights = tf.nn.softmax(attention_scores, axis=1)
         weighted_inputs = inputs * attention_weights
         output = tf.reduce_sum(weighted_inputs, axis=1)
         
         return output
+    
+    def compute_output_spec(self, input_spec, **kwargs):
+        """Compute output spec for shape inference."""
+        if isinstance(input_spec, tf.TensorSpec):
+            # Output shape: [batch_size, feature_dim]
+            output_shape = (input_spec.shape[0], input_spec.shape[-1])
+        else:
+            # Handle KerasTensor case
+            output_shape = (None, input_spec.shape[-1])
+        
+        return tf.TensorSpec(shape=output_shape, dtype=input_spec.dtype)
+    
+    def compute_output_shape(self, input_shape):
+        """Compute output shape for backward compatibility."""
+        # Input shape: [batch_size, sequence_length, feature_dim]
+        # Output shape: [batch_size, feature_dim]
+        return (input_shape[0], input_shape[-1])
     
     def get_config(self):
         config = super().get_config()
