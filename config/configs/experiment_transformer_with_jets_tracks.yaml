@@ -51,7 +51,7 @@ calibration_data_file: "multi_input_calibration.txt"
 use_attention_mask: true            # Use attention mask for padding
 
 # Data split parameters
-test_size: 0.1
+test_size: 0.2
 val_split: 0.222222
 random_state: 42
 

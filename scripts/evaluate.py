@@ -328,7 +328,40 @@ def main():
         if is_multi_input:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm = \
                 load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input)
-            test_baselines = None
+            
+            # Calculate baseline method predictions for plotting comparison
+            print("Calculating baseline method predictions for plotting comparison...")
+            try:
+                # Load original cell sequences for baseline calculation
+                from src.data.multi_input_data_loader import MultiInputDataLoader
+                temp_data_loader = MultiInputDataLoader(config)
+                # We need to get the original (before normalization) cell sequences
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
+                    temp_data_loader.load_data_from_files()
+                
+                # Split data to get test portion (matching the same split as normalized data)
+                from sklearn.model_selection import train_test_split
+                indices = np.arange(len(vertex_times))
+                train_indices, temp_indices = train_test_split(
+                    indices, test_size=config.test_size, random_state=config.random_state
+                )
+                val_indices, test_indices = train_test_split(
+                    temp_indices, test_size=config.val_split, random_state=config.random_state
+                )
+                
+                test_cell_sequences_orig = [cell_sequences[i] for i in test_indices]
+                test_vertex_times_orig = vertex_times[test_indices]
+                
+                # Calculate baseline predictions using original sequences
+                test_baselines = temp_data_loader.calculate_baseline_method_predictions(
+                    test_cell_sequences_orig, test_vertex_times_orig
+                )
+                print(f"Calculated baseline predictions for {len(test_baselines)} test events")
+                
+            except Exception as e:
+                print(f"Warning: Could not calculate baseline method predictions: {e}")
+                print("Error distribution plot will not include baseline method comparison")
+                test_baselines = None
         elif is_baseline_guided:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines = \
                 load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input)

@@ -52,7 +52,7 @@ use_attention_mask: true            # Use attention mask for padding
 use_physics_informed_features: false
 
 # Data split parameters
-test_size: 0.1
+test_size: 0.2
 val_split: 0.222222
 random_state: 42
 

@@ -265,3 +265,122 @@ class MultiInputDataLoader:
             track_sequence.append(padding_values)
         
         return track_sequence
+    
+    def calculate_baseline_method_predictions(self, cell_sequences: List, vertex_times: np.ndarray) -> np.ndarray:
+        """
+        Calculate baseline method predictions using sigma-weighted averaging.
+        
+        Args:
+            cell_sequences: List of cell sequences for each event
+            vertex_times: True vertex times (for logging only)
+            
+        Returns:
+            Array of baseline method predictions
+        """
+        print("Calculating baseline method predictions for multi-input model...")
+        
+        # Load calibration data 
+        calibration_file = getattr(self.config, 'calibration_data_file', 'multi_input_calibration.txt')
+        calibration_data = self._load_calibration_data(calibration_file)
+        
+        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
+        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+        
+        # Sigma lookup tables - using 1-based layer indexing
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
+        }
+        
+        # Parameter lookup for calibration - using 1-based layer indexing
+        param_lookup = {
+            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
+            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
+            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
+            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
+            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
+            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
+        }
+        
+        baseline_predictions = []
+        
+        for event_idx, sequence in enumerate(cell_sequences):
+            weighted_sum = 0.0
+            weight_sum = 0.0
+            
+            for cell_features in sequence:
+                # Extract cell properties - assuming standard order
+                # [eta, phi, barrel, layer, time_TOF_corrected, energy, significance]
+                if len(cell_features) >= 6:
+                    time_tof = cell_features[4]  # Cell_time_TOF_corrected
+                    energy = cell_features[5]    # Cell_e
+                    barrel = int(cell_features[2])  # Cell_Barrel
+                    layer = int(cell_features[3])   # Cell_layer
+                else:
+                    continue  # Skip malformed cells
+                
+                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                energy_bin_idx = self._get_energy_bin_index(energy, energy_bins)
+                calibration_value = detector_params[energy_bin_idx]
+                calibrated_time = time_tof - calibration_value
+                
+                # Get sigma for this cell
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * calibrated_time
+                weight_sum += weight
+            
+            if weight_sum > 0:
+                baseline_t0 = weighted_sum / weight_sum
+            else:
+                baseline_t0 = 0.0
+            
+            baseline_predictions.append(baseline_t0)
+        
+        baseline_predictions = np.array(baseline_predictions)
+        print(f"Baseline method predictions calculated for {len(baseline_predictions)} events")
+        
+        return baseline_predictions
+    
+    def _load_calibration_data(self, calibration_file: str) -> dict:
+        """Load calibration data from external file."""
+        from pathlib import Path
+        calibration_path = Path("calibration_data") / calibration_file
+        
+        if not calibration_path.exists():
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        print(f"Loaded calibration data from: {calibration_path}")
+        return calibration_data
+    
+    def _get_energy_bin_index(self, energy: float, energy_bins: list) -> int:
+        """Get energy bin index for calibration parameter lookup."""
+        if energy < 1.0:
+            return 0  # Use first bin for energies < 1 GeV
+        
+        for i in range(len(energy_bins) - 1):
+            if energy_bins[i] <= energy < energy_bins[i + 1]:
+                return i
+        
+        return len(energy_bins) - 2  # Last bin for energies >= 10 GeV
