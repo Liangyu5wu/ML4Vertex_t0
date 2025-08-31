@@ -12,7 +12,12 @@
       "Read(/Users/liangyu5/Desktop/models/**)",
       "Read(/Users/liangyu5/Desktop/**)",
       "Bash(mkdir:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(source:*)",
+      "Bash(uv venv:*)",
+      "Bash(uv pip install:*)",
+      "Bash(git checkout:*)",
+      "Read(/Users/liangyu5/Desktop/models/**)"
     ],
     "deny": [],
     "ask": []

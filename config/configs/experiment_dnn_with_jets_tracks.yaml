@@ -1,8 +1,8 @@
-# Two-stage DNN experimental configuration with jets and tracks features
-model_name: "dnn_with_jets_tracks"
+# Multi-input DNN experimental configuration with jets and tracks features
+model_name: "multi_input_dnn_with_jets_tracks"
 
 # Model architecture specification
-model_architecture: "two_stage_dnn"
+model_architecture: "multi_input_dnn"
 loss_function: "huber"
 huber_delta: 100.0
 

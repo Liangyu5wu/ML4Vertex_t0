@@ -1,8 +1,8 @@
-# Transformer experimental configuration with jets and tracks features
-model_name: "transformer_with_jets_tracks"
+# Multi-input Transformer experimental configuration with jets and tracks features
+model_name: "multi_input_transformer_with_jets_tracks"
 
 # Model architecture specification
-model_architecture: "transformer"
+model_architecture: "multi_input_transformer"
 loss_function: "huber"
 huber_delta: 100.0
 
