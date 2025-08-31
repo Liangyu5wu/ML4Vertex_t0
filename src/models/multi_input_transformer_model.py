@@ -63,7 +63,7 @@ class MultiInputTransformerModel:
         x = PositionalEncoding(max_position=self.config.max_position_encoding, d_model=self.config.d_model)(x)
         
         # Apply transformer blocks
-        for i in range(self.config.num_layers):
+        for i in range(self.config.num_transformer_blocks):
             x = TransformerBlock(
                 d_model=self.config.d_model,
                 num_heads=self.config.num_heads,
