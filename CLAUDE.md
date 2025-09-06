@@ -180,13 +180,14 @@ Attention Mask → Masking Support
 #### Multi-Input Transformer Model (`src/models/multi_input_transformer_model.py`)
 **Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `mask_inputs` (N)
 ```
-Cells → Transformer Blocks → Masked Global Pooling
+Cells → Dense Projection → Transformer Blocks → Masked Global Pooling
 Jets → Dense Processing → Global Average Pooling     } → Concat → Dense Layers → Vertex Time
 Tracks → Dense Processing → Global Average Pooling
 Vertex Features → Dense Processing
 Attention Mask → Transformer Masking
 ```
 - **Five-Input Architecture**: Cell sequences + Vertex features + Jets + Tracks + Attention mask
+- **No Positional Encoding**: Relies purely on self-attention without position information
 - **Transformer Processing**: Applies transformer blocks to cell sequences with attention masking
 - **Event-Level Integration**: Jets and tracks processed through dense layers then global pooled
 - **Specialized Calibration**: Uses `multi_input_calibration.txt` for models without jet/track-matching
@@ -218,6 +219,22 @@ Attention Mask → Transformer Masking
 - **Track matching**: `use_cell_track_matching: true`
 - **Jet matching**: `use_cell_jet_matching: true` 
 - **Time quality cuts**: `use_time_quality_cut: true`
+
+### Advanced Filtering Features
+
+#### Time Quality Cut System
+- **Two modes available**:
+  - `use_detector_params: true` - Full detector calibration + time cut
+  - `use_detector_params: false` - Time cut without calibration (raw cell times)
+- **Both modes use**: σ_total = √(σ_vertex² + σ_cell²) for precise uncertainty calculation
+- **Configuration**: `vertex_time_sigma: 175.0`, `time_quality_n_sigma: 3.0`
+- **Benefits**: Removes poor quality cells while preserving data integrity
+
+#### Track Eta Cut (Multi-Input Models)
+- **Purpose**: Filter tracks by pseudorapidity for detector acceptance
+- **Configuration**: `use_track_eta_cut: true`, `track_eta_cut_value: 2.5`
+- **Implementation**: Applied during track processing before model input
+- **Usage**: Only affects multi-input models with track data
 
 ### Feature Selection
 - **Spatial features**: Cell position information

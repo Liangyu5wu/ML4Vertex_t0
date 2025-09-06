@@ -49,6 +49,10 @@ class BaseConfig:
     max_tracks: int = 30
     min_tracks: int = 1
     
+    # NEW: Track eta cut parameters
+    use_track_eta_cut: bool = False
+    track_eta_cut_value: float = 2.5
+    
     # Feature selection parameters
     use_spatial_features: bool = False
     use_track_features: bool = True   # NEW: Include track matching features
@@ -66,8 +70,11 @@ class BaseConfig:
     
     # Time quality cut parameters
     use_time_quality_cut: bool = False      # Enable time-based quality filtering
-    vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ns]
+    vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ps]
     time_quality_n_sigma: float = 3.0       # N-sigma cut threshold
+    
+    # Detector calibration parameters
+    use_detector_params: bool = False       # Enable detector calibration (subtract mean from cell time)
     
     # Baseline method filtering parameters
     use_baseline_method_filter: bool = False # Enable baseline method performance filtering
@@ -509,7 +516,28 @@ class BaseConfig:
         if self.use_time_quality_cut:
             assert self.vertex_time_sigma > 0, "vertex_time_sigma must be positive"
             assert self.time_quality_n_sigma > 0, "time_quality_n_sigma must be positive"
-            print(f"Note: Time quality cut enabled. σ_vertex={self.vertex_time_sigma} ns, {self.time_quality_n_sigma}σ cut")
+            if self.use_detector_params:
+                print(f"Note: Time quality cut WITH detector calibration.")
+                print(f"      Cell times are calibrated (subtract detector means), then cut with σ_total = √(σ_vertex² + σ_cell²)")
+            else:
+                print(f"Note: Time quality cut WITHOUT detector calibration.")
+                print(f"      Cell times are NOT calibrated (raw times used), but cut with σ_total = √(σ_vertex² + σ_cell²)")
+            print(f"      σ_vertex={self.vertex_time_sigma} ps, {self.time_quality_n_sigma}σ cut")
+        
+        # Detector calibration validation  
+        if self.use_detector_params:
+            print("Note: Detector calibration enabled (cell times will be adjusted by detector parameters)")
+            # Try to load calibration data to ensure it's available
+            try:
+                self.load_calibration_data()
+                print("✓ Calibration data successfully loaded")
+            except Exception as e:
+                print(f"Warning: Could not load calibration data: {e}")
+        
+        # Track eta cut validations
+        if self.use_track_eta_cut:
+            assert self.track_eta_cut_value > 0, "track_eta_cut_value must be positive"
+            print(f"Note: Track eta cut enabled. |eta| <= {self.track_eta_cut_value}")
         
         # Baseline method filter validations
         if self.use_baseline_method_filter:

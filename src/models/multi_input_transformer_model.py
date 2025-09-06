@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 from typing import Dict, Any
 
-from .transformer_layers import PositionalEncoding, MultiHeadSelfAttention, TransformerBlock
+from .transformer_layers import MultiHeadSelfAttention, TransformerBlock
 from .model_utils import (
     root_mean_squared_error, get_loss_function, get_standard_metrics,
     get_common_custom_objects, load_model_with_fallback, get_model_summary_string,
@@ -58,9 +58,8 @@ class MultiInputTransformerModel:
         track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
         mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
         
-        # Cell processing with transformer
+        # Cell processing with transformer (without positional encoding)
         x = layers.Dense(self.config.d_model, activation='linear', name='input_projection')(cell_inputs)
-        x = PositionalEncoding(max_position=self.config.max_position, d_model=self.config.d_model)(x)
         
         # Apply transformer blocks
         for i in range(self.config.num_transformer_blocks):
@@ -157,7 +156,6 @@ class MultiInputTransformerModel:
     def load_model(filepath: str) -> tf.keras.Model:
         custom_objects = get_common_custom_objects()
         custom_objects['MaskedGlobalAveragePooling1D'] = MaskedGlobalAveragePooling1D
-        custom_objects['PositionalEncoding'] = PositionalEncoding
         custom_objects['MultiHeadSelfAttention'] = MultiHeadSelfAttention
         custom_objects['TransformerBlock'] = TransformerBlock
         

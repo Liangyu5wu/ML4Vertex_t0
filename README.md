@@ -355,12 +355,18 @@ max_tracks: 30
 use_event_jets: true      # Event-level jet features
 use_event_tracks: true    # Event-level track features
 
-# Transformer architecture
+# Transformer architecture (no positional encoding)
 d_model: 128
 num_heads: 8
 num_layers: 4
 dff: 512
 dropout_rate: 0.1
+
+# Advanced filtering options
+use_track_eta_cut: false        # Filter tracks by eta
+track_eta_cut_value: 2.5        # |eta| <= value
+use_time_quality_cut: true      # Time-based quality filtering
+use_detector_params: false      # Raw times vs calibrated times
 
 # Specialized calibration for no jet/track matching
 calibration_data_file: "multi_input_calibration.txt"
@@ -379,6 +385,9 @@ track_features: ["pt", "eta", "phi", "d0", "z0"]
 | `use_jet_features` | `false` | Include jet matching features |
 | `use_cell_jet_matching` | `false` | Filter cells matched to jets |
 | `use_detector_params` | `false` | Apply detector-specific time calibration |
+| `use_time_quality_cut` | `false` | Enable time-based quality filtering |
+| `use_track_eta_cut` | `false` | Filter tracks by pseudorapidity (multi-input models) |
+| `track_eta_cut_value` | `2.5` | Track eta cut threshold: |eta| <= value |
 | `calibration_validation` | `false` | Generate calibration validation plots |
 | `use_baseline_method_filter` | `false` | Filter events by baseline method performance |
 | `baseline_method_threshold` | `500.0` | Baseline error threshold in ps (±500 ps default) |

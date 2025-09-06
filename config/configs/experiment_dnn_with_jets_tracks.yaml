@@ -43,8 +43,8 @@ time_quality_n_sigma: 3.0           # N-sigma cut threshold
 # Baseline method filtering parameters - DISABLED
 use_baseline_method_filter: false   # Disable baseline method filtering
 
-# Detector calibration parameters - needed for time quality cut
-use_detector_params: true           # Enable for time quality cut
+# Detector calibration parameters - only needed for time quality cut with detector calibration
+use_detector_params: false          # Set to true only if using time quality cut with detector calibration
 calibration_data_file: "multi_input_calibration.txt"
 
 # Model architecture parameters
@@ -132,3 +132,7 @@ track_encoder_units: [64, 32]
 track_dropout_rates: [0.1, 0.1]
 track_activation: "relu"
 track_use_batch_norm: true
+
+# NEW: Track eta cut parameters
+use_track_eta_cut: false           # Enable track eta cut
+track_eta_cut_value: 2.5           # |eta| <= this value

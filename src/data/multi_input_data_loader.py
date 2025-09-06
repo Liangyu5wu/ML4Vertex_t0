@@ -54,54 +54,75 @@ class MultiInputDataLoader:
         return filtered_cells
     
     def apply_time_quality_cut(self, event_cells: np.ndarray) -> np.ndarray:
-        """Apply time quality cut using calibration data."""
+        """Apply time quality cut based on configuration."""
         if not self.config.use_time_quality_cut or len(event_cells) == 0:
             return event_cells
         
-        calibration_data = self.config.load_calibration_data()
+        return self._apply_time_quality_cut_unified(event_cells, apply_calibration=self.config.use_detector_params)
+    
+    def _apply_time_quality_cut_unified(self, event_cells: np.ndarray, apply_calibration: bool = True) -> np.ndarray:
+        """Unified time quality cut implementation."""
+        try:
+            calibration_data = self.config.load_calibration_data()
+            use_full_uncertainty = True
+        except Exception:
+            # Fallback to vertex uncertainty only if calibration data unavailable
+            print("Warning: Cannot load calibration data. Using vertex uncertainty only.")
+            use_full_uncertainty = False
         
-        # Sigma lookup tables
+        if not use_full_uncertainty:
+            # Simple fallback: vertex uncertainty only
+            mask = np.ones(len(event_cells), dtype=bool)
+            cut_threshold = self.config.time_quality_n_sigma * self.config.vertex_time_sigma
+            for i, cell in enumerate(event_cells):
+                try:
+                    cell_time = cell['Cell_time_TOF_corrected']
+                    if abs(cell_time) > cut_threshold:
+                        mask[i] = False
+                except (KeyError, ValueError):
+                    mask[i] = False
+            return event_cells[mask]
+        
+        # Full uncertainty calculation
         sigma_lookup = {
-            (1, 1): calibration_data['EMB1_sigma'],
-            (1, 2): calibration_data['EMB2_sigma'],
-            (1, 3): calibration_data['EMB3_sigma'],
-            (0, 1): calibration_data['EME1_sigma'],
-            (0, 2): calibration_data['EME2_sigma'],
-            (0, 3): calibration_data['EME3_sigma'],
+            (1, 1): calibration_data['EMB1_sigma'], (1, 2): calibration_data['EMB2_sigma'], (1, 3): calibration_data['EMB3_sigma'],
+            (0, 1): calibration_data['EME1_sigma'], (0, 2): calibration_data['EME2_sigma'], (0, 3): calibration_data['EME3_sigma'],
         }
+        
+        if apply_calibration:
+            param_lookup = {
+                (1, 1): calibration_data['EMB1_params'], (1, 2): calibration_data['EMB2_params'], (1, 3): calibration_data['EMB3_params'],
+                (0, 1): calibration_data['EME1_params'], (0, 2): calibration_data['EME2_params'], (0, 3): calibration_data['EME3_params'],
+            }
         
         energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
         
         def get_energy_bin_index(energy: float) -> int:
-            if energy < 1.0:
-                return 0
+            if energy < 1.0: return 0
             for i in range(len(energy_bins) - 1):
-                if energy_bins[i] <= energy < energy_bins[i + 1]:
-                    return i
+                if energy_bins[i] <= energy < energy_bins[i + 1]: return i
             return len(energy_bins) - 2
         
         mask = np.ones(len(event_cells), dtype=bool)
         
         for i, cell in enumerate(event_cells):
             try:
-                barrel = int(cell['Cell_Barrel'])
-                layer = int(cell['Cell_layer'])
-                energy = cell['Cell_e']
+                barrel, layer, energy = int(cell['Cell_Barrel']), int(cell['Cell_layer']), cell['Cell_e']
                 cell_time = cell['Cell_time_TOF_corrected']
                 
                 if layer not in [1, 2, 3]:
                     mask[i] = False
                     continue
                 
-                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
-                energy_bin_idx = get_energy_bin_index(energy)
+                energy_bin_idx = max(0, min(get_energy_bin_index(energy), len(sigma_lookup.get((barrel, layer), [1000.0] * 7)) - 1))
+                sigma_cell = sigma_lookup.get((barrel, layer), [1000.0] * 7)[energy_bin_idx]
                 
-                if energy_bin_idx >= len(sigma_params):
-                    energy_bin_idx = len(sigma_params) - 1
-                elif energy_bin_idx < 0:
-                    energy_bin_idx = 0
+                # Apply detector calibration if enabled
+                if apply_calibration:
+                    calibration_value = param_lookup.get((barrel, layer), [0.0] * 7)[energy_bin_idx]
+                    cell_time = cell_time - calibration_value
                 
-                sigma_cell = sigma_params[energy_bin_idx]
+                # Apply cut with full uncertainty
                 sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_cell**2)
                 cut_threshold = self.config.time_quality_n_sigma * sigma_total
                 
@@ -235,6 +256,12 @@ class MultiInputDataLoader:
         """Process tracks for a single event."""
         valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS_old_files'] == 1)
         valid_tracks = event_tracks[valid_mask]
+        
+        # Apply track eta cut if enabled
+        if hasattr(self.config, 'use_track_eta_cut') and self.config.use_track_eta_cut:
+            eta_cut_value = getattr(self.config, 'track_eta_cut_value', 2.5)  # Default value
+            eta_mask = np.abs(valid_tracks['Track_eta']) <= eta_cut_value
+            valid_tracks = valid_tracks[eta_mask]
         
         sorted_indices = np.argsort(-valid_tracks['Track_pt'])
         sorted_tracks = valid_tracks[sorted_indices]
