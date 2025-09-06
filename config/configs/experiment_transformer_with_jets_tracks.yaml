@@ -45,7 +45,7 @@ use_baseline_method_filter: false   # Disable baseline method filtering
 
 # Detector calibration parameters - only needed for time quality cut with detector calibration
 use_detector_params: false          # Set to true only if using time quality cut with detector calibration
-calibration_data_file: "multi_input_calibration.txt"
+calibration_data_file: "sigma_only_test_calibration.txt"
 
 # Model architecture parameters
 use_attention_mask: true            # Use attention mask for padding

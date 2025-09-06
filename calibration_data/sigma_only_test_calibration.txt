@@ -1,0 +1,26 @@
+# Test calibration data - SIGMA VALUES ONLY
+# This file is for testing that mean values (params) are not used when use_detector_params: false
+# Energy bins: 1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10 GeV
+# Format: detector_layer_sigma: value1, value2, value3, value4, value5, value6, value7
+
+# Barrel Layer 1 (EMB1) - SIGMA ONLY
+EMB1_sigma: 429.494, 299.577, 210.759, 148.779, 117.356, 107.224, 58.2558
+
+# Barrel Layer 2 (EMB2) - SIGMA ONLY  
+EMB2_sigma: 2169.15, 1507.89, 1058.47, 736.912, 563.171, 361.537, 145.828
+
+# Barrel Layer 3 (EMB3) - SIGMA ONLY
+EMB3_sigma: 1330.43, 937.263, 712.241, 491.431, 404.458, 283.305, 167.231
+
+# Endcap Layer 1 (EME1) - SIGMA ONLY
+EME1_sigma: 1078.88, 768.96, 571.534, 406.757, 302.185, 207.768, 106.726
+
+# Endcap Layer 2 (EME2) - SIGMA ONLY
+EME2_sigma: 1759.41, 1296.14, 940.337, 681.157, 537.594, 354.015, 113.001
+
+# Endcap Layer 3 (EME3) - SIGMA ONLY
+EME3_sigma: 1196.9, 856.584, 625.558, 442.021, 356.891, 226.194, 100.985
+
+# NOTE: No mean values (params) are included in this test file
+# If the system tries to access mean values and fails, it confirms they are being used
+# If the system works normally, it confirms only sigma values are needed

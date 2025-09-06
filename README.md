@@ -20,7 +20,8 @@ ML4Vertex_t0/
 ├── calibration_data/          # External calibration data files
 │   ├── HStrackmatching_calibration.txt    # Cell-track matching calibration
 │   ├── cell_jet_calibration.txt           # Cell-jet matching calibration
-│   └── multi_input_calibration.txt        # Multi-input model calibration 🆕
+│   ├── multi_input_calibration.txt        # Multi-input model calibration 🆕
+│   └── sigma_only_test_calibration.txt    # Test file (sigma only, no mean values) 🆕
 ├── src/                       # Source code
 │   ├── __init__.py            # Source package initialization
 │   ├── data/                  # Data loading and processing

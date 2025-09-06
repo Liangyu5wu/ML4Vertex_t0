@@ -327,6 +327,7 @@ External calibration files in `calibration_data/`:
 - `HStrackmatching_calibration.txt` - Cell-track calibration
 - `cell_jet_calibration.txt` - Cell-jet calibration
 - `multi_input_calibration.txt` - Multi-input model calibration (no jet/track matching)
+- `sigma_only_test_calibration.txt` - Test file with sigma values only (for validating that mean values are not used when `use_detector_params: false`)
 
 ### Baseline Analysis
 Standalone analysis tool in `baseline_analysis/`:
