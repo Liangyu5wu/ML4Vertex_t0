@@ -223,33 +223,36 @@ class MultiInputDataLoader:
         """Process jets for a single event."""
         valid_mask = (event_jets['valid'] == True) & (event_jets['AntiKt4EMTopoJets_selected'] == 1)
         valid_jets = event_jets[valid_mask]
-        
+
         sorted_indices = np.argsort(-valid_jets['AntiKt4EMTopoJets_pt'])
         sorted_jets = valid_jets[sorted_indices]
-        
+
         n_jets_to_use = min(len(sorted_jets), self.config.max_jets)
-        
+
+        # Map config jet features to HDF5 field names
+        feature_mapping = {
+            'pt': 'AntiKt4EMTopoJets_pt',
+            'eta': 'AntiKt4EMTopoJets_eta',
+            'phi': 'AntiKt4EMTopoJets_phi',
+            'width': 'AntiKt4EMTopoJets_width'
+        }
+
         jet_sequence = []
         for jet_idx in range(n_jets_to_use):
             jet = sorted_jets[jet_idx]
-            jet_features = [
-                jet['AntiKt4EMTopoJets_pt'],
-                jet['AntiKt4EMTopoJets_eta'],
-                jet['AntiKt4EMTopoJets_phi'],
-                jet['AntiKt4EMTopoJets_width']
-            ]
+            jet_features = []
+            for feature in self.config.jet_features:
+                hdf5_field = feature_mapping[feature]
+                jet_features.append(jet[hdf5_field])
             jet_sequence.append(jet_features)
-        
+
         # Pad to max_jets
         while len(jet_sequence) < self.config.max_jets:
-            padding_values = [
-                self.config.jet_padding_values['pt'],
-                self.config.jet_padding_values['eta'],
-                self.config.jet_padding_values['phi'],
-                self.config.jet_padding_values['width']
-            ]
+            padding_values = []
+            for feature in self.config.jet_features:
+                padding_values.append(self.config.jet_padding_values[feature])
             jet_sequence.append(padding_values)
-        
+
         return jet_sequence
     
     def _process_event_tracks(self, event_tracks: np.ndarray) -> List[List[float]]:
