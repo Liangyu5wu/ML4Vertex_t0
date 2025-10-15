@@ -196,10 +196,11 @@ Attention Mask → Transformer Masking
 
 ### Data Pipeline
 - **Data Loading**: `src/data/data_loader.py` - HDF5 file processing with cell filtering
-- **Multi-Input Loading**: `src/data/multi_input_data_loader.py` - Jets and tracks data processing
+- **Multi-Input Loading**: `src/data/multi_input_data_loader.py` - Jets and tracks data processing (returns variable-length sequences)
 - **Data Processing**: `src/data/data_processor.py` - Feature normalization, train/val/test splits
 - **Multi-Input Processing**: `src/data/multi_input_data_processor.py` - Jets/tracks normalization and dataset creation
-- **Smart Padding**: Feature-specific padding values instead of zeros
+- **Normalization Strategy**: Normalize before padding (statistics computed only from real data)
+- **Smart Padding**: Feature-specific padding values transformed to normalized space
 
 ### Training Infrastructure
 - **Trainer**: `src/training/trainer.py` - Unified training loop for all model types
@@ -241,6 +242,30 @@ Attention Mask → Transformer Masking
 - **Track features**: Cell-track matching data
 - **Jet features**: Cell-jet matching data
 - **Smart toggling**: Automatic feature list adjustment
+
+### Normalization and Padding Strategy
+
+#### Data Processing Order
+For multi-input models (jets and tracks), the data flow follows this optimized order:
+1. **Load raw data** from HDF5 files (original feature space)
+2. **Split** into train/val/test sets
+3. **Normalize** using statistics computed **only from real data** (no padding)
+4. **Pad** sequences in normalized space using transformed padding values
+5. **Create TensorFlow datasets** for training
+
+#### Key Benefits
+- **Correct statistics**: Mean and std computed only from real jets/tracks, not contaminated by padding values
+- **Configured padding preserved**: Original padding values from config (`jet_padding_values`, `track_padding_values`) are automatically transformed to normalized space
+- **Consistent approach**: All input types (cells, jets, tracks) follow the same normalize-then-pad pattern
+
+#### Implementation Details
+- **Variable-length normalization**: `_normalize_variable_length_features()` collects only real features for statistics
+- **Smart padding transformation**: Configured padding values (e.g., `-1.0`, `-999.0`) are transformed using:
+  ```
+  padding_normalized = (padding_original - mean) / std
+  ```
+- **Example**: If jet pt has mean=50 GeV and std=20 GeV, then padding value `-1.0` becomes `-2.55` in normalized space
+- **Model perspective**: Padding values appear as extreme values in normalized space, making them easy to identify and ignore
 
 ### Baseline-Guided Model Features
 
