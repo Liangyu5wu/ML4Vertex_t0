@@ -46,8 +46,8 @@ class Visualizer:
         if save_path is None:
             save_path = os.path.join(self.config.plots_dir, "training_metrics.png")
         
-        # Determine number of subplots needed
-        metrics = [key for key in history.keys() if not key.startswith('val_')]
+        # Determine number of subplots needed (exclude RMSE metrics)
+        metrics = [key for key in history.keys() if not key.startswith('val_') and 'root_mean_squared_error' not in key]
         n_metrics = len(metrics)
         
         fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 5))
@@ -321,39 +321,78 @@ class Visualizer:
         if save_path is None:
             save_path = os.path.join(self.config.plots_dir, "histogram_comparison.png")
         
-        plt.figure(figsize=(12, 8))
+        # Set matplotlib parameters to match the reference style
+        import matplotlib as mpl
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
         
         # Calculate statistics
         true_mean = np.mean(y_true)
         true_std = np.std(y_true)
-        true_rms = np.sqrt(np.mean(np.square(y_true)))
-        
         pred_mean = np.mean(y_pred)
         pred_std = np.std(y_pred)
-        pred_rms = np.sqrt(np.mean(np.square(y_pred)))
         
-        # Determine bins
-        min_val = min(np.min(y_true), np.min(y_pred))
-        max_val = max(np.max(y_true), np.max(y_pred))
-        n_bins = int(np.ceil((max_val - min_val) / 10))
-        bins = np.linspace(min_val, max_val, n_bins)
+        # Create histogram with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)
         
-        # Plot histograms
-        plt.hist(y_true, bins=bins, alpha=0.6, 
-                label=f'Actual (μ={true_mean:.4f}, σ={true_std:.4f}, RMS={true_rms:.4f})', 
-                color='blue', density=False)
-        plt.hist(y_pred, bins=bins, alpha=0.6, 
-                label=f'Predicted (μ={pred_mean:.4f}, σ={pred_std:.4f}, RMS={pred_rms:.4f})', 
-                color='red', density=False)
+        # Plot both histograms with stepfilled style to match reference
+        true_counts, bin_edges = np.histogram(y_true, bins=bins)
+        pred_counts, _ = np.histogram(y_pred, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
-        plt.xlabel('Vertex Time')
-        plt.ylabel('Count')
-        plt.title(f'{self.config.model_name}: Distribution Comparison')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        # Plot actual values
+        ax.hist(bin_centers, bins=bin_edges, weights=true_counts,
+               histtype='stepfilled', color='#4682B4', edgecolor='blue',
+               linewidth=2, alpha=0.5)
+        
+        # Plot predicted values  
+        ax.hist(bin_centers, bins=bin_edges, weights=pred_counts,
+               histtype='stepfilled', color='#D46A6A', edgecolor='red', 
+               linewidth=2, alpha=0.5)
+        
+        # Set axis labels and title
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
+        
+        # Increase y-axis by 10% to accommodate legend
+        ymax = max(np.max(true_counts), np.max(pred_counts)) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
+        
+        # Add custom legend with statistics (inline format)
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+        red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
+        
+        legend_labels = [
+            f"Events: N = {len(y_true):,}",
+            f"Actual (μ = {true_mean:.2f}, σ = {true_std:.2f} ps)",
+            f"Predicted (μ = {pred_mean:.2f}, σ = {pred_std:.2f} ps)"
+        ]
+        
+        # Add handles for legend
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, red_patch]
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
-        plt.savefig(save_path, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Histogram comparison plot saved to: {save_path}")
         plt.close()
     
@@ -361,15 +400,17 @@ class Visualizer:
         self, 
         y_true: np.ndarray, 
         y_pred: np.ndarray,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        baseline_predictions: Optional[np.ndarray] = None
     ):
         """
-        Plot distribution of prediction errors.
+        Plot distribution of prediction errors with optional baseline comparison.
         
         Args:
             y_true: True values
             y_pred: Predicted values
             save_path: Path to save the plot
+            baseline_predictions: Optional baseline method predictions for comparison
         """
         if save_path is None:
             save_path = os.path.join(self.config.plots_dir, "error_distribution.png")
@@ -378,35 +419,153 @@ class Visualizer:
         error_mean = np.mean(errors)
         error_std = np.std(errors)
         
-        plt.figure(figsize=(10, 8))
+        # Set matplotlib parameters to match the reference style
+        import matplotlib as mpl
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
         
-        # Plot histogram
-        plt.hist(errors, bins=50, alpha=0.7, color='green', edgecolor='black', density=False)
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Add vertical lines for statistics
-        plt.axvline(x=error_mean, color='k', linestyle='-', linewidth=2, 
-                   label=f'Mean: {error_mean:.4f}')
-        plt.axvline(x=error_mean + error_std, color='k', linestyle=':', linewidth=2, 
-                   label=f'+1σ: {error_std:.4f}')
-        plt.axvline(x=error_mean - error_std, color='k', linestyle=':', linewidth=2, 
-                   label=f'-1σ')
+        # Create histogram with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)
+        bin_width = 10
         
-        # Overlay normal distribution for comparison
-        x_norm = np.linspace(errors.min(), errors.max(), 100)
-        y_norm = (1 / (error_std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_norm - error_mean) / error_std) ** 2)
-        # Scale normal distribution to match histogram counts
-        bin_width = (errors.max() - errors.min()) / 100
-        scale_factor = len(errors) * bin_width
-        plt.plot(x_norm, y_norm * scale_factor, 'r--', linewidth=2, label='Normal Distribution')
+        # Plot ML model errors using stepfilled style to match reference
+        ml_counts, bin_edges = np.histogram(errors, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
-        plt.xlabel('Prediction Error (Predicted - Actual)')
-        plt.ylabel('Count')
-        plt.title(f'{self.config.model_name}: Error Distribution')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        ax.hist(bin_centers, bins=bin_edges, weights=ml_counts,
+               histtype='stepfilled', color='#4682B4', edgecolor='blue',
+               linewidth=2, alpha=0.5)
+        
+        # Calculate baseline errors and plot if provided
+        baseline_errors = None
+        baseline_counts = None
+        if baseline_predictions is not None:
+            baseline_errors = baseline_predictions.flatten() - y_true
+            baseline_counts, _ = np.histogram(baseline_errors, bins=bins)
+            baseline_mean = np.mean(baseline_errors)
+            baseline_std = np.std(baseline_errors)
+            
+            ax.hist(bin_centers, bins=bin_edges, weights=baseline_counts,
+                   histtype='stepfilled', color='#D46A6A', edgecolor='red', 
+                   linewidth=2, alpha=0.5)
+        
+        # Gaussian fitting function
+        def gaussian_func(x, a, mu, sigma):
+            return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+        
+        # Fit ML model errors
+        try:
+            from scipy.optimize import curve_fit
+            fit_range = 120  # Standard fit range
+            mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+            
+            if np.sum(mask) > 3:
+                fit_x = bin_centers[mask]
+                fit_y = ml_counts[mask]
+                fit_error = np.sqrt(fit_y)
+                fit_error[fit_error == 0] = 1
+                
+                # Initial parameters for fit (amplitude, mean, sigma)
+                p0 = [np.max(fit_y), error_mean, error_std]
+                
+                popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
+                                      p0=p0, sigma=fit_error, absolute_sigma=True)
+                ml_fit_mean, ml_fit_std = popt[1], abs(popt[2])
+                
+                # Plot fitted curve extended to ±2000ps display range
+                x_fit = np.linspace(-2000, 2000, 1000)
+                y_fit = gaussian_func(x_fit, *popt)
+                ax.plot(x_fit, y_fit, 'b--', linewidth=2)
+            else:
+                ml_fit_mean, ml_fit_std = error_mean, error_std
+        except:
+            ml_fit_mean, ml_fit_std = error_mean, error_std
+        
+        # Fit baseline errors if provided
+        baseline_fit_mean, baseline_fit_std = None, None
+        if baseline_predictions is not None:
+            try:
+                mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+                if np.sum(mask) > 3:
+                    fit_x = bin_centers[mask]
+                    fit_y = baseline_counts[mask]
+                    fit_error = np.sqrt(fit_y)
+                    fit_error[fit_error == 0] = 1
+                    
+                    p0 = [np.max(fit_y), baseline_mean, baseline_std]
+                    
+                    popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
+                                          p0=p0, sigma=fit_error, absolute_sigma=True)
+                    baseline_fit_mean, baseline_fit_std = popt[1], abs(popt[2])
+                    
+                    x_fit = np.linspace(-2000, 2000, 1000)
+                    y_fit = gaussian_func(x_fit, *popt)
+                    ax.plot(x_fit, y_fit, 'r--', linewidth=2)
+                else:
+                    baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
+            except:
+                baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
+        
+        # Set axis labels and title
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
+        
+        # Increase y-axis by 10% to accommodate legend
+        if baseline_predictions is not None:
+            ymax = max(np.max(ml_counts), np.max(baseline_counts)) * 1.1
+        else:
+            ymax = np.max(ml_counts) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
+        
+        # Add custom legend with fit parameters
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+        blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
+        
+        legend_labels = [
+            f"Events: N = {len(errors):,}",
+            f"ML model",
+            f"ML data: μ = {error_mean:.2f}, σ = {error_std:.2f} ps",
+            f"ML fit: μ = {ml_fit_mean:.2f}, σ = {ml_fit_std:.2f} ps"
+        ]
+        
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, 
+                         plt.Rectangle((0,0),0,0,alpha=0.0), blue_line]
+        
+        if baseline_predictions is not None:
+            red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
+            red_line = plt.Line2D([0], [0], color='red', linestyle='--', linewidth=2)
+            
+            legend_labels.extend([
+                "Baseline method",
+                f"Baseline data: μ = {baseline_mean:.2f}, σ = {baseline_std:.2f} ps",
+                f"Baseline fit: μ = {baseline_fit_mean:.2f}, σ = {baseline_fit_std:.2f} ps"
+            ])
+            
+            legend_handles.extend([red_patch, 
+                                  plt.Rectangle((0,0),0,0,alpha=0.0), red_line])
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
-        plt.savefig(save_path, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Error distribution plot saved to: {save_path}")
         plt.close()
     
@@ -428,19 +587,91 @@ class Visualizer:
             save_path = os.path.join(self.config.plots_dir, "residuals_vs_predicted.png")
         
         residuals = y_pred - y_true
+        n_events = len(y_true)
         
         plt.figure(figsize=(10, 8))
-        plt.scatter(y_pred, residuals, alpha=0.6, s=20)
-        plt.axhline(y=0, color='r', linestyle='--', linewidth=2)
+        plt.scatter(y_pred, residuals, alpha=0.6, s=20, label=f'Residuals (N={n_events:,} events)')
+        plt.axhline(y=0, color='r', linestyle='--', linewidth=2, label='Zero line')
         
         plt.xlabel('Predicted Values')
         plt.ylabel('Residuals (Predicted - Actual)')
         plt.title(f'{self.config.model_name}: Residuals vs Predicted Values')
+        plt.legend()
         plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
         plt.savefig(save_path, bbox_inches='tight')
         print(f"Residuals plot saved to: {save_path}")
+        plt.close()
+    
+    def plot_baseline_corrections_scatter(
+        self, 
+        y_true: np.ndarray, 
+        y_pred: np.ndarray, 
+        baseline_predictions: np.ndarray,
+        save_path: Optional[str] = None
+    ):
+        """
+        Plot scatter plot of baseline corrections vs truth for baseline-guided models.
+        
+        Args:
+            y_true: True vertex time values
+            y_pred: ML model predictions (final predictions)
+            baseline_predictions: Baseline method predictions
+            save_path: Path to save the plot
+        """
+        if save_path is None:
+            save_path = os.path.join(self.config.plots_dir, "baseline_corrections_scatter.png")
+        
+        # Calculate the corrections made by the ML model
+        # Corrections = final_prediction - baseline_prediction
+        corrections = y_pred - baseline_predictions.flatten()
+        
+        # Calculate statistics
+        correction_mean = np.mean(corrections)
+        correction_std = np.std(corrections)
+        correction_rmse = np.sqrt(np.mean(corrections**2))
+        
+        # Create the plot
+        plt.figure(figsize=(10, 8))
+        
+        # Create scatter plot with alpha for density visualization
+        plt.scatter(y_true, corrections, alpha=0.6, s=15, c='darkgreen', 
+                   label=f'ML Corrections (N={len(corrections):,})')
+        
+        # Add horizontal line at zero (no correction)
+        plt.axhline(y=0, color='red', linestyle='--', linewidth=2, 
+                   label='No Correction', alpha=0.8)
+        
+        # Add statistics text box
+        stats_text = f"Correction Statistics:\n"
+        stats_text += f"Mean: {correction_mean:.2f} ps\n"
+        stats_text += f"Std: {correction_std:.2f} ps\n"
+        stats_text += f"RMSE: {correction_rmse:.2f} ps\n"
+        stats_text += f"Range: [{np.min(corrections):.1f}, {np.max(corrections):.1f}] ps"
+        
+        plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
+                verticalalignment='top', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.9))
+        
+        # Calculate correlation between truth and corrections
+        correlation = np.corrcoef(y_true, corrections)[0, 1]
+        corr_text = f"Correlation with Truth: {correlation:.4f}"
+        
+        plt.text(0.98, 0.02, corr_text, transform=plt.gca().transAxes,
+                verticalalignment='bottom', horizontalalignment='right', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9))
+        
+        # Formatting
+        plt.xlabel('Truth Vertex Time [ps]', fontsize=12)
+        plt.ylabel('ML Model Corrections to Baseline [ps]', fontsize=12)
+        plt.title(f'{self.config.model_name}: ML Model Corrections vs Truth Vertex Time', fontsize=14)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Baseline corrections scatter plot saved to: {save_path}")
         plt.close()
     
     def create_comprehensive_evaluation_plots(
@@ -449,7 +680,8 @@ class Visualizer:
         y_pred: np.ndarray, 
         metrics: Dict[str, float],
         training_history: Optional[Dict[str, np.ndarray]] = None,
-        plot_prediction_type: str = '2d_hist'  # 新增参数
+        plot_prediction_type: str = '2d_hist',
+        baseline_predictions: Optional[np.ndarray] = None
     ):
         """
         Create all evaluation plots with configurable prediction plot type.
@@ -460,6 +692,7 @@ class Visualizer:
             metrics: Evaluation metrics
             training_history: Optional training history for plotting
             plot_prediction_type: Type of prediction plot ('2d_hist', 'hexbin', 'scatter', 'comparison')
+            baseline_predictions: Optional baseline method predictions for comparison
         """
         # Ensure plots directory exists
         os.makedirs(self.config.plots_dir, exist_ok=True)
@@ -479,11 +712,15 @@ class Visualizer:
         # Plot histogram comparison
         self.plot_histogram_comparison(y_true, y_pred)
         
-        # Plot error distribution
-        self.plot_error_distribution(y_true, y_pred)
+        # Plot error distribution with baseline comparison if available
+        self.plot_error_distribution(y_true, y_pred, baseline_predictions=baseline_predictions)
         
         # Plot residuals
         self.plot_residuals_vs_predicted(y_true, y_pred)
+        
+        # Plot baseline corrections scatter plot if this is a baseline-guided model
+        if baseline_predictions is not None:
+            self.plot_baseline_corrections_scatter(y_true, y_pred, baseline_predictions)
         
         print(f"All evaluation plots saved to: {self.config.plots_dir}")
     

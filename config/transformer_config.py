@@ -31,6 +31,18 @@ class TransformerConfig(BaseConfig):
     use_detector_params: bool = False
     calibration_data_file: str = "HStrackmatching_calibration.txt"
     
+    # Jet encoder parameters (for multi-input models)
+    jet_encoder_units: List[int] = None
+    jet_dropout_rates: List[float] = None
+    jet_activation: str = 'relu'
+    jet_use_batch_norm: bool = False
+    
+    # Track encoder parameters (for multi-input models)
+    track_encoder_units: List[int] = None
+    track_dropout_rates: List[float] = None
+    track_activation: str = 'relu'
+    track_use_batch_norm: bool = False
+    
     # Calibration validation parameters
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap
@@ -49,6 +61,18 @@ class TransformerConfig(BaseConfig):
             
         if self.final_dropout_rates is None:
             self.final_dropout_rates = [0.3, 0.2, 0.1]
+        
+        # Initialize jet encoder defaults
+        if self.jet_encoder_units is None:
+            self.jet_encoder_units = [64, 32]
+        if self.jet_dropout_rates is None:
+            self.jet_dropout_rates = [0.1, 0.1]
+            
+        # Initialize track encoder defaults
+        if self.track_encoder_units is None:
+            self.track_encoder_units = [64, 32]
+        if self.track_dropout_rates is None:
+            self.track_dropout_rates = [0.1, 0.1]
     
     @property
     def max_position(self) -> int:

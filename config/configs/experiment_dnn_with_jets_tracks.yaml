@@ -1,0 +1,138 @@
+# Multi-input DNN experimental configuration with jets and tracks features
+model_name: "multi_input_dnn_with_jets_tracks"
+
+# Model architecture specification
+model_architecture: "multi_input_dnn"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Data parameters
+data_dir: "../selected_h5_with_jets/"
+num_files: 43
+max_cells: 60
+min_cells: 1
+cell_selection_feature: "Cell_e"
+
+# NEW: Jet and track parameters
+max_jets: 7
+min_jets: 1
+max_tracks: 30
+min_tracks: 1
+
+# Feature selection parameters (comprehensive switches) - DISABLED
+use_spatial_features: false         # Spatial position features
+use_track_features: false           # Track matching features (cell-level)
+use_jet_features: false             # Jet matching features (cell-level)
+use_physics_informed_features: false # Physics weighting features
+
+# NEW: Enable event-level jet and track features
+use_event_jets: true                # Use event-level jet features
+use_event_tracks: true              # Use event-level track features
+
+# Cell filtering parameters
+require_valid_cells: true
+use_cell_track_matching: false      # No cell-track matching
+use_cell_jet_matching: false        # No cell-jet matching
+additional_cell_filters: {}         # No additional filters
+
+# Time quality cut parameters
+use_time_quality_cut: true          # Enable time-based quality filtering
+vertex_time_sigma: 175.0            # HS vertex time uncertainty [ps]  
+time_quality_n_sigma: 3.0           # N-sigma cut threshold
+
+# Baseline method filtering parameters - DISABLED
+use_baseline_method_filter: false   # Disable baseline method filtering
+
+# Detector calibration parameters - only needed for time quality cut with detector calibration
+use_detector_params: false          # Set to true only if using time quality cut with detector calibration
+calibration_data_file: "sigma_only_test_calibration.txt"
+
+# Model architecture parameters
+use_attention_mask: true            # Use attention mask for padding
+use_physics_informed_features: false
+
+# Data split parameters
+test_size: 0.2
+val_split: 0.222222
+random_state: 42
+
+# Cell encoder network parameters
+cell_encoder_units: [128, 64, 32]
+cell_dropout_rate: 0.1
+cell_activation: "relu"
+
+# Attention pooling parameters
+use_attention_pooling: true
+attention_pooling_masked: true
+attention_hidden_units: 32
+
+# Event-level processing parameters
+event_encoder_units: [128, 64, 32, 16]
+event_dropout_rates: [0.2, 0.1, 0.1, 0.1]
+use_batch_norm: true
+
+# Training parameters
+batch_size: 128
+epochs: 200
+learning_rate: 0.001
+lr_reduction_factor: 0.5
+early_stopping_patience: 20
+lr_patience: 8
+min_lr: 0.0000001
+
+# Feature definitions - only basic cell features
+all_cell_features:
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+
+# NEW: Jet features (event-level)
+jet_features:
+  - "pt"
+  - "eta"
+  - "phi"
+  - "width"
+
+# NEW: Track features (event-level)
+track_features:
+  - "pt"
+  - "eta" 
+  - "phi"
+  - "d0"
+  - "z0"
+
+# NEW: Jet and track padding values
+jet_padding_values:
+  pt: -1.0
+  eta: -999.0
+  phi: -999.0
+  width: -1.0
+
+track_padding_values:
+  pt: -1.0
+  eta: -999.0
+  phi: -999.0
+  d0: -999.0
+  z0: -999.0
+
+skip_normalization: ["Cell_Barrel", "Cell_layer"]
+
+# NEW: Jet encoder parameters
+jet_encoder_units: [64, 32]
+jet_dropout_rates: [0.1, 0.1]
+jet_activation: "relu"
+jet_use_batch_norm: true
+
+# NEW: Track encoder parameters
+track_encoder_units: [64, 32] 
+track_dropout_rates: [0.1, 0.1]
+track_activation: "relu"
+track_use_batch_norm: true
+
+# NEW: Track eta cut parameters
+use_track_eta_cut: false           # Enable track eta cut
+track_eta_cut_value: 2.5           # |eta| <= this value

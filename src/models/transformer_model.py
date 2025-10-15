@@ -2,34 +2,15 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import tensorflow.keras.backend as K
 from typing import Dict, Any
 
 from .transformer_layers import PositionalEncoding, MultiHeadSelfAttention, TransformerBlock
+from .model_utils import (
+    root_mean_squared_error, get_loss_function, get_standard_metrics,
+    get_common_custom_objects, load_model_with_fallback, get_model_summary_string,
+    count_model_parameters, create_dummy_vertex_connection
+)
 from config.transformer_config import TransformerConfig
-
-
-def root_mean_squared_error(y_true, y_pred):
-    """Custom RMSE metric."""
-    return K.sqrt(K.mean(K.square(y_pred - y_true)))
-
-def get_loss_function(loss_name: str, delta: float = 1.0):
-    """
-    Get loss function based on configuration.
-    
-    Args:
-        loss_name: Name of the loss function ('mse' or 'huber')
-        delta: Delta parameter for Huber loss
-        
-    Returns:
-        Loss function for compilation
-    """
-    if loss_name == 'mse':
-        return 'mse'
-    elif loss_name == 'huber':
-        return tf.keras.losses.Huber(delta=delta)
-    else:
-        raise ValueError(f"Unsupported loss function: {loss_name}")
 
 
 class MaskedGlobalAveragePooling1D(layers.Layer):
@@ -118,6 +99,23 @@ class TransformerModel:
         """
         return self._build_model_internal(feature_dim, vertex_dim, use_mask=True)
     
+    def build_model_with_jets_tracks(self, feature_dim: int, vertex_dim: int, 
+                                     jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Build the transformer model architecture with jets and tracks support.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features  
+            jet_feature_dim: Dimension of jet features
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        return self._build_model_with_jets_tracks_internal(feature_dim, vertex_dim, 
+                                                          jet_feature_dim, track_feature_dim)
+    
     def _build_model_internal(self, feature_dim: int, vertex_dim: int, use_mask: bool = False) -> tf.keras.Model:
         """
         Internal method to build the transformer model architecture.
@@ -163,7 +161,24 @@ class TransformerModel:
             )(x, mask=current_mask)
         
         # Global average pooling (with or without mask)
-        if use_mask:
+        # Check if physics features are available for weighted pooling
+        use_physics = getattr(self.config, 'use_physics_informed_features', False)
+        if use_physics and feature_dim > 10:
+            # Use physics weights (cell_weight is 2nd physics feature, 5th from end)
+            physics_weights = cell_inputs[:, :, -5]
+            # Normalize weights within each sequence to avoid gradient issues
+            physics_weights = tf.nn.softmax(physics_weights, axis=1)
+            weights = tf.expand_dims(physics_weights, axis=-1)
+            if current_mask is not None:
+                mask_expanded = tf.expand_dims(tf.cast(current_mask, tf.float32), axis=-1)
+                weights = weights * mask_expanded
+            # Normalize weights
+            weight_sum = tf.reduce_sum(weights, axis=1, keepdims=True)
+            weight_sum = tf.maximum(weight_sum, 1e-8)
+            weights = weights / weight_sum
+            # Apply weighted pooling
+            cell_representation = tf.reduce_sum(x * weights, axis=1)
+        elif use_mask:
             cell_representation = MaskedGlobalAveragePooling1D()(x, mask=current_mask)
         else:
             cell_representation = layers.GlobalAveragePooling1D()(x)
@@ -178,15 +193,8 @@ class TransformerModel:
             # Combine cell and vertex representations
             combined = layers.Concatenate()([cell_representation, vertex_dense])
         else:
-            # Create dummy connection: process vertex but multiply by 0
-            vertex_dense = layers.Dense(
-                self.config.vertex_dense_units, 
-                activation='relu'
-            )(vertex_inputs)
-            # Project to same dimension as cell_representation
-            vertex_projected = layers.Dense(self.config.d_model)(vertex_dense)
-            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_projected)
-            # Add zeros (no effect on result)
+            # Create simplified dummy connection for unused vertex features
+            vertex_zeros = create_dummy_vertex_connection(vertex_inputs, self.config.d_model)
             combined = layers.Add()([cell_representation, vertex_zeros])
         
         # Final prediction layers
@@ -217,8 +225,109 @@ class TransformerModel:
         optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
         model.compile(
             optimizer=optimizer,
-            loss='mse',
-            metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
+            loss=loss_function,
+            metrics=get_standard_metrics()
+        )
+        
+        self.model = model
+        return model
+    
+    def _build_model_with_jets_tracks_internal(self, feature_dim: int, vertex_dim: int,
+                                              jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Internal method to build the transformer model with jets and tracks.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features
+            jet_feature_dim: Dimension of jet features  
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        # Validate configuration
+        self.config.validate_config()
+        
+        # Input layers
+        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_sequence')
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_features')
+        jet_inputs = layers.Input(shape=(self.config.max_jets, jet_feature_dim), name='jet_inputs')
+        track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
+        mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
+        
+        # Stage 1: Cell processing with transformer
+        # Input projection to d_model dimensions
+        x = layers.Dense(self.config.d_model, activation='linear', name='input_projection')(cell_inputs)
+        
+        # Add positional encoding
+        x = PositionalEncoding(max_position=self.config.max_position_encoding, d_model=self.config.d_model)(x)
+        
+        # Apply transformer blocks
+        for i in range(self.config.num_layers):
+            x = TransformerBlock(
+                d_model=self.config.d_model,
+                num_heads=self.config.num_heads,
+                dff=self.config.dff,
+                rate=self.config.dropout_rate,
+                name=f'transformer_block_{i}'
+            )(x, mask=mask_inputs)
+        
+        # Global pooling with mask support
+        cell_representation = MaskedGlobalAveragePooling1D(name='masked_global_pool')(x, mask=mask_inputs)
+        
+        # Stage 2: Jet processing
+        jet_x = jet_inputs
+        jet_x = layers.Dense(64, activation='relu', name='jet_encoder_0')(jet_x)
+        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_0')(jet_x)
+        jet_x = layers.Dense(32, activation='relu', name='jet_encoder_1')(jet_x) 
+        jet_x = layers.Dropout(self.config.dropout_rate, name='jet_dropout_1')(jet_x)
+        jet_representation = layers.GlobalAveragePooling1D(name='jet_global_pool')(jet_x)
+        
+        # Stage 3: Track processing
+        track_x = track_inputs
+        track_x = layers.Dense(64, activation='relu', name='track_encoder_0')(track_x)
+        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_0')(track_x)
+        track_x = layers.Dense(32, activation='relu', name='track_encoder_1')(track_x)
+        track_x = layers.Dropout(self.config.dropout_rate, name='track_dropout_1')(track_x)
+        track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
+        
+        # Stage 4: Feature combination  
+        # Don't use vertex features as specified in requirements
+        combined = layers.Concatenate(name='combine_all_features')([
+            cell_representation, jet_representation, track_representation
+        ])
+        
+        # Stage 5: Final prediction layers
+        x = combined
+        for i, (units, dropout_rate) in enumerate(zip(
+            self.config.final_dense_units, 
+            self.config.final_dropout_rates
+        )):
+            x = layers.Dense(units, activation='relu', name=f'final_dense_{i}')(x)
+            
+            if self.config.use_batch_norm:
+                x = layers.BatchNormalization(name=f'final_bn_{i}')(x)
+                
+            x = layers.Dropout(dropout_rate, name=f'final_dropout_{i}')(x)
+        
+        # Output layer
+        output = layers.Dense(1, name='vertex_time')(x)
+        
+        # Create model with all inputs
+        model = models.Model(
+            inputs=[cell_inputs, vertex_inputs, jet_inputs, track_inputs, mask_inputs], 
+            outputs=output
+        )
+
+        loss_function = get_loss_function(self.config.loss_function, self.config.huber_delta)
+        
+        # Compile model
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
+        model.compile(
+            optimizer=optimizer,
+            loss=loss_function,
+            metrics=get_standard_metrics()
         )
         
         self.model = model
@@ -258,74 +367,21 @@ class TransformerModel:
         Returns:
             Loaded Keras model
         """
-        custom_objects = {
-            'root_mean_squared_error': root_mean_squared_error,
+        # Combine common custom objects with transformer-specific ones
+        custom_objects = get_common_custom_objects()
+        custom_objects.update({
             'PositionalEncoding': PositionalEncoding,
             'MultiHeadSelfAttention': MultiHeadSelfAttention,
             'TransformerBlock': TransformerBlock,
-            'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D,  # Add new layer
-            # Add standard metrics that might be saved as custom objects
-            'Huber': tf.keras.losses.Huber,
-            'mse': tf.keras.losses.MeanSquaredError(),
-            'mae': tf.keras.metrics.MeanAbsoluteError(),
-            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric')
-        }
+            'MaskedGlobalAveragePooling1D': MaskedGlobalAveragePooling1D
+        })
         
-        # Handle both .h5 and .keras formats
-        try:
-            model = models.load_model(filepath, custom_objects=custom_objects)
-            print(f"Model loaded successfully with compilation intact.")
-            return model
-        except Exception as e:
-            print(f"Error loading model from {filepath}: {e}")
-            # Try alternative loading method for .h5 files
-            if filepath.endswith('.h5'):
-                print("Attempting alternative loading method for .h5 file...")
-                try:
-                    # Load without compilation first
-                    model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
-                    print("Model architecture loaded successfully. Re-compiling...")
-                    
-                    # Re-compile the model with the same configuration as training
-                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # Default learning rate
-                    model.compile(
-                        optimizer=optimizer,
-                        loss='mse',
-                        metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
-                    )
-                    print("Model re-compiled successfully.")
-                    return model
-                except Exception as e2:
-                    print(f"Alternative loading method also failed: {e2}")
-                    raise e2
-            else:
-                raise e
+        return load_model_with_fallback(filepath, custom_objects)
     
     def get_model_summary(self) -> str:
         """Get model summary as string."""
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        summary_lines = []
-        self.model.summary(print_fn=lambda x: summary_lines.append(x))
-        return '\n'.join(summary_lines)
+        return get_model_summary_string(self.model)
     
     def count_parameters(self) -> Dict[str, int]:
-        """
-        Count model parameters.
-        
-        Returns:
-            Dictionary with parameter counts
-        """
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        total_params = self.model.count_params()
-        trainable_params = sum([K.count_params(w) for w in self.model.trainable_weights])
-        non_trainable_params = total_params - trainable_params
-        
-        return {
-            'total': total_params,
-            'trainable': trainable_params,
-            'non_trainable': non_trainable_params
-        }
+        """Count model parameters."""
+        return count_model_parameters(self.model)

@@ -2,15 +2,14 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import tensorflow.keras.backend as K
 from typing import Dict, Any
 
+from .model_utils import (
+    root_mean_squared_error, get_standard_metrics, get_common_custom_objects,
+    load_model_with_fallback, get_model_summary_string, count_model_parameters,
+    create_dummy_vertex_connection
+)
 from config.dnn_config import DNNConfig
-
-
-def root_mean_squared_error(y_true, y_pred):
-    """Custom RMSE metric."""
-    return K.sqrt(K.mean(K.square(y_pred - y_true)))
 
 
 class MaskedAttentionPooling(layers.Layer):
@@ -112,6 +111,23 @@ class DNNModel:
         """
         return self._build_model_internal(feature_dim, vertex_dim, use_mask=True)
     
+    def build_model_with_jets_tracks(self, feature_dim: int, vertex_dim: int, 
+                                     jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Build the DNN model architecture with jets and tracks support.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features  
+            jet_feature_dim: Dimension of jet features
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        return self._build_model_with_jets_tracks_internal(feature_dim, vertex_dim, 
+                                                          jet_feature_dim, track_feature_dim)
+    
     def _build_model_internal(self, feature_dim: int, vertex_dim: int, use_mask: bool = False) -> tf.keras.Model:
         """
         Internal method to build the DNN model architecture.
@@ -155,8 +171,24 @@ class DNNModel:
                 
             x = layers.Dropout(self.config.cell_dropout_rate, name=f'cell_dropout_{i}')(x)
         
-        # Stage 2: Attention pooling
-        if self.config.use_attention_pooling:
+        # Stage 2: Attention pooling with physics features
+        use_physics = getattr(self.config, 'use_physics_informed_features', False)
+        if use_physics and feature_dim > 10:
+            # Use physics weights (cell_weight is 5th from end in physics features)
+            physics_weights = cell_inputs[:, :, -5]
+            # Normalize weights within each sequence to avoid gradient issues
+            physics_weights = tf.nn.softmax(physics_weights, axis=1)
+            weights = tf.expand_dims(physics_weights, axis=-1)
+            if current_mask is not None:
+                mask_expanded = tf.expand_dims(tf.cast(current_mask, tf.float32), axis=-1)
+                weights = weights * mask_expanded
+            # Normalize weights
+            weight_sum = tf.reduce_sum(weights, axis=1, keepdims=True)
+            weight_sum = tf.maximum(weight_sum, 1e-8)
+            weights = weights / weight_sum
+            # Apply weighted pooling
+            cell_representation = tf.reduce_sum(x * weights, axis=1)
+        elif self.config.use_attention_pooling:
             cell_representation = MaskedAttentionPooling(
                 hidden_units=self.config.attention_hidden_units,
                 name='attention_pooling'
@@ -179,9 +211,8 @@ class DNNModel:
             vertex_processed = vertex_inputs
             combined = layers.Concatenate(name='combine_features')([cell_representation, vertex_processed])
         else:
-            # Create dummy connection for vertex features
-            vertex_processed = layers.Dense(cell_representation.shape[-1])(vertex_inputs)
-            vertex_zeros = layers.Lambda(lambda x: x * 0)(vertex_processed)
+            # Create simplified dummy connection for unused vertex features
+            vertex_zeros = create_dummy_vertex_connection(vertex_inputs, cell_representation.shape[-1])
             combined = layers.Add(name='add_dummy_vertex')([cell_representation, vertex_zeros])
         
         # Stage 4: Event-level processing
@@ -211,7 +242,103 @@ class DNNModel:
         model.compile(
             optimizer=optimizer,
             loss=self._get_loss_function(),
-            metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
+            metrics=get_standard_metrics()
+        )
+        
+        self.model = model
+        return model
+    
+    def _build_model_with_jets_tracks_internal(self, feature_dim: int, vertex_dim: int,
+                                              jet_feature_dim: int, track_feature_dim: int) -> tf.keras.Model:
+        """
+        Internal method to build the DNN model with jets and tracks.
+        
+        Args:
+            feature_dim: Dimension of cell features
+            vertex_dim: Dimension of vertex features
+            jet_feature_dim: Dimension of jet features  
+            track_feature_dim: Dimension of track features
+            
+        Returns:
+            Compiled Keras model with multi-input support
+        """
+        # Stage 1: Input layers
+        cell_inputs = layers.Input(shape=(None, feature_dim), name='cell_inputs')
+        vertex_inputs = layers.Input(shape=(vertex_dim,), name='vertex_inputs') 
+        jet_inputs = layers.Input(shape=(self.config.max_jets, jet_feature_dim), name='jet_inputs')
+        track_inputs = layers.Input(shape=(self.config.max_tracks, track_feature_dim), name='track_inputs')
+        mask_inputs = layers.Input(shape=(None,), dtype=tf.bool, name='attention_mask')
+        
+        # Stage 2: Cell processing
+        x = cell_inputs
+        for i, units in enumerate(self.config.cell_encoder_units):
+            x = layers.Dense(units, activation=self.config.cell_activation, name=f'cell_encoder_{i}')(x)
+            x = layers.Dropout(self.config.cell_dropout_rate, name=f'cell_dropout_{i}')(x)
+        
+        # Cell attention pooling (masked)
+        if self.config.use_attention_pooling:
+            cell_representation = MaskedAttentionPooling(
+                hidden_units=self.config.attention_hidden_units,
+                name='cell_attention_pooling'
+            )(x, mask=mask_inputs)
+        else:
+            # Use masked global average pooling
+            mask_expanded = tf.expand_dims(tf.cast(mask_inputs, tf.float32), axis=-1)
+            masked_sum = tf.reduce_sum(x * mask_expanded, axis=1)
+            mask_count = tf.reduce_sum(mask_expanded, axis=1)
+            mask_count = tf.maximum(mask_count, 1.0)
+            cell_representation = masked_sum / mask_count
+        
+        # Stage 3: Jet processing
+        jet_x = jet_inputs
+        jet_x = layers.Dense(64, activation='relu', name='jet_encoder_0')(jet_x)
+        jet_x = layers.Dropout(0.1, name='jet_dropout_0')(jet_x)
+        jet_x = layers.Dense(32, activation='relu', name='jet_encoder_1')(jet_x) 
+        jet_x = layers.Dropout(0.1, name='jet_dropout_1')(jet_x)
+        jet_representation = layers.GlobalAveragePooling1D(name='jet_global_pool')(jet_x)
+        
+        # Stage 4: Track processing
+        track_x = track_inputs
+        track_x = layers.Dense(64, activation='relu', name='track_encoder_0')(track_x)
+        track_x = layers.Dropout(0.1, name='track_dropout_0')(track_x)
+        track_x = layers.Dense(32, activation='relu', name='track_encoder_1')(track_x)
+        track_x = layers.Dropout(0.1, name='track_dropout_1')(track_x)
+        track_representation = layers.GlobalAveragePooling1D(name='track_global_pool')(track_x)
+        
+        # Stage 5: Feature combination  
+        # Don't use vertex features as specified in requirements
+        combined = layers.Concatenate(name='combine_all_features')([
+            cell_representation, jet_representation, track_representation
+        ])
+        
+        # Stage 6: Event-level processing
+        x = combined
+        for i, (units, dropout_rate) in enumerate(zip(
+            self.config.event_encoder_units,
+            self.config.event_dropout_rates
+        )):
+            x = layers.Dense(units, activation='relu', name=f'event_encoder_{i}')(x)
+            
+            if self.config.use_batch_norm:
+                x = layers.BatchNormalization(name=f'event_bn_{i}')(x)
+                
+            x = layers.Dropout(dropout_rate, name=f'event_dropout_{i}')(x)
+        
+        # Output layer
+        output = layers.Dense(1, name='vertex_time')(x)
+        
+        # Create model with all inputs
+        model = models.Model(
+            inputs=[cell_inputs, vertex_inputs, jet_inputs, track_inputs, mask_inputs], 
+            outputs=output
+        )
+        
+        # Compile model
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.learning_rate)
+        model.compile(
+            optimizer=optimizer,
+            loss=self._get_loss_function(),
+            metrics=get_standard_metrics()
         )
         
         self.model = model
@@ -250,66 +377,18 @@ class DNNModel:
         Returns:
             Loaded Keras model
         """
-        custom_objects = {
-            'root_mean_squared_error': root_mean_squared_error,
-            'MaskedAttentionPooling': MaskedAttentionPooling,
-            'mse': tf.keras.losses.MeanSquaredError(),
-            'mae': tf.keras.metrics.MeanAbsoluteError(),
-            'mse_metric': tf.keras.metrics.MeanSquaredError(name='mse_metric'),
-            'Huber': tf.keras.losses.Huber
-        }
+        # Combine common custom objects with DNN-specific ones
+        custom_objects = get_common_custom_objects()
+        custom_objects.update({
+            'MaskedAttentionPooling': MaskedAttentionPooling
+        })
         
-        try:
-            model = models.load_model(filepath, custom_objects=custom_objects)
-            print(f"Model loaded successfully with compilation intact.")
-            return model
-        except Exception as e:
-            print(f"Error loading model from {filepath}: {e}")
-            if filepath.endswith('.h5'):
-                print("Attempting alternative loading method for .h5 file...")
-                try:
-                    model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
-                    print("Model architecture loaded successfully. Re-compiling...")
-                    
-                    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-                    model.compile(
-                        optimizer=optimizer,
-                        loss='mse',
-                        metrics=['mae', root_mean_squared_error, tf.keras.metrics.MeanSquaredError(name='mse_metric')]
-                    )
-                    print("Model re-compiled successfully.")
-                    return model
-                except Exception as e2:
-                    print(f"Alternative loading method also failed: {e2}")
-                    raise e2
-            else:
-                raise e
+        return load_model_with_fallback(filepath, custom_objects)
     
     def get_model_summary(self) -> str:
         """Get model summary as string."""
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        summary_lines = []
-        self.model.summary(print_fn=lambda x: summary_lines.append(x))
-        return '\n'.join(summary_lines)
+        return get_model_summary_string(self.model)
     
     def count_parameters(self) -> Dict[str, int]:
-        """
-        Count model parameters.
-        
-        Returns:
-            Dictionary with parameter counts
-        """
-        if self.model is None:
-            raise ValueError("Model has not been built yet.")
-            
-        total_params = self.model.count_params()
-        trainable_params = sum([K.count_params(w) for w in self.model.trainable_weights])
-        non_trainable_params = total_params - trainable_params
-        
-        return {
-            'total': total_params,
-            'trainable': trainable_params,
-            'non_trainable': non_trainable_params
-        }
+        """Count model parameters."""
+        return count_model_parameters(self.model)

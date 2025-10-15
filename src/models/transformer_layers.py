@@ -23,8 +23,25 @@ class PositionalEncoding(layers.Layer):
     def call(self, inputs):
         """Apply positional encoding to inputs."""
         sequence_length = tf.shape(inputs)[1]
-        positions = tf.range(start=0, limit=sequence_length, delta=1)
-        return inputs + self.pos_encoding(positions)
+        # Ensure positions don't exceed max_position - 1
+        clipped_length = tf.minimum(sequence_length, self.max_position)
+        positions = tf.range(start=0, limit=clipped_length, delta=1)
+        pos_embeddings = self.pos_encoding(positions)
+        
+        # If sequence is longer than max_position, repeat the last position encoding
+        def extend_positions():
+            last_pos = pos_embeddings[-1:, :]
+            extra_length = sequence_length - self.max_position
+            extra_positions = tf.tile(last_pos, [extra_length, 1])
+            return tf.concat([pos_embeddings, extra_positions], axis=0)
+        
+        final_pos_embeddings = tf.cond(
+            sequence_length > self.max_position,
+            extend_positions,
+            lambda: pos_embeddings
+        )
+            
+        return inputs + final_pos_embeddings
     
     def get_config(self):
         """Get layer configuration for serialization."""

@@ -43,10 +43,24 @@ class BaseConfig:
     min_cells: int = 3
     cell_selection_feature: str = 'Cell_e'
     
+    # NEW: Jet and track parameters
+    max_jets: int = 7
+    min_jets: int = 1
+    max_tracks: int = 30
+    min_tracks: int = 1
+    
+    # NEW: Track eta cut parameters
+    use_track_eta_cut: bool = False
+    track_eta_cut_value: float = 2.5
+    
     # Feature selection parameters
     use_spatial_features: bool = False
     use_track_features: bool = True   # NEW: Include track matching features
     use_jet_features: bool = False    # NEW: Include jet matching features
+    
+    # NEW: Event-level jet and track features
+    use_event_jets: bool = False      # Use event-level jet features
+    use_event_tracks: bool = False    # Use event-level track features
     
     # Cell filtering parameters
     require_valid_cells: bool = True
@@ -56,8 +70,15 @@ class BaseConfig:
     
     # Time quality cut parameters
     use_time_quality_cut: bool = False      # Enable time-based quality filtering
-    vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ns]
+    vertex_time_sigma: float = 175.0        # HS vertex time uncertainty [ps]
     time_quality_n_sigma: float = 3.0       # N-sigma cut threshold
+    
+    # Detector calibration parameters
+    use_detector_params: bool = False       # Enable detector calibration (subtract mean from cell time)
+    
+    # Baseline method filtering parameters
+    use_baseline_method_filter: bool = False # Enable baseline method performance filtering
+    baseline_method_threshold: float = 500.0 # Baseline error threshold in ps (±500 ps default)
     
     # Model architecture parameters
     use_attention_mask: bool = True  # NEW: Enable attention mask support
@@ -81,6 +102,7 @@ class BaseConfig:
     # Model save parameters - Updated to use external directories
     models_base_dir: str = None  # Will be set in __post_init__
     model_name: str = "base_model"
+    model_architecture: str = "transformer"  # Default to transformer
     
     # Feature definitions
     spatial_features: List[str] = None
@@ -88,6 +110,13 @@ class BaseConfig:
     all_cell_features: List[str] = None
     track_features: List[str] = None      # NEW: Track matching features
     jet_features: List[str] = None        # NEW: Jet matching features
+    
+    # NEW: Event-level jet and track features
+    event_jet_features: List[str] = None
+    event_track_features: List[str] = None
+    jet_padding_values: Dict[str, float] = None
+    track_padding_values: Dict[str, float] = None
+    
     skip_normalization: List[str] = None
     
     def __post_init__(self):
@@ -133,6 +162,30 @@ class BaseConfig:
             
         if self.additional_cell_filters is None:
             self.additional_cell_filters = {}
+            
+        # NEW: Initialize event-level jet and track features
+        if self.event_jet_features is None:
+            self.event_jet_features = ['pt', 'eta', 'phi', 'width']
+            
+        if self.event_track_features is None:
+            self.event_track_features = ['pt', 'eta', 'phi', 'd0', 'z0']
+            
+        if self.jet_padding_values is None:
+            self.jet_padding_values = {
+                'pt': -1.0,
+                'eta': -999.0,
+                'phi': -999.0,
+                'width': -1.0
+            }
+            
+        if self.track_padding_values is None:
+            self.track_padding_values = {
+                'pt': -1.0,
+                'eta': -999.0,
+                'phi': -999.0,
+                'd0': -999.0,
+                'z0': -999.0
+            }
     
     @property
     def cell_features(self) -> List[str]:
@@ -194,6 +247,10 @@ class BaseConfig:
         # NEW: Add time quality cut description
         if self.use_time_quality_cut:
             conditions.append(f"|cell_time| < {self.time_quality_n_sigma}σ_total")
+            
+        # NEW: Add baseline method filtering description
+        if self.use_baseline_method_filter:
+            conditions.append(f"baseline_error < ±{self.baseline_method_threshold} ps")
             
         for key, value in self.additional_cell_filters.items():
             conditions.append(f"{key} == {value}")
@@ -354,7 +411,8 @@ class BaseConfig:
             ],
             "Cell Filtering Parameters": [
                 'require_valid_cells', 'use_cell_track_matching', 'use_cell_jet_matching', 
-                'additional_cell_filters', 'use_time_quality_cut', 'vertex_time_sigma', 'time_quality_n_sigma'
+                'additional_cell_filters', 'use_time_quality_cut', 'vertex_time_sigma', 'time_quality_n_sigma',
+                'use_baseline_method_filter', 'baseline_method_threshold'
             ],
             "Model Architecture Parameters": [
                 'use_attention_mask'
@@ -409,6 +467,40 @@ class BaseConfig:
         
         print("=" * 60)
     
+    def load_calibration_data(self) -> Dict[str, List[float]]:
+        """
+        Load calibration data for baseline method calculations.
+        
+        Returns:
+            Dictionary with calibration parameters and sigma values
+        """
+        # Default calibration file for baseline calculations
+        if not hasattr(self, 'calibration_data_file') or not self.calibration_data_file:
+            self.calibration_data_file = "HStrackmatching_calibration.txt"
+        
+        # Check if calibration file name is empty or None
+        if not self.calibration_data_file or self.calibration_data_file.strip() == "":
+            raise FileNotFoundError("Calibration data file name is empty or not specified")
+        
+        calibration_path = os.path.join("calibration_data", self.calibration_data_file)
+        
+        if not os.path.exists(calibration_path):
+            raise FileNotFoundError(f"Calibration data file not found: {calibration_path}")
+        
+        calibration_data = {}
+        
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        return calibration_data
+    
     def validate_config(self):
         """Validate configuration parameters."""
         # Basic validations
@@ -424,7 +516,39 @@ class BaseConfig:
         if self.use_time_quality_cut:
             assert self.vertex_time_sigma > 0, "vertex_time_sigma must be positive"
             assert self.time_quality_n_sigma > 0, "time_quality_n_sigma must be positive"
-            print(f"Note: Time quality cut enabled. σ_vertex={self.vertex_time_sigma} ns, {self.time_quality_n_sigma}σ cut")
+            if self.use_detector_params:
+                print(f"Note: Time quality cut WITH detector calibration.")
+                print(f"      Cell times are calibrated (subtract detector means), then cut with σ_total = √(σ_vertex² + σ_cell²)")
+            else:
+                print(f"Note: Time quality cut WITHOUT detector calibration.")
+                print(f"      Cell times are NOT calibrated (raw times used), but cut with σ_total = √(σ_vertex² + σ_cell²)")
+            print(f"      σ_vertex={self.vertex_time_sigma} ps, {self.time_quality_n_sigma}σ cut")
+        
+        # Detector calibration validation  
+        if self.use_detector_params:
+            print("Note: Detector calibration enabled (cell times will be adjusted by detector parameters)")
+            # Try to load calibration data to ensure it's available
+            try:
+                self.load_calibration_data()
+                print("✓ Calibration data successfully loaded")
+            except Exception as e:
+                print(f"Warning: Could not load calibration data: {e}")
+        
+        # Track eta cut validations
+        if self.use_track_eta_cut:
+            assert self.track_eta_cut_value > 0, "track_eta_cut_value must be positive"
+            print(f"Note: Track eta cut enabled. |eta| <= {self.track_eta_cut_value}")
+        
+        # Baseline method filter validations
+        if self.use_baseline_method_filter:
+            assert self.baseline_method_threshold > 0, "baseline_method_threshold must be positive"
+            print(f"Note: Baseline method filter enabled. Threshold: ±{self.baseline_method_threshold} ps")
+            # Try to load calibration data to ensure it's available
+            try:
+                self.load_calibration_data()
+                print("✓ Calibration data successfully loaded for baseline method calculations")
+            except Exception as e:
+                print(f"Warning: Could not load calibration data for baseline method filtering: {e}")
         
         # Loss function validations
         assert self.loss_function in ['mse', 'huber'], f"loss_function must be 'mse' or 'huber', got '{self.loss_function}'"

@@ -1,0 +1,1267 @@
+#!/usr/bin/env python3
+"""
+Baseline Time Reconstruction Analysis Tool
+
+This script performs detailed analysis of baseline time reconstruction methods,
+focusing on understanding why certain events have poor reconstruction performance.
+It analyzes the worst-performing events and compares feature distributions.
+"""
+
+import os
+import sys
+import h5py
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import yaml
+from pathlib import Path
+import argparse
+from datetime import datetime
+from scipy.optimize import curve_fit
+from typing import List, Tuple, Dict, Any
+import shutil
+import logging
+
+# Set matplotlib style to match compare_delta_t0.py
+mpl.rcParams['figure.dpi'] = 120
+mpl.rcParams['savefig.dpi'] = 300
+mpl.rcParams['font.size'] = 10
+mpl.rcParams['axes.linewidth'] = 1.2
+mpl.rcParams['xtick.major.width'] = 1.0
+mpl.rcParams['ytick.major.width'] = 1.0
+mpl.rcParams['lines.linewidth'] = 1.5
+mpl.rcParams['lines.markersize'] = 6
+mpl.rcParams['legend.frameon'] = True
+mpl.rcParams['legend.framealpha'] = 0.9
+mpl.rcParams['legend.edgecolor'] = 'gray'
+mpl.rcParams['legend.fancybox'] = True
+mpl.rcParams['savefig.format'] = 'png'
+mpl.rcParams['savefig.bbox'] = 'tight'
+mpl.rcParams['savefig.pad_inches'] = 0.1
+
+# Add the src directory to the path to import DataLoader and BaseConfig
+sys.path.append(str(Path(__file__).parent.parent / "src"))
+sys.path.append(str(Path(__file__).parent.parent))
+from data.data_loader import DataLoader
+from config.base_config import BaseConfig
+
+
+class BaselineAnalysisConfig(BaseConfig):
+    """Configuration class for baseline analysis, inheriting from BaseConfig."""
+    
+    def __init__(self, config_file: str = None):
+        """Initialize configuration from YAML file."""
+        if config_file is None:
+            config_file = Path(__file__).parent / "baseline_analysis_config.yaml"
+        
+        with open(config_file, 'r') as f:
+            config_data = yaml.safe_load(f)
+        
+        # Initialize with defaults from BaseConfig
+        super().__init__()
+        
+        # Override with values from YAML file
+        for key, value in config_data.items():
+            setattr(self, key, value)
+        
+        # Run post_init to setup feature lists
+        self.__post_init__()
+        
+        # Load calibration data
+        self.calibration_data = self.load_calibration_data()
+        
+        # Energy bins for calibration  
+        self.energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    def load_calibration_data(self) -> Dict[str, List[float]]:
+        """Load calibration data from external file."""
+        # Try current directory first, then parent directory
+        calibration_path = Path("calibration_data") / self.calibration_data_file
+        if not calibration_path.exists():
+            calibration_path = Path("../calibration_data") / self.calibration_data_file
+        
+        if not calibration_path.exists():
+            raise FileNotFoundError(f"Calibration data file not found. Tried paths:\n"
+                                  f"  - calibration_data/{self.calibration_data_file}\n"
+                                  f"  - ../calibration_data/{self.calibration_data_file}\n"
+                                  f"Please ensure calibration data is available.")
+        
+        print(f"Loading calibration data from: {calibration_path}")
+        
+        calibration_data = {}
+        with open(calibration_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if ':' in line:
+                        key, values_str = line.split(':', 1)
+                        key = key.strip()
+                        values = [float(x.strip()) for x in values_str.split(',')]
+                        calibration_data[key] = values
+        
+        return calibration_data
+
+
+def setup_logging(output_dir: Path) -> logging.Logger:
+    """Setup logging configuration."""
+    log_file = output_dir / "analysis_log.txt"
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    return logging.getLogger(__name__)
+
+
+def load_and_filter_data(config: BaselineAnalysisConfig, logger: logging.Logger) -> Tuple[List, np.ndarray, List]:
+    """Load and filter data from HDF5 files using optimized filtering approach."""
+    logger.info(f"Loading data from {config.data_dir}")
+    logger.info(f"Number of files: {config.num_files}")
+    logger.info(f"Track matching: {config.use_track_features}, Jet matching: {config.use_jet_features}")
+    
+    all_cell_sequences = []
+    all_vertex_times = []
+    all_raw_cell_data = []  # Store raw cell data for feature analysis
+    
+    total_events = 0
+    valid_events = 0
+    total_cells_before = 0
+    total_cells_after = 0
+    
+    for i in range(config.num_files):
+        file_path = os.path.join(config.data_dir, f"output_{i:03d}.h5")
+        
+        if not os.path.exists(file_path):
+            logger.warning(f"File {file_path} not found, skipping...")
+            continue
+            
+        logger.info(f"Processing {file_path}...")
+        
+        with h5py.File(file_path, 'r') as f:
+            vertex_data = f['HSvertex'][:]
+            cells_data = f['cells'][:]
+            
+            total_events += len(vertex_data)
+            
+            for event_idx in range(len(vertex_data)):
+                vertex_time = vertex_data[event_idx]['HSvertex_time']
+                event_cells = cells_data[event_idx]
+                
+                if len(event_cells) == 0:
+                    continue
+                
+                total_cells_before += len(event_cells)
+                
+                # Apply optimized cell filtering
+                filtered_cells = apply_optimized_cell_filtering(event_cells, config)
+                
+                if len(filtered_cells) < config.min_cells:
+                    continue
+                
+                # Apply baseline method filter if enabled
+                if config.use_baseline_method_filter:
+                    baseline_error = calculate_baseline_t0_error(filtered_cells, vertex_time, config)
+                    if baseline_error > config.baseline_method_threshold:
+                        continue
+                
+                total_cells_after += len(filtered_cells)
+                valid_events += 1
+                
+                # Store filtered cell data for feature analysis
+                all_raw_cell_data.append(filtered_cells)
+                
+                # Convert to list format for processing
+                cell_sequence = []
+                for cell in filtered_cells:
+                    cell_features = [
+                        cell['Cell_time_TOF_corrected'],
+                        cell['Cell_e'], 
+                        cell['Cell_Barrel'],
+                        cell['Cell_layer']
+                    ]
+                    cell_sequence.append(cell_features)
+                
+                all_cell_sequences.append(cell_sequence)
+                all_vertex_times.append(vertex_time)
+    
+    logger.info(f"Data loading and filtering summary:")
+    logger.info(f"  Total events: {total_events}")
+    logger.info(f"  Valid events after filtering: {valid_events}")
+    logger.info(f"  Total cells before filtering: {total_cells_before}")
+    logger.info(f"  Total cells after filtering: {total_cells_after}")
+    if total_events > 0:
+        event_retention_rate = (valid_events / total_events) * 100
+        logger.info(f"  Event retention rate: {event_retention_rate:.1f}%")
+    if total_cells_before > 0:
+        cell_retention_rate = (total_cells_after / total_cells_before) * 100
+        logger.info(f"  Cell retention rate: {cell_retention_rate:.1f}%")
+    
+    logger.info(f"Applied filters:")
+    logger.info(f"  - Valid cells: {config.require_valid_cells}")
+    if config.use_track_features:
+        logger.info(f"  - Track matching: {config.use_cell_track_matching}")
+    if config.use_jet_features:
+        logger.info(f"  - Jet matching: {config.use_cell_jet_matching}")
+    logger.info(f"  - Time quality cut: {config.use_time_quality_cut}")
+    if config.use_time_quality_cut:
+        logger.info(f"    └─ Formula: |cell_time| <= sqrt({config.vertex_time_sigma}^2 + sigma_cell^2) * {config.time_quality_n_sigma}")
+    logger.info(f"  - Layer filtering: layers 1, 2, 3 only")
+    logger.info(f"  - Baseline method filter: {config.use_baseline_method_filter}")
+    if config.use_baseline_method_filter:
+        logger.info(f"    └─ Threshold: ±{config.baseline_method_threshold:.1f} ps")
+    
+    return all_cell_sequences, np.array(all_vertex_times), all_raw_cell_data
+
+
+def apply_optimized_cell_filtering(event_cells: np.ndarray, config: BaselineAnalysisConfig) -> np.ndarray:
+    """Apply optimized cell filtering using the validated logic from DataLoader."""
+    mask = np.ones(len(event_cells), dtype=bool)
+    
+    # Apply valid cell filter
+    if config.require_valid_cells:
+        valid_mask = event_cells['valid'] == True
+        mask = mask & valid_mask
+    
+    # Apply cell-track matching filter
+    if config.use_cell_track_matching:
+        track_matching_mask = event_cells['matched_track_HS'] == 1
+        mask = mask & track_matching_mask
+    
+    # Apply cell-jet matching filter
+    if config.use_cell_jet_matching:
+        if 'cell_jet_matched' in event_cells.dtype.names:
+            jet_matching_mask = event_cells['cell_jet_matched'] == True
+            mask = mask & jet_matching_mask
+    
+    # Apply layer filtering - only keep cells with layers 1, 2, 3
+    if 'Cell_layer' in event_cells.dtype.names:
+        layer_mask = np.isin(event_cells['Cell_layer'], [1, 2, 3])
+        mask = mask & layer_mask
+    
+    # Apply additional custom filters
+    if config.additional_cell_filters:
+        for filter_key, filter_value in config.additional_cell_filters.items():
+            if filter_key in event_cells.dtype.names:
+                additional_mask = event_cells[filter_key] == filter_value
+                mask = mask & additional_mask
+    
+    # Apply basic filtering first
+    filtered_cells = event_cells[mask]
+    
+    # Apply time quality cut
+    if config.use_time_quality_cut:
+        filtered_cells = apply_time_quality_cut(filtered_cells, config)
+    
+    return filtered_cells
+
+
+def apply_time_quality_cut(event_cells: np.ndarray, config: BaselineAnalysisConfig) -> np.ndarray:
+    """Apply time quality cut based on statistical uncertainty using correct formula."""
+    if not config.use_time_quality_cut or len(event_cells) == 0:
+        return event_cells
+    
+    # Sigma lookup tables using pre-loaded calibration data
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
+    }
+    
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    mask = np.ones(len(event_cells), dtype=bool)
+    
+    for i, cell in enumerate(event_cells):
+        try:
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            energy = cell['Cell_e']
+            cell_time = cell['Cell_time_TOF_corrected']
+            
+            # Skip cells with invalid layer
+            if layer not in [1, 2, 3]:
+                mask[i] = False
+                continue
+            
+            # Get sigma for this cell
+            sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+            energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+            
+            # Add bounds checking for array access
+            if energy_bin_idx >= len(sigma_params):
+                energy_bin_idx = len(sigma_params) - 1
+            elif energy_bin_idx < 0:
+                energy_bin_idx = 0
+            
+            sigma_cell = sigma_params[energy_bin_idx]
+            
+            # Calculate total uncertainty: σ_total = √(σ_vertex² + σ_cell²)
+            sigma_total = np.sqrt(config.vertex_time_sigma**2 + sigma_cell**2)
+            
+            # Apply n-sigma cut: |cell_time| < n_sigma × σ_total
+            cut_threshold = config.time_quality_n_sigma * sigma_total
+            
+            if abs(cell_time) > cut_threshold:
+                mask[i] = False
+                
+        except (KeyError, ValueError, IndexError):
+            # Skip cells with missing or invalid data
+            mask[i] = False
+    
+    return event_cells[mask]
+
+
+def calculate_baseline_t0_error(event_cells: np.ndarray, true_vertex_time: float, config: BaselineAnalysisConfig) -> float:
+    """Calculate baseline t0 error for baseline method filtering."""
+    if len(event_cells) == 0:
+        return float('inf')
+    
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    # Parameter and sigma lookup tables
+    param_lookup = {
+        (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_params'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_params'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_params'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_params'],  # Endcap, Layer 3
+    }
+    
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
+    }
+    
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    
+    for cell in event_cells:
+        try:
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            energy = cell['Cell_e']
+            time_tof = cell['Cell_time_TOF_corrected']
+            
+            # Skip cells with invalid layer
+            if layer not in [1, 2, 3]:
+                continue
+            
+            # Get calibration parameters and sigma
+            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+            sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+            
+            energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+            
+            # Add bounds checking
+            if energy_bin_idx >= len(detector_params):
+                energy_bin_idx = len(detector_params) - 1
+            elif energy_bin_idx < 0:
+                energy_bin_idx = 0
+            
+            calibration_value = detector_params[energy_bin_idx]
+            sigma = sigma_params[energy_bin_idx]
+            
+            # Apply calibration
+            calibrated_time = time_tof - calibration_value
+            
+            # Weight = 1/sigma^2
+            weight = 1.0 / (sigma * sigma)
+            
+            weighted_sum += weight * calibrated_time
+            weight_sum += weight
+            
+        except (KeyError, ValueError, IndexError):
+            continue
+    
+    if weight_sum > 0:
+        baseline_t0 = weighted_sum / weight_sum
+        return abs(baseline_t0 - true_vertex_time)
+    else:
+        return float('inf')
+
+
+def get_energy_bin_index(energy: float, energy_bins: List[float]) -> int:
+    """Get energy bin index for calibration parameter lookup."""
+    if energy < 1.0:
+        return 0
+    
+    for i in range(len(energy_bins) - 1):
+        if energy_bins[i] <= energy < energy_bins[i + 1]:
+            return i
+    
+    return len(energy_bins) - 2
+
+
+# Removed apply_time_calibration function - calibration is now handled within DataLoader's baseline calculation
+
+
+def calculate_baseline_t0(raw_cell_data: List, vertex_times: np.ndarray, 
+                         config: BaselineAnalysisConfig, logger: logging.Logger) -> Tuple[np.ndarray, np.ndarray]:
+    """Calculate baseline t0 for each event using optimized implementation."""
+    logger.info("Calculating baseline t0...")
+    
+    # Energy bins for calibration
+    energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
+    
+    # Parameter and sigma lookup tables
+    param_lookup = {
+        (1, 1): config.calibration_data['EMB1_params'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_params'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_params'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_params'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_params'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_params'],  # Endcap, Layer 3
+    }
+    
+    sigma_lookup = {
+        (1, 1): config.calibration_data['EMB1_sigma'],  # Barrel, Layer 1
+        (1, 2): config.calibration_data['EMB2_sigma'],  # Barrel, Layer 2
+        (1, 3): config.calibration_data['EMB3_sigma'],  # Barrel, Layer 3
+        (0, 1): config.calibration_data['EME1_sigma'],  # Endcap, Layer 1
+        (0, 2): config.calibration_data['EME2_sigma'],  # Endcap, Layer 2
+        (0, 3): config.calibration_data['EME3_sigma'],  # Endcap, Layer 3
+    }
+    
+    baseline_t0 = []
+    
+    for event_idx, event_cells in enumerate(raw_cell_data):
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        
+        original_cell_times = []
+        calibrated_cell_times = []
+        
+        for cell in event_cells:
+            try:
+                barrel = int(cell['Cell_Barrel'])
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
+                time_tof = cell['Cell_time_TOF_corrected']
+                
+                original_cell_times.append(time_tof)
+                
+                # Skip cells with invalid layer
+                if layer not in [1, 2, 3]:
+                    continue
+                
+                # Get calibration parameters and sigma
+                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
+                
+                energy_bin_idx = get_energy_bin_index(energy, energy_bins)
+                
+                # Add bounds checking
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
+                calibration_value = detector_params[energy_bin_idx]
+                sigma = sigma_params[energy_bin_idx]
+                
+                # Apply calibration
+                calibrated_time = time_tof - calibration_value
+                calibrated_cell_times.append(calibrated_time)
+                
+                # Weight = 1/sigma^2
+                weight = 1.0 / (sigma * sigma)
+                
+                weighted_sum += weight * calibrated_time
+                weight_sum += weight
+                
+            except (KeyError, ValueError, IndexError):
+                continue
+        
+        if weight_sum > 0:
+            t0 = weighted_sum / weight_sum
+        else:
+            t0 = 0.0
+        
+        baseline_t0.append(t0)
+        
+        # Print debug info for first few events
+        if event_idx < 10:
+            logger.info(f"Event {event_idx}:")
+            logger.info(f"  Truth vertex time: {vertex_times[event_idx]:.4f} ps")
+            logger.info(f"  Number of filtered cells: {len(original_cell_times)}")
+            
+            original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
+            logger.info(f"  Original cell times: {original_times_str} ps")
+            
+            calibrated_times_str = ", ".join([f'{t:.1f}' for t in calibrated_cell_times])
+            logger.info(f"  Calibrated cell times: {calibrated_times_str} ps")
+            
+            logger.info(f"  Reconstructed vertex time: {t0:.4f} ps")
+            logger.info(f"  Error (reco - truth): {t0 - vertex_times[event_idx]:.4f} ps")
+    
+    baseline_t0 = np.array(baseline_t0)
+    t0_errors = baseline_t0 - vertex_times
+    
+    logger.info(f"Baseline t0 calculation completed for {len(baseline_t0)} events")
+    
+    return baseline_t0, t0_errors
+
+
+def analyze_worst_events(baseline_t0: np.ndarray, vertex_times: np.ndarray, 
+                        raw_cell_data: List, config: BaselineAnalysisConfig, 
+                        logger: logging.Logger):
+    """Analyze and log details of worst-performing events."""
+    t0_errors = baseline_t0 - vertex_times
+    error_abs = np.abs(t0_errors)
+    
+    # Get indices of worst events
+    worst_indices = np.argsort(error_abs)[-config.top_worst_events:][::-1]
+    
+    logger.info(f"\n{'='*60}")
+    logger.info(f"TOP {config.top_worst_events} WORST RECONSTRUCTION EVENTS")
+    logger.info(f"{'='*60}")
+    
+    for i, event_idx in enumerate(worst_indices):
+        logger.info(f"\nWorst Event #{i+1} (Event Index: {event_idx}):")
+        logger.info(f"  Truth time: {vertex_times[event_idx]:.4f} ps")
+        logger.info(f"  Reconstructed time: {baseline_t0[event_idx]:.4f} ps")
+        logger.info(f"  Error: {t0_errors[event_idx]:.4f} ps")
+        logger.info(f"  Absolute error: {error_abs[event_idx]:.4f} ps")
+        
+        # Analyze cell properties for this event
+        event_cells = raw_cell_data[event_idx]
+        logger.info(f"  Number of cells: {len(event_cells)}")
+        
+        # Cell energy statistics
+        cell_energies = [cell['Cell_e'] for cell in event_cells]
+        logger.info(f"  Cell energies: mean={np.mean(cell_energies):.2f}, "
+                   f"std={np.std(cell_energies):.2f}, "
+                   f"min={np.min(cell_energies):.2f}, "
+                   f"max={np.max(cell_energies):.2f} GeV")
+        
+        # Calculate calibrated times for this event
+        param_lookup = {
+            (1, 1): config.calibration_data['EMB1_params'],
+            (1, 2): config.calibration_data['EMB2_params'], 
+            (1, 3): config.calibration_data['EMB3_params'],
+            (0, 1): config.calibration_data['EME1_params'],
+            (0, 2): config.calibration_data['EME2_params'],
+            (0, 3): config.calibration_data['EME3_params'],
+        }
+        
+        original_cell_times = []
+        calibrated_cell_times = []
+        
+        for cell in event_cells:
+            time_tof = cell['Cell_time_TOF_corrected']
+            energy = cell['Cell_e']
+            barrel = int(cell['Cell_Barrel'])
+            layer = int(cell['Cell_layer'])
+            
+            original_cell_times.append(time_tof)
+            
+            # Apply calibration
+            detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
+            energy_bin_idx = get_energy_bin_index(energy, config.energy_bins)
+            calibration_value = detector_params[energy_bin_idx]
+            calibrated_time = time_tof - calibration_value
+            calibrated_cell_times.append(calibrated_time)
+        
+        # Print all cell times before and after calibration
+        original_times_str = ", ".join([f'{t:.1f}' for t in original_cell_times])
+        logger.info(f"  Original cell times (before calibration): {original_times_str} ps")
+        
+        calibrated_times_str = ", ".join([f'{t:.1f}' for t in calibrated_cell_times])  
+        logger.info(f"  Calibrated cell times (after calibration): {calibrated_times_str} ps")
+        
+        # Cell time statistics
+        logger.info(f"  Cell time statistics - Original: mean={np.mean(original_cell_times):.2f}, "
+                   f"std={np.std(original_cell_times):.2f} ps")
+        logger.info(f"  Cell time statistics - Calibrated: mean={np.mean(calibrated_cell_times):.2f}, "
+                   f"std={np.std(calibrated_cell_times):.2f} ps")
+        
+        # Layer distribution
+        layers = [cell['Cell_layer'] for cell in event_cells]
+        layer_counts = {layer: layers.count(layer) for layer in set(layers)}
+        logger.info(f"  Layer distribution: {layer_counts}")
+        
+        # Barrel/Endcap distribution
+        barrels = [cell['Cell_Barrel'] for cell in event_cells]
+        barrel_counts = {('Barrel' if b else 'Endcap'): barrels.count(b) for b in set(barrels)}
+        logger.info(f"  Detector region: {barrel_counts}")
+
+
+def gaussian(x, amplitude, mean, sigma):
+    """Gaussian function for fitting, matching compare_delta_t0.py style."""
+    return amplitude * np.exp(-0.5 * ((x - mean) / sigma) ** 2)
+
+
+def create_baseline_plots(baseline_t0: np.ndarray, vertex_times: np.ndarray, 
+                         t0_errors: np.ndarray, config: BaselineAnalysisConfig, 
+                         output_dir: Path, logger: logging.Logger):
+    """Create standard baseline check plots."""
+    logger.info("Creating baseline check plots...")
+    
+    baseline_plots_dir = output_dir / "baseline_plots"
+    baseline_plots_dir.mkdir(exist_ok=True)
+    
+    plot_range = config.plot_x_range
+    bins = np.linspace(plot_range[0], plot_range[1], config.plot_bins)
+    
+    # Plot 1: t0 error distribution (exactly matching compare_delta_t0.py style)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot histograms exactly like compare_delta_t0.py
+    ax.hist(t0_errors, bins=bins, 
+            histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+            linewidth=2, alpha=0.5)
+    
+    # Set up fitting range exactly like compare_delta_t0.py
+    fit_min = -config.gaussian_fit_range
+    fit_max = config.gaussian_fit_range
+    
+    # Fit baseline t0 error histogram (following compare_delta_t0.py exactly)
+    error_mask = (t0_errors >= fit_min) & (t0_errors <= fit_max)
+    
+    if np.sum(error_mask) > 10:
+        try:
+            fit_data = t0_errors[error_mask]
+            
+            # Create histogram data for fitting using the SAME bins as the plot
+            # This is crucial - we need to fit the exact same histogram that's displayed
+            plot_hist, plot_bin_edges = np.histogram(t0_errors, bins=bins)
+            
+            # Find the range of bins that correspond to our fitting range
+            bin_centers = (plot_bin_edges[:-1] + plot_bin_edges[1:]) / 2
+            fit_mask = (bin_centers >= fit_min) & (bin_centers <= fit_max)
+            
+            if np.sum(fit_mask) > 3:
+                fit_bin_centers = bin_centers[fit_mask]
+                fit_hist_values = plot_hist[fit_mask]
+                fit_hist_error = np.sqrt(fit_hist_values)
+                fit_hist_error[fit_hist_error == 0] = 1
+                
+                # Initial parameters for fit (amplitude, mean, sigma)
+                error_p0 = [np.max(fit_hist_values), 0, 100]
+                
+                # Only fit non-zero bins
+                nonzero_mask = fit_hist_values > 0
+                if np.sum(nonzero_mask) >= 3:
+                    error_popt, error_pcov = curve_fit(gaussian, 
+                                                      fit_bin_centers[nonzero_mask], 
+                                                      fit_hist_values[nonzero_mask], 
+                                                      p0=error_p0, 
+                                                      sigma=fit_hist_error[nonzero_mask], 
+                                                      absolute_sigma=True)
+                    error_perr = np.sqrt(np.diag(error_pcov))
+                    
+                    # Plot the fitted curves
+                    x_fit = np.linspace(min(fit_min, t0_errors.min()), 
+                                       max(fit_max, t0_errors.max()), 1000)
+                    
+                    error_fit = gaussian(x_fit, *error_popt)
+                    
+                    ax.plot(x_fit, error_fit, 'b--', linewidth=2)
+                    
+                    # Store fit results for legend
+                    fit_successful = True
+                    fit_mean = error_popt[1]
+                    fit_std = abs(error_popt[2])
+                    fit_mean_err = error_perr[1]
+                    fit_std_err = error_perr[2]
+                else:
+                    fit_successful = False
+            else:
+                fit_successful = False
+                
+        except Exception as e:
+            print(f"Error during fitting: {e}")
+            fit_successful = False
+    else:
+        fit_successful = False
+    
+    # Set axis labels and title
+    ax.set_xlabel("Time [ps]", fontsize=12)
+    ax.set_ylabel("Counts", fontsize=12)
+    ax.set_title("Delta t0", fontsize=14)
+    
+    # Increase y-axis by 10% to accommodate legend
+    ymax = max(np.histogram(t0_errors, bins=bins)[0]) * 1.1
+    ax.set_ylim(0, ymax)
+    
+    # Add custom legend exactly like compare_delta_t0.py
+    blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+    blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
+    
+    # Calculate energy cut value (using a default of 1.0 like compare_delta_t0.py)
+    energy_cut = getattr(config, 'energy_cut', 1.0)
+    
+    legend_labels = [
+        f"Cell energy > {energy_cut} GeV",
+        "Delta t0",
+    ]
+    
+    # Add empty handle for the energy cut line and the histogram patch
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch]
+    
+    # Add fit results if successful
+    if fit_successful:
+        legend_handles.append(blue_line)
+        legend_labels.append(f"Best Delta t0: μ = {fit_mean:.2f} ± {fit_mean_err:.2f}, σ = {fit_std:.2f} ± {fit_std_err:.2f} ps")
+    
+    ax.legend(legend_handles, legend_labels, 
+             loc='upper left', fontsize=9, framealpha=0.9)
+    
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(plot_range[0], plot_range[1])
+    
+    plt.tight_layout()
+    plt.savefig(baseline_plots_dir / 't0_error.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot 2: Baseline t0 distribution (styled)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(baseline_t0, bins=bins, histtype='stepfilled', 
+            color='#D46A6A', edgecolor='red', linewidth=2, alpha=0.5)
+    
+    mean_t0 = np.mean(baseline_t0)
+    std_t0 = np.std(baseline_t0)
+    ax.set_xlabel('Baseline $t_0$ [ps]', fontsize=12)
+    ax.set_ylabel('Counts', fontsize=12)
+    ax.set_title('Baseline $t_0$ Distribution', fontsize=14)
+    
+    # Add statistics in legend style
+    red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
+    legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), red_patch]
+    legend_labels = [f'μ = {mean_t0:.2f}, σ = {std_t0:.2f}, N = {len(baseline_t0)}',
+                     'Baseline $t_0$']
+    ax.legend(legend_handles, legend_labels, 
+              loc='upper right', fontsize=9, framealpha=0.9)
+    
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(plot_range[0], plot_range[1])
+    
+    plt.tight_layout()
+    plt.savefig(baseline_plots_dir / 'traditional_t0_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot 3: 2D histogram - baseline t0 vs true t0
+    plt.figure(figsize=(10, 8))
+    
+    plot_range_2d = [-1000, 1000]
+    hist, xedges, yedges = np.histogram2d(
+        vertex_times, baseline_t0,
+        bins=80,
+        range=[plot_range_2d, plot_range_2d]
+    )
+    
+    im = plt.imshow(
+        hist.T,
+        origin='lower',
+        extent=[plot_range_2d[0], plot_range_2d[1], plot_range_2d[0], plot_range_2d[1]],
+        cmap='Blues',
+        aspect='equal',
+        interpolation='bilinear'
+    )
+    
+    # Perfect prediction line
+    plt.plot(plot_range_2d, plot_range_2d, 'r--', linewidth=2,
+            label='Perfect Prediction', alpha=0.8)
+    
+    # Calculate metrics
+    correlation = np.corrcoef(vertex_times, baseline_t0)[0, 1]
+    rmse = np.sqrt(np.mean((baseline_t0 - vertex_times) ** 2))
+    mae = np.mean(np.abs(baseline_t0 - vertex_times))
+    
+    plt.xlabel('True Vertex Time [ps]')
+    plt.ylabel('Baseline t0 [ps]')
+    plt.title('Baseline t0 vs True t0')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Add colorbar
+    cbar = plt.colorbar(im, label='Count')
+    
+    # Add metrics text
+    metrics_text = f"Correlation = {correlation:.4f}\nRMSE = {rmse:.4f}\nMAE = {mae:.4f}\nN = {len(baseline_t0):,}"
+    plt.text(0.05, 0.95, metrics_text, transform=plt.gca().transAxes,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
+            fontsize=10)
+    
+    plt.xlim(plot_range_2d[0], plot_range_2d[1])
+    plt.ylim(plot_range_2d[0], plot_range_2d[1])
+    
+    plt.tight_layout()
+    plt.savefig(baseline_plots_dir / 'traditional_t0_vs_true_2d.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"Baseline plots saved to {baseline_plots_dir}")
+
+
+def create_feature_comparison_plots(raw_cell_data: List, baseline_t0: np.ndarray, t0_errors: np.ndarray, 
+                                  config: BaselineAnalysisConfig, output_dir: Path, 
+                                  logger: logging.Logger):
+    """Create feature distribution comparison plots between best and worst events."""
+    logger.info("Creating feature comparison plots...")
+    
+    feature_plots_dir = output_dir / "feature_comparison"
+    feature_plots_dir.mkdir(exist_ok=True)
+    
+    error_abs = np.abs(t0_errors)
+    sample_size = config.feature_comparison_sample_size
+    
+    # Get indices for best and worst events
+    best_indices = np.argsort(error_abs)[:sample_size]
+    worst_indices = np.argsort(error_abs)[-sample_size:]
+    
+    logger.info(f"Comparing {sample_size} best vs {sample_size} worst events")
+    
+    # Collect features for best and worst events
+    best_features = {feature: [] for feature in config.comparison_features}
+    worst_features = {feature: [] for feature in config.comparison_features}
+    
+    # Collect features from raw cell data
+    for idx in best_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            for feature in config.comparison_features:
+                if feature in cell.dtype.names:
+                    best_features[feature].append(cell[feature])
+    
+    for idx in worst_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            for feature in config.comparison_features:
+                if feature in cell.dtype.names:
+                    worst_features[feature].append(cell[feature])
+    
+    # Create comparison plots for each feature
+    for feature in config.comparison_features:
+        if len(best_features[feature]) == 0 or len(worst_features[feature]) == 0:
+            continue
+            
+        plt.figure(figsize=(12, 6))
+        
+        best_data = np.array(best_features[feature])
+        worst_data = np.array(worst_features[feature])
+        
+        # Determine appropriate bins
+        all_data = np.concatenate([best_data, worst_data])
+        bins = np.linspace(np.percentile(all_data, 1), np.percentile(all_data, 99), 50)
+        
+        # Plot histograms with improved styling
+        plt.hist(best_data, bins=bins, histtype='stepfilled', 
+                color='#4682B4', edgecolor='blue', linewidth=1.5, alpha=0.5,
+                label=f'Best events (N={len(best_data)})')
+        plt.hist(worst_data, bins=bins, histtype='stepfilled', 
+                color='#D46A6A', edgecolor='red', linewidth=1.5, alpha=0.5,
+                label=f'Worst events (N={len(worst_data)})')
+        
+        # Calculate statistics
+        best_mean, best_std = np.mean(best_data), np.std(best_data)
+        worst_mean, worst_std = np.mean(worst_data), np.std(worst_data)
+        
+        plt.xlabel(feature)
+        plt.ylabel('Count')
+        plt.title(f'Feature Comparison: {feature}')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Add statistics text
+        stats_text = f"Best: μ={best_mean:.3f}, σ={best_std:.3f}\nWorst: μ={worst_mean:.3f}, σ={worst_std:.3f}"
+        plt.text(0.95, 0.95, stats_text, transform=plt.gca().transAxes,
+                verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9),
+                fontsize=9)
+        
+        plt.tight_layout()
+        plt.savefig(feature_plots_dir / f'{feature}_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    # Create reconstruction time distribution comparison plots
+    # Get the actual reconstruction times for best and worst events
+    best_reco_times = baseline_t0[best_indices] 
+    worst_reco_times = baseline_t0[worst_indices]
+    
+    plt.figure(figsize=(12, 6))
+    bins = np.linspace(-2000, 2000, 100)
+    plt.hist(best_reco_times, bins=bins, histtype='stepfilled', 
+            color='#4682B4', edgecolor='blue', linewidth=1.5, alpha=0.5,
+            label=f'Best events (N={len(best_reco_times)})')
+    plt.hist(worst_reco_times, bins=bins, histtype='stepfilled', 
+            color='#D46A6A', edgecolor='red', linewidth=1.5, alpha=0.5,
+            label=f'Worst events (N={len(worst_reco_times)})')
+    
+    plt.xlabel('Reconstructed Time [ps]')
+    plt.ylabel('Count')
+    plt.title('Reconstruction Time Distribution Comparison')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    best_reco_mean, best_reco_std = np.mean(best_reco_times), np.std(best_reco_times)
+    worst_reco_mean, worst_reco_std = np.mean(worst_reco_times), np.std(worst_reco_times)
+    
+    stats_text = f"Best: μ={best_reco_mean:.2f}, σ={best_reco_std:.2f}\nWorst: μ={worst_reco_mean:.2f}, σ={worst_reco_std:.2f}"
+    plt.text(0.95, 0.95, stats_text, transform=plt.gca().transAxes,
+            verticalalignment='top', horizontalalignment='right',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(feature_plots_dir / 'reconstruction_time_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Create eta vs phi 2D histogram for best and worst events
+    best_eta_data = []
+    best_phi_data = []
+    worst_eta_data = []
+    worst_phi_data = []
+    
+    # Collect eta and phi data for best and worst events
+    for idx in best_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_eta' in cell.dtype.names and 'Cell_phi' in cell.dtype.names:
+                best_eta_data.append(cell['Cell_eta'])
+                best_phi_data.append(cell['Cell_phi'])
+    
+    for idx in worst_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_eta' in cell.dtype.names and 'Cell_phi' in cell.dtype.names:
+                worst_eta_data.append(cell['Cell_eta'])
+                worst_phi_data.append(cell['Cell_phi'])
+    
+    # Create eta vs phi 2D histogram subplots if data is available
+    if len(best_eta_data) > 0 and len(worst_eta_data) > 0:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        
+        # Define common bins for both histograms
+        eta_bins = np.linspace(-2.5, 2.5, 50)
+        phi_bins = np.linspace(-np.pi, np.pi, 50)
+        
+        # Create 2D histograms
+        hist_best, _, _ = np.histogram2d(best_eta_data, best_phi_data, bins=[eta_bins, phi_bins])
+        hist_worst, _, _ = np.histogram2d(worst_eta_data, worst_phi_data, bins=[eta_bins, phi_bins])
+        
+        # Find common vmax for consistent color scaling
+        vmax = max(hist_best.max(), hist_worst.max())
+        
+        # Best events subplot
+        im1 = ax1.imshow(hist_best.T, origin='lower', 
+                        extent=[-2.5, 2.5, -np.pi, np.pi],
+                        cmap='Blues', aspect='auto', vmin=0, vmax=vmax)
+        ax1.set_xlabel('η')
+        ax1.set_ylabel('φ')
+        ax1.set_title(f'Best Events: η vs φ\n(N cells = {len(best_eta_data)})')
+        
+        # Worst events subplot
+        im2 = ax2.imshow(hist_worst.T, origin='lower', 
+                        extent=[-2.5, 2.5, -np.pi, np.pi],
+                        cmap='Reds', aspect='auto', vmin=0, vmax=vmax)
+        ax2.set_xlabel('η')
+        ax2.set_ylabel('φ')
+        ax2.set_title(f'Worst Events: η vs φ\n(N cells = {len(worst_eta_data)})')
+        
+        # Add colorbars
+        plt.colorbar(im1, ax=ax1, label='Cell Count')
+        plt.colorbar(im2, ax=ax2, label='Cell Count')
+        
+        plt.tight_layout()
+        plt.savefig(feature_plots_dir / 'eta_vs_phi_2d_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    # Create layer vs barrel 2D histogram subplots for best and worst events
+    best_layer_data = []
+    best_barrel_data = []
+    worst_layer_data = []
+    worst_barrel_data = []
+    
+    # Collect layer and barrel data
+    for idx in best_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_layer' in cell.dtype.names and 'Cell_Barrel' in cell.dtype.names:
+                best_layer_data.append(cell['Cell_layer'])
+                best_barrel_data.append(cell['Cell_Barrel'])
+    
+    for idx in worst_indices:
+        event_cells = raw_cell_data[idx]
+        for cell in event_cells:
+            if 'Cell_layer' in cell.dtype.names and 'Cell_Barrel' in cell.dtype.names:
+                worst_layer_data.append(cell['Cell_layer'])
+                worst_barrel_data.append(cell['Cell_Barrel'])
+    
+    # Create layer vs barrel 2D histogram subplots if data is available
+    if len(best_layer_data) > 0 and len(worst_layer_data) > 0:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Define bins (layer: 1,2,3; barrel: 0,1)
+        layer_bins = np.linspace(0.5, 3.5, 4)
+        barrel_bins = np.linspace(-0.5, 1.5, 3)
+        
+        # Best events subplot
+        hist_best_lb, _, _ = np.histogram2d(best_layer_data, best_barrel_data, 
+                                           bins=[layer_bins, barrel_bins])
+        im1 = ax1.imshow(hist_best_lb.T, origin='lower', 
+                        extent=[0.5, 3.5, -0.5, 1.5],
+                        cmap='Greens', aspect='auto', vmin=0)
+        ax1.set_xlabel('Layer')
+        ax1.set_ylabel('Barrel (0=Endcap, 1=Barrel)')
+        ax1.set_title(f'Best Events: Layer vs Barrel\n(N cells = {len(best_layer_data)})')
+        ax1.set_xticks([1, 2, 3])
+        ax1.set_yticks([0, 1])
+        ax1.set_yticklabels(['Endcap', 'Barrel'])
+        
+        # Add text annotations for cell counts in each bin
+        for i in range(len(layer_bins)-1):
+            for j in range(len(barrel_bins)-1):
+                count = hist_best_lb[i, j]
+                if count > 0:
+                    ax1.text(i+1, j, f'{int(count)}', ha='center', va='center', 
+                            color='white' if count > hist_best_lb.max()/2 else 'black', fontweight='bold')
+        
+        # Worst events subplot
+        hist_worst_lb, _, _ = np.histogram2d(worst_layer_data, worst_barrel_data, 
+                                            bins=[layer_bins, barrel_bins])
+        im2 = ax2.imshow(hist_worst_lb.T, origin='lower', 
+                        extent=[0.5, 3.5, -0.5, 1.5],
+                        cmap='Reds', aspect='auto', vmin=0)
+        ax2.set_xlabel('Layer')
+        ax2.set_ylabel('Barrel (0=Endcap, 1=Barrel)')
+        ax2.set_title(f'Worst Events: Layer vs Barrel\n(N cells = {len(worst_layer_data)})')
+        ax2.set_xticks([1, 2, 3])
+        ax2.set_yticks([0, 1])
+        ax2.set_yticklabels(['Endcap', 'Barrel'])
+        
+        # Add text annotations for cell counts in each bin
+        for i in range(len(layer_bins)-1):
+            for j in range(len(barrel_bins)-1):
+                count = hist_worst_lb[i, j]
+                if count > 0:
+                    ax2.text(i+1, j, f'{int(count)}', ha='center', va='center', 
+                            color='white' if count > hist_worst_lb.max()/2 else 'black', fontweight='bold')
+        
+        # Add colorbars
+        plt.colorbar(im1, ax=ax1, label='Cell Count')
+        plt.colorbar(im2, ax=ax2, label='Cell Count')
+        
+        plt.tight_layout()
+        plt.savefig(feature_plots_dir / 'layer_vs_barrel_2d_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    logger.info(f"Feature comparison plots saved to {feature_plots_dir}")
+
+
+def create_additional_analysis_plots(raw_cell_data: List, baseline_t0: np.ndarray, 
+                                   vertex_times: np.ndarray, t0_errors: np.ndarray,
+                                   config: BaselineAnalysisConfig, output_dir: Path, 
+                                   logger: logging.Logger):
+    """Create additional analysis plots for understanding reconstruction failures."""
+    logger.info("Creating additional analysis plots...")
+    
+    additional_plots_dir = output_dir / "additional_analysis"
+    additional_plots_dir.mkdir(exist_ok=True)
+    
+    # Plot 1: Error vs number of cells
+    cell_counts = [len(event_cells) for event_cells in raw_cell_data]
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(cell_counts, t0_errors, alpha=0.5, s=1)
+    plt.xlabel('Number of Cells per Event')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Number of Cells')
+    plt.grid(True, alpha=0.3)
+    
+    # Add data size info
+    plt.text(0.05, 0.95, f'N = {len(cell_counts):,} events', 
+             transform=plt.gca().transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(additional_plots_dir / 'error_vs_ncells.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot 2: Error vs cell energy spread
+    energy_spreads = []
+    for event_cells in raw_cell_data:
+        energies = [cell['Cell_e'] for cell in event_cells]
+        energy_spreads.append(np.std(energies))
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(energy_spreads, t0_errors, alpha=0.5, s=1)
+    plt.xlabel('Cell Energy Spread (std) [GeV]')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Cell Energy Spread')
+    plt.grid(True, alpha=0.3)
+    
+    plt.text(0.05, 0.95, f'N = {len(energy_spreads):,} events', 
+             transform=plt.gca().transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(additional_plots_dir / 'error_vs_energy_spread.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot 3: Error vs cell time spread
+    time_spreads = []
+    for event_cells in raw_cell_data:
+        times = [cell['Cell_time_TOF_corrected'] for cell in event_cells]
+        time_spreads.append(np.std(times))
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(time_spreads, t0_errors, alpha=0.5, s=1)
+    plt.xlabel('Cell Time Spread (std) [ps]')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Cell Time Spread')
+    plt.grid(True, alpha=0.3)
+    
+    plt.text(0.05, 0.95, f'N = {len(time_spreads):,} events', 
+             transform=plt.gca().transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(additional_plots_dir / 'error_vs_time_spread.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot 4: Layer composition analysis
+    layer_compositions = []
+    for event_cells in raw_cell_data:
+        layers = [cell['Cell_layer'] for cell in event_cells]
+        layer_counts = {1: 0, 2: 0, 3: 0}
+        for layer in layers:
+            if layer in layer_counts:
+                layer_counts[layer] += 1
+        total = sum(layer_counts.values())
+        if total > 0:
+            layer_frac_1 = layer_counts[1] / total
+            layer_compositions.append(layer_frac_1)
+        else:
+            layer_compositions.append(0.0)
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(layer_compositions, t0_errors, alpha=0.5, s=1)
+    plt.xlabel('Fraction of Layer 1 Cells')
+    plt.ylabel('$\\Delta t_0$ [ps]')
+    plt.title('$\\Delta t_0$ vs Layer 1 Cell Fraction')
+    plt.grid(True, alpha=0.3)
+    
+    plt.text(0.05, 0.95, f'N = {len(layer_compositions):,} events', 
+             transform=plt.gca().transAxes, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(additional_plots_dir / 'error_vs_layer1_fraction.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"Additional analysis plots saved to {additional_plots_dir}")
+
+
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(description='Baseline Time Reconstruction Analysis Tool')
+    parser.add_argument('--config', type=str, 
+                       default='baseline_analysis_config.yaml',
+                       help='Configuration file path')
+    parser.add_argument('--top-events', type=int, default=None,
+                       help='Number of worst events to analyze in detail')
+    parser.add_argument('--sample-size', type=int, default=None,
+                       help='Sample size for feature comparison plots')
+    
+    args = parser.parse_args()
+    
+    # Load configuration
+    config = BaselineAnalysisConfig(args.config)
+    
+    # Override config with command line arguments
+    if args.top_events is not None:
+        config.top_worst_events = args.top_events
+    if args.sample_size is not None:
+        config.feature_comparison_sample_size = args.sample_size
+    
+    # Create output directory
+    if config.create_timestamp_dir:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = Path(config.output_base_dir) / f"baseline_analysis_{timestamp}"
+    else:
+        output_dir = Path(config.output_base_dir) / "baseline_analysis"
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy configuration file to output directory
+    shutil.copy(args.config, output_dir / "config_used.yaml")
+    
+    # Setup logging
+    logger = setup_logging(output_dir)
+    
+    logger.info(f"{'='*60}")
+    logger.info("BASELINE TIME RECONSTRUCTION ANALYSIS")
+    logger.info(f"{'='*60}")
+    logger.info(f"Configuration: {args.config}")
+    logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Matching type: {'Track' if config.use_track_features else 'Jet' if config.use_jet_features else 'None'}")
+    
+    try:
+        # Load and filter data
+        cell_sequences, vertex_times, raw_cell_data = load_and_filter_data(config, logger)
+        
+        if len(cell_sequences) == 0:
+            logger.error("No valid events found. Exiting.")
+            return
+        
+        # Calculate baseline t0 using filtered raw cell data
+        baseline_t0, t0_errors = calculate_baseline_t0(raw_cell_data, vertex_times, config, logger)
+        
+        # Note: Baseline method filtering is now handled during data loading in load_and_filter_data()
+        logger.info(f"Baseline method filtering: {'enabled' if config.use_baseline_method_filter else 'disabled'}")
+        if config.use_baseline_method_filter:
+            logger.info(f"  Threshold: ±{config.baseline_method_threshold:.1f} ps (applied during data loading)")
+        
+        # Analyze worst events
+        analyze_worst_events(baseline_t0, vertex_times, raw_cell_data, config, logger)
+        
+        # Create baseline plots
+        create_baseline_plots(baseline_t0, vertex_times, t0_errors, config, output_dir, logger)
+        
+        # Create feature comparison plots
+        create_feature_comparison_plots(raw_cell_data, baseline_t0, t0_errors, config, output_dir, logger)
+        
+        # Create additional analysis plots
+        create_additional_analysis_plots(raw_cell_data, baseline_t0, vertex_times, 
+                                       t0_errors, config, output_dir, logger)
+        
+        # Calculate and log summary statistics
+        correlation = np.corrcoef(vertex_times, baseline_t0)[0, 1]
+        rmse = np.sqrt(np.mean((baseline_t0 - vertex_times) ** 2))
+        mae = np.mean(np.abs(baseline_t0 - vertex_times))
+        mean_error = np.mean(t0_errors)
+        std_error = np.std(t0_errors)
+        
+        logger.info(f"\n{'='*60}")
+        logger.info("ANALYSIS SUMMARY")
+        logger.info(f"{'='*60}")
+        logger.info(f"Events processed: {len(baseline_t0)}")
+        logger.info(f"Correlation: {correlation:.4f}")
+        logger.info(f"RMSE: {rmse:.4f} ps")
+        logger.info(f"MAE: {mae:.4f} ps")
+        logger.info(f"Mean error: {mean_error:.4f} ps")
+        logger.info(f"Error std: {std_error:.4f} ps")
+        logger.info(f"Results saved to: {output_dir}")
+        
+    except Exception as e:
+        logger.error(f"Analysis failed: {str(e)}", exc_info=True)
+        raise
+
+
+if __name__ == "__main__":
+    main()

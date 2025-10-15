@@ -261,6 +261,13 @@ class DataProcessor:
                 
                 # Get energy bin index and calibration value
                 energy_bin_idx = self.get_energy_bin_index(energy)
+                
+                # Add bounds checking for array access
+                if energy_bin_idx >= len(detector_params):
+                    energy_bin_idx = len(detector_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
                 calibration_value = detector_params[energy_bin_idx]
                 
                 # Apply calibration: corrected_time = tof_corrected_time - calibration_value
@@ -432,6 +439,13 @@ class DataProcessor:
                 # Get sigma for this cell
                 sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
                 energy_bin_idx = self.get_energy_bin_index(energy)
+                
+                # Add bounds checking for array access
+                if energy_bin_idx >= len(sigma_params):
+                    energy_bin_idx = len(sigma_params) - 1
+                elif energy_bin_idx < 0:
+                    energy_bin_idx = 0
+                
                 sigma = sigma_params[energy_bin_idx]
                 
                 # Weight = 1/sigma^2
@@ -488,111 +502,166 @@ class DataProcessor:
         print(f"Using: {cal_label} | {filter_label}")
     
     def _plot_traditional_t0_distribution(self, traditional_t0: np.ndarray, save_dir: str):
-        """Plot traditional t0 distribution with Gaussian fit."""
-        plt.figure(figsize=(10, 6))
+        """Plot traditional t0 distribution using reference style (no fit)."""
+        # Set matplotlib parameters to match the reference style exactly
+        import matplotlib as mpl
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
         
         # Create histogram with bin width = 10, limited to ±2000 range
-        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
+        bins = np.arange(-2000, 2010, 10)
         
-        counts, bin_edges, _ = plt.hist(traditional_t0, bins=bins, alpha=0.7, color='blue', edgecolor='black')
+        # Plot histogram with stepfilled style to match reference (no fit)
+        counts, bin_edges = np.histogram(traditional_t0, bins=bins)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        ax.hist(bin_centers, bins=bin_edges, weights=counts, 
+                histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+                linewidth=2, alpha=0.5)
         
         # Calculate basic statistics
         mean_all = np.mean(traditional_t0)
         std_all = np.std(traditional_t0)
         
-        # Gaussian fit on restricted range
-        fit_range = self.config.gaussian_fit_range
-        mask = (traditional_t0 >= -fit_range) & (traditional_t0 <= fit_range)
-        if np.sum(mask) > 10:  # Need enough points for fitting
-            fit_data = traditional_t0[mask]
-            try:
-                # Initial guess for Gaussian parameters
-                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
-                
-                # Fit Gaussian
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
-                
-                fit_mean, fit_std = popt[1], abs(popt[2])
-                
-                # Plot fitted Gaussian
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = self.gaussian_func(x_fit, *popt)
-                # Scale to match histogram
-                scale_factor = 10 * len(traditional_t0) / len(fit_data)
-                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2, 
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-                
-            except Exception:
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
-        else:
-            fit_mean, fit_std = mean_all, std_all
+        # Set axis labels and title
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
         
-        # Get labels for title and annotation
-        cal_label, filter_label = self._get_display_labels()
+        # Increase y-axis by 10% to accommodate legend
+        ymax = np.max(counts) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
         
-        plt.xlabel('Traditional t0 [ns]')
-        plt.ylabel('Count')
-        plt.title(f'Traditional t0 Distribution\n{cal_label} | {filter_label}')
-        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(traditional_t0)}',
-                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
-        plt.grid(True, alpha=0.3)
-        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
+        # Add custom legend with statistics (no fit curves)
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+        
+        legend_labels = [
+            f"Events: N = {len(traditional_t0)}",
+            "Baseline method",
+            f"Data: μ = {mean_all:.2f}, σ = {std_all:.2f} ps"
+        ]
+        
+        # Add empty handle for the events count line
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch,
+                         plt.Rectangle((0,0),0,0,alpha=0.0)]
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 'traditional_t0_distribution.png'), dpi=300, bbox_inches='tight')
         plt.close()
     
     def _plot_t0_error_distribution(self, t0_errors: np.ndarray, save_dir: str):
-        """Plot t0 error distribution with Gaussian fit."""
-        plt.figure(figsize=(10, 6))
+        """Plot t0 error distribution using reference style."""
+        # Set matplotlib parameters to match the reference style exactly
+        import matplotlib as mpl
+        from scipy.optimize import curve_fit
+        mpl.rcParams['figure.dpi'] = 120
+        mpl.rcParams['savefig.dpi'] = 300
+        mpl.rcParams['font.size'] = 10
+        mpl.rcParams['axes.linewidth'] = 1.2
+        mpl.rcParams['xtick.major.width'] = 1.0
+        mpl.rcParams['ytick.major.width'] = 1.0
+        mpl.rcParams['lines.linewidth'] = 1.5
+        mpl.rcParams['lines.markersize'] = 6
+        mpl.rcParams['legend.frameon'] = True
+        mpl.rcParams['legend.framealpha'] = 0.9
+        mpl.rcParams['legend.edgecolor'] = 'gray'
+        mpl.rcParams['legend.fancybox'] = True
+        mpl.rcParams['savefig.format'] = 'png'
+        mpl.rcParams['savefig.bbox'] = 'tight'
+        mpl.rcParams['savefig.pad_inches'] = 0.1
         
-        # Create histogram with bin width = 10, limited to ±2000 range
-        bins = np.arange(-2000, 2010, 10)  # -2000 to +2000 with bin width 10
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-        counts, bin_edges, _ = plt.hist(t0_errors, bins=bins, alpha=0.7, color='green', edgecolor='black')
+        # Create histogram data with bin width = 10, limited to ±2000 range
+        bins = np.arange(-2000, 2010, 10)
+        event_data, event_edges = np.histogram(t0_errors, bins=bins)
+        event_centers = (event_edges[:-1] + event_edges[1:]) / 2
         
-        # Calculate basic statistics
-        mean_all = np.mean(t0_errors)
-        std_all = np.std(t0_errors)
+        # Plot histogram with stepfilled style exactly like reference
+        ax.hist(event_centers, bins=event_edges, weights=event_data, 
+                histtype='stepfilled', color='#4682B4', edgecolor='blue', 
+                linewidth=2, alpha=0.5)
         
-        # Gaussian fit on restricted range
-        fit_range = self.config.gaussian_fit_range
-        mask = (t0_errors >= -fit_range) & (t0_errors <= fit_range)
-        if np.sum(mask) > 10:
-            fit_data = t0_errors[mask]
-            try:
-                hist_fit, bin_centers = np.histogram(fit_data, bins=50)
-                bin_centers = (bin_centers[:-1] + bin_centers[1:]) / 2
-                
-                initial_guess = [np.max(hist_fit), np.mean(fit_data), np.std(fit_data)]
-                popt, _ = curve_fit(self.gaussian_func, bin_centers, hist_fit, p0=initial_guess)
-                
-                fit_mean, fit_std = popt[1], abs(popt[2])
-                
-                # Plot fitted Gaussian
-                x_fit = np.linspace(-fit_range, fit_range, 200)
-                y_fit = self.gaussian_func(x_fit, *popt)
-                scale_factor = 10 * len(t0_errors) / len(fit_data)
-                plt.plot(x_fit, y_fit * scale_factor, 'r-', linewidth=2,
-                        label=f'Gaussian fit (±{fit_range}): μ={fit_mean:.2f}, σ={fit_std:.2f}')
-                
-            except Exception:
-                fit_mean, fit_std = np.mean(fit_data), np.std(fit_data)
-        else:
-            fit_mean, fit_std = mean_all, std_all
+        # Set up fitting range
+        fit_min = -120
+        fit_max = 120
         
-        # Get labels for title
-        cal_label, filter_label = self._get_display_labels()
+        # Gaussian function for fitting
+        def gaussian_func(x, a, mu, sigma):
+            return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
         
-        plt.xlabel('Traditional t0 - True t0 [ns]')
-        plt.ylabel('Count')
-        plt.title(f'Traditional t0 Error Distribution\n{cal_label} | {filter_label}')
-        plt.legend([f'All data: μ={mean_all:.2f}, σ={std_all:.2f}, N={len(t0_errors)}',
-                   f'Fit range ±{fit_range}: μ={fit_mean:.2f}, σ={fit_std:.2f}'])
-        plt.grid(True, alpha=0.3)
-        plt.xlim(-2000, 2000)  # Limit x-axis to ±2000
+        # Fit event time histogram exactly like reference
+        event_mask = (event_centers >= fit_min) & (event_centers <= fit_max)
+        
+        event_x = event_centers[event_mask]
+        event_y = event_data[event_mask]
+        event_error = np.sqrt(event_y)
+        event_error[event_error == 0] = 1
+        
+        # Initial parameters for fit (amplitude, mean, sigma)
+        event_p0 = [np.max(event_y), 0, 100]
+        
+        try:
+            event_popt, event_pcov = curve_fit(gaussian_func, event_x, event_y, 
+                                              p0=event_p0, sigma=event_error, absolute_sigma=True)
+            event_perr = np.sqrt(np.diag(event_pcov))
+            
+            # Plot the fitted curve exactly like reference with fixed ±2000ps range
+            x_fit = np.linspace(-2000, 2000, 1000)
+            
+            event_fit = gaussian_func(x_fit, *event_popt)
+            ax.plot(x_fit, event_fit, 'b--', linewidth=2)
+            
+        except Exception as e:
+            print(f"Error during fitting: {e}")
+            event_popt = [0, 0, 0]
+            event_perr = [0, 0, 0]
+        
+        # Set axis labels and title exactly like reference
+        ax.set_xlabel("Time [ps]", fontsize=12)
+        ax.set_ylabel("Counts", fontsize=12)
+        ax.set_title("Reco. t0", fontsize=14)
+        
+        # Increase y-axis by 10% to accommodate legend
+        ymax = np.max(event_data) * 1.1
+        ax.set_ylim(0, ymax)
+        ax.set_xlim(-2000, 2000)
+        
+        # Add custom legend with fit parameters exactly like reference
+        blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
+        blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
+        
+        energy_cut = 1.0  # Default energy cut value
+        legend_labels = [
+            f"Cell energy > {energy_cut} GeV",
+            "Delta t0",
+            f"Delta t0: μ = {event_popt[1]:.2f} ± {event_perr[1]:.2f}, σ = {event_popt[2]:.2f} ± {event_perr[2]:.2f} ps"
+        ]
+        
+        # Add handles exactly like reference
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, blue_line]
+        
+        ax.legend(legend_handles, legend_labels, 
+                 loc='upper left', fontsize=9, framealpha=0.9)
         
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 't0_error_distribution.png'), dpi=300, bbox_inches='tight')
@@ -1054,4 +1123,118 @@ class DataProcessor:
                 'cell_sequence': batch_cells, 
                 'vertex_features': batch_vertex,
                 'attention_mask': batch_mask
+            }, batch_times
+    
+    def create_padded_dataset_with_baseline(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        baseline_predictions: np.ndarray,
+        shuffle: bool = True
+    ) -> tf.data.Dataset:
+        """
+        Create padded TensorFlow dataset with baseline predictions for residual learning.
+        
+        Args:
+            cell_sequences: Variable-length cell sequences
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            baseline_predictions: Baseline method predictions
+            shuffle: Whether to shuffle the dataset
+            
+        Returns:
+            Batched and prefetched TensorFlow dataset with baseline predictions
+        """
+        # Find maximum sequence length
+        max_seq_len = max(len(seq) for seq in cell_sequences)
+        
+        # Feature dimension
+        feature_dim = len(self.config.cell_features)
+        
+        # Apply smart padding
+        padded_cells = self.apply_smart_padding(cell_sequences, max_seq_len, feature_dim)
+        
+        # Ensure arrays have consistent lengths
+        assert len(cell_sequences) == len(vertex_features) == len(vertex_times) == len(baseline_predictions), \
+            f"Data length mismatch: cells={len(cell_sequences)}, vertex={len(vertex_features)}, " \
+            f"times={len(vertex_times)}, baselines={len(baseline_predictions)}"
+        
+        # Reshape baseline predictions to match expected input shape
+        baseline_predictions = baseline_predictions.reshape(-1, 1)
+        
+        # Create TensorFlow dataset
+        # Target is actual vertex_times - the model internally computes baseline + residual
+        dataset = tf.data.Dataset.from_tensor_slices((
+            {
+                'cell_sequence': padded_cells, 
+                'vertex_features': vertex_features,
+                'baseline_prediction': baseline_predictions
+            },
+            vertex_times  # Model optimizes: |final_prediction - vertex_times|
+                         # where final_prediction = baseline_prediction + model_residual
+        ))
+        
+        if shuffle:
+            dataset = dataset.shuffle(buffer_size=10000)
+        
+        return dataset.batch(self.config.batch_size).prefetch(tf.data.AUTOTUNE)
+    
+    def create_prediction_batches_with_baseline(
+        self,
+        cell_sequences: List[List[List[float]]],
+        vertex_features: np.ndarray,
+        vertex_times: np.ndarray,
+        baseline_predictions: np.ndarray
+    ):
+        """
+        Create prediction batches with baseline predictions (for evaluation).
+        
+        Args:
+            cell_sequences: Variable-length cell sequences
+            vertex_features: Vertex feature arrays
+            vertex_times: Target vertex times
+            baseline_predictions: Baseline predictions
+            
+        Yields:
+            Batch data tuples for prediction
+        """
+        batch_size = self.config.batch_size
+        num_samples = len(cell_sequences)
+        
+        # Get sequence lengths for batching
+        sequence_lengths = [len(seq) for seq in cell_sequences]
+        
+        # Create indices sorted by sequence length for efficient batching
+        indices = list(range(num_samples))
+        indices.sort(key=lambda i: sequence_lengths[i])
+        
+        feature_dim = len(self.config.cell_features)
+        
+        for i in range(0, num_samples, batch_size):
+            batch_indices = indices[i:i + batch_size]
+            batch_lengths = [sequence_lengths[idx] for idx in batch_indices]
+            max_length = max(batch_lengths)
+            
+            # Create batch sequences for smart padding
+            batch_sequences = [cell_sequences[idx] for idx in batch_indices]
+            
+            # Apply smart padding
+            batch_cells = self.apply_smart_padding(batch_sequences, max_length, feature_dim)
+            
+            # Prepare other batch data
+            batch_vertex = np.zeros((len(batch_indices), len(vertex_features[0])))
+            batch_baselines = np.zeros((len(batch_indices), 1))
+            batch_times = np.zeros(len(batch_indices))
+            
+            for j, idx in enumerate(batch_indices):
+                batch_vertex[j] = vertex_features[idx]
+                batch_baselines[j, 0] = baseline_predictions[idx]
+                batch_times[j] = vertex_times[idx]
+            
+            # Return batch inputs
+            yield {
+                'cell_sequence': batch_cells, 
+                'vertex_features': batch_vertex,
+                'baseline_prediction': batch_baselines
             }, batch_times

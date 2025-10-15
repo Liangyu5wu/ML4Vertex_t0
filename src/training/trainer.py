@@ -4,22 +4,23 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import callbacks
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, Union
 
 from config.base_config import BaseConfig
 from src.models.transformer_model import TransformerModel
+from src.models.dnn_model import DNNModel
 
 
 class Trainer:
     """Handle model training with callbacks and monitoring."""
     
-    def __init__(self, config: BaseConfig, model: TransformerModel):
+    def __init__(self, config: BaseConfig, model: Union[TransformerModel, DNNModel]):
         """
         Initialize trainer.
         
         Args:
             config: Configuration object
-            model: Model to train
+            model: Model to train (either TransformerModel or DNNModel)
         """
         self.config = config
         self.model = model
@@ -213,9 +214,15 @@ class Trainer:
             raise FileNotFoundError(f"No saved model found at {self.config.model_path}")
         
         print(f"Loading model from {self.config.model_path}")
-        keras_model = TransformerModel.load_model(self.config.model_path)
         
-        # Update the model in our TransformerModel wrapper
+        # Load model using the appropriate class method
+        if isinstance(self.model, TransformerModel):
+            keras_model = TransformerModel.load_model(self.config.model_path)
+        else:
+            from src.models.dnn_model import DNNModel
+            keras_model = DNNModel.load_model(self.config.model_path)
+        
+        # Update the model in our model wrapper
         self.model.model = keras_model
         
         print(f"Resuming training for {additional_epochs} additional epochs...")
@@ -248,23 +255,40 @@ class Trainer:
         """
         print("Validating training datasets...")
         
+        # Get sample batch to detect dataset format
+        sample_batch = next(iter(train_dataset))
+        input_keys = list(sample_batch[0].keys())
+        
+        # Detect dataset format
+        if 'cell_inputs' in input_keys:
+            # Multi-input dataset format
+            cell_key = 'cell_inputs'
+            vertex_key = 'vertex_inputs'
+            is_multi_input = True
+            print("Detected multi-input dataset format")
+        else:
+            # Regular dataset format
+            cell_key = 'cell_sequence'
+            vertex_key = 'vertex_features'
+            is_multi_input = False
+            print("Detected regular dataset format")
+        
         # Count batches and samples
         train_batches = 0
         train_samples = 0
         for batch in train_dataset:
             train_batches += 1
-            train_samples += batch[0]['cell_sequence'].shape[0]
+            train_samples += batch[0][cell_key].shape[0]
         
         val_batches = 0
         val_samples = 0
         for batch in val_dataset:
             val_batches += 1
-            val_samples += batch[0]['cell_sequence'].shape[0]
+            val_samples += batch[0][cell_key].shape[0]
         
-        # Get sample batch to check shapes
-        sample_batch = next(iter(train_dataset))
-        cell_shape = sample_batch[0]['cell_sequence'].shape
-        vertex_shape = sample_batch[0]['vertex_features'].shape
+        # Get shapes from sample batch
+        cell_shape = sample_batch[0][cell_key].shape
+        vertex_shape = sample_batch[0][vertex_key].shape
         target_shape = sample_batch[1].shape
         
         stats = {
@@ -274,13 +298,28 @@ class Trainer:
             'val_samples': val_samples,
             'cell_sequence_shape': cell_shape,
             'vertex_features_shape': vertex_shape,
-            'target_shape': target_shape
+            'target_shape': target_shape,
+            'is_multi_input': is_multi_input
         }
         
         print(f"Training dataset: {train_batches} batches, {train_samples} samples")
         print(f"Validation dataset: {val_batches} batches, {val_samples} samples")
         print(f"Cell sequence shape: {cell_shape}")
         print(f"Vertex features shape: {vertex_shape}")
+        
+        if is_multi_input:
+            jet_shape = sample_batch[0]['jet_inputs'].shape
+            track_shape = sample_batch[0]['track_inputs'].shape
+            mask_shape = sample_batch[0]['attention_mask'].shape
+            print(f"Jet inputs shape: {jet_shape}")
+            print(f"Track inputs shape: {track_shape}")
+            print(f"Attention mask shape: {mask_shape}")
+            stats.update({
+                'jet_inputs_shape': jet_shape,
+                'track_inputs_shape': track_shape,
+                'attention_mask_shape': mask_shape
+            })
+            
         print(f"Target shape: {target_shape}")
         
         return stats

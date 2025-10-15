@@ -1,5 +1,8 @@
 # Fast testing configuration for development and debugging
-model_name: "transformer_fast_test"
+model_name: "fast_test"
+
+# Model architecture specification (can be changed for testing)
+model_architecture: "transformer"   # Options: "transformer" or "two_stage_dnn"
 
 # Data parameters
 data_dir: "../selected_h5_with_jets/"
@@ -8,16 +11,26 @@ max_cells: 50  # Reduced for faster processing
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
-# Feature selection parameters
-use_spatial_features: true
-use_track_features: false      
-use_jet_features: true         
+# Feature selection parameters (comprehensive switches)
+use_spatial_features: false         # Spatial position features
+use_track_features: false           # Track matching features
+use_jet_features: true              # Jet matching features
+use_physics_informed_features: true # Physics-based 1/sigma^2 weighting         
 
 # Cell filtering parameters
 require_valid_cells: true
 use_cell_track_matching: false
 use_cell_jet_matching: true
 additional_cell_filters: {}
+
+# Time quality cut parameters (disabled for fast testing)
+use_time_quality_cut: false          # Enable time quality filtering
+vertex_time_sigma: 175.0            # HS vertex time uncertainty [ps]  
+time_quality_n_sigma: 3.0           # N-sigma cut threshold
+
+# Baseline method filtering parameters
+use_baseline_method_filter: false   # Enable baseline method performance filtering
+baseline_method_threshold: 500.0    # Baseline error threshold in ps (±500 ps default)
 
 # Detector calibration parameters - enabled for testing
 use_detector_params: true
@@ -52,8 +65,8 @@ use_batch_norm: true
 
 # Training parameters - fast training
 batch_size: 32  # Smaller batch for faster iterations
-epochs: 3  # Increased from 10 for meaningful training
-learning_rate: 0.001  # Higher LR for faster convergence
+epochs: 3  # Quick testing epochs
+learning_rate: 0.001  # Default learning rate
 lr_reduction_factor: 0.5
 early_stopping_patience: 8
 lr_patience: 3
@@ -82,4 +95,4 @@ jet_features:
   - "matched_jet_phi"
   - "matched_jet_width"
   - "matched_jet_deltaR"
-skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
+skip_normalization: ["Cell_Barrel", "Cell_layer"]  # Allow time normalization

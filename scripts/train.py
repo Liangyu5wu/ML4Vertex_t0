@@ -5,17 +5,27 @@
 import os
 import sys
 import argparse
+import logging
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from config.transformer_config import TransformerConfig
 from config.dnn_config import DNNConfig
 from config.base_config import BaseConfig
 from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
+from src.data.multi_input_data_loader import MultiInputDataLoader
+from src.data.multi_input_data_processor import MultiInputDataProcessor
 from src.models.transformer_model import TransformerModel
 from src.models.dnn_model import DNNModel
+from src.models.baseline_guided_model import BaselineGuidedDNN
+from src.models.multi_input_dnn_model import MultiInputDNNModel
+from src.models.multi_input_transformer_model import MultiInputTransformerModel
 from src.training.trainer import Trainer
 
 
@@ -68,18 +78,27 @@ def create_config_from_yaml(yaml_path):
         with open(yaml_path, 'r') as f:
             yaml_data = yaml.safe_load(f)
         
-        # Check if it's a DNN config
-        if yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+        # Check model architecture type
+        if yaml_data.get('model_architecture') == 'baseline_guided_dnn':
             config = DNNConfig.from_yaml(yaml_path)
-            print(f"Loaded DNN configuration from: {yaml_path}")
+            logger.info(f"Loaded baseline-guided DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'multi_input_dnn':
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded multi-input DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'multi_input_transformer':
+            config = TransformerConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded multi-input Transformer configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded DNN configuration from: {yaml_path}")
         else:
             config = TransformerConfig.from_yaml(yaml_path)
-            print(f"Loaded Transformer configuration from: {yaml_path}")
+            logger.info(f"Loaded Transformer configuration from: {yaml_path}")
         
         return config
     except Exception as e:
-        print(f"Error loading YAML configuration: {e}")
-        print("Falling back to default TransformerConfig")
+        logger.error(f"Error loading YAML configuration: {e}")
+        logger.info("Falling back to default TransformerConfig")
         return TransformerConfig()
 
 
@@ -100,18 +119,18 @@ def create_config(args):
         if not os.path.exists(args.config_file):
             raise FileNotFoundError(f"YAML configuration file not found: {args.config_file}")
         
-        print(f"Loading configuration from: {args.config_file}")
+        logger.info(f"Loading configuration from: {args.config_file}")
         config = create_config_from_yaml(args.config_file)
-        print(f"DEBUG: After YAML load, use_spatial_features = {config.use_spatial_features}")
-        print(f"DEBUG: After YAML load, use_attention_mask = {config.use_attention_mask}")
+        logger.debug(f"After YAML load, use_spatial_features = {config.use_spatial_features}")
+        logger.debug(f"After YAML load, use_attention_mask = {config.use_attention_mask}")
     else:
         # Priority 2: Use default configuration type
-        print(f"Using default {args.config} configuration")
+        logger.info(f"Using default {args.config} configuration")
         config = create_config_default(args.config)
     
     # Priority 3: Override with command line arguments
     config.update_from_args(args)
-    print(f"DEBUG: After args update, use_spatial_features = {config.use_spatial_features}")
+    logger.debug(f"After args update, use_spatial_features = {config.use_spatial_features}")
     
     # Handle attention mask argument
     if args.use_attention_mask is not None:
@@ -119,7 +138,7 @@ def create_config(args):
             config.use_attention_mask = True
         elif args.use_attention_mask == 'false':
             config.use_attention_mask = False
-        print(f"DEBUG: After args update, use_attention_mask = {config.use_attention_mask}")
+        logger.debug(f"After args update, use_attention_mask = {config.use_attention_mask}")
     
     return config
 
@@ -150,40 +169,104 @@ def print_training_info(config):
 def validate_jet_features_setup(config, data_loader, skip_validation=False):
     """Validate jet features setup if enabled."""
     if skip_validation:
-        print("Skipping jet features validation as requested.")
+        logger.warning("Skipping jet features validation as requested.")
         return True
     
     # Check if jet features or jet matching are enabled
     if config.use_jet_features or config.use_cell_jet_matching:
-        print("\nValidating jet features setup...")
+        logger.info("Validating jet features setup...")
         
         # Check if data contains required jet fields
         if not data_loader.validate_jet_features_in_dataset():
-            print("\nError: Jet features validation failed!")
-            print("Your configuration requires jet features, but the dataset doesn't contain them.")
-            print("\nPossible solutions:")
-            print("1. Use data processed with cell-jet matching (update your H5 files)")
-            print("2. Disable jet features in config: set use_jet_features=false and use_cell_jet_matching=false")
-            print("3. Use --skip-jet-validation flag (not recommended)")
+            logger.error("Jet features validation failed!")
+            logger.error("Your configuration requires jet features, but the dataset doesn't contain them.")
+            logger.info("Possible solutions:")
+            logger.info("1. Use data processed with cell-jet matching (update your H5 files)")
+            logger.info("2. Disable jet features in config: set use_jet_features=false and use_cell_jet_matching=false")
+            logger.info("3. Use --skip-jet-validation flag (not recommended)")
             return False
         
-        print("✓ Jet features validation passed")
+        logger.info("✓ Jet features validation passed")
     
     return True
 
 
+def create_multi_input_datasets_and_model(config, data_processor, train_data, val_data):
+    """Create datasets and model for multi-input models."""
+    
+    (
+        train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times
+    ) = train_data
+    
+    (
+        val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times
+    ) = val_data
+    
+    print(f"\n3. Creating multi-input TensorFlow datasets...")
+    print(f"Using attention mask: {config.use_attention_mask}")
+    
+    # Create multi-input datasets
+    train_dataset = data_processor.create_multi_input_dataset(
+        train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times, shuffle=True
+    )
+    val_dataset = data_processor.create_multi_input_dataset(
+        val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times, shuffle=False
+    )
+    
+    # Create appropriate multi-input model
+    feature_dim = len(config.cell_features)
+    vertex_dim = train_vertex_norm.shape[1]
+    jet_feature_dim = len(config.jet_features)
+    track_feature_dim = len(config.track_features)
+    
+    print(f"Model input dimensions:")
+    print(f"  Cell features: {feature_dim}")
+    print(f"  Vertex features: {vertex_dim}")
+    print(f"  Jet features: {jet_feature_dim}")
+    print(f"  Track features: {track_feature_dim}")
+    
+    is_multi_input_dnn = (getattr(config, 'model_architecture', '') == 'multi_input_dnn')
+    is_multi_input_transformer = (getattr(config, 'model_architecture', '') == 'multi_input_transformer')
+    
+    if is_multi_input_dnn:
+        print(f"\n4. Building Multi-Input DNN model...")
+        model = MultiInputDNNModel(config)
+        keras_model = model.build_model(feature_dim, vertex_dim, jet_feature_dim, track_feature_dim)
+    elif is_multi_input_transformer:
+        print(f"\n4. Building Multi-Input Transformer model...")
+        model = MultiInputTransformerModel(config)
+        keras_model = model.build_model(feature_dim, vertex_dim, jet_feature_dim, track_feature_dim)
+    else:
+        raise ValueError(f"Unsupported multi-input model architecture: {getattr(config, 'model_architecture', '')}")
+    
+    print(f"Including jet features: {config.jet_features}")
+    print(f"Including track features: {config.track_features}")
+    
+    return train_dataset, val_dataset, model, keras_model
+
+
 def create_datasets_and_model(config, data_processor, train_cells_norm, val_cells_norm, 
-                             train_vertex_norm, val_vertex_norm, train_times, val_times):
+                             train_vertex_norm, val_vertex_norm, train_times, val_times, 
+                             train_baselines=None, val_baselines=None):
     """Create datasets and model based on configuration type."""
     
     print(f"\n3. Creating TensorFlow datasets...")
     print(f"Using attention mask: {config.use_attention_mask}")
     
-    # Determine model type
+    # Determine model type within function
+    is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
     is_dnn_model = (isinstance(config, DNNConfig) or 
                    getattr(config, 'model_architecture', '') == 'two_stage_dnn')
     
-    if config.use_attention_mask:
+    if is_baseline_guided:
+        print("Creating datasets with baseline predictions for residual learning...")
+        train_dataset = data_processor.create_padded_dataset_with_baseline(
+            train_cells_norm, train_vertex_norm, train_times, train_baselines, shuffle=True
+        )
+        val_dataset = data_processor.create_padded_dataset_with_baseline(
+            val_cells_norm, val_vertex_norm, val_times, val_baselines, shuffle=False
+        )
+    elif config.use_attention_mask:
         print("Creating datasets with attention mask support...")
         train_dataset = data_processor.create_padded_dataset_with_mask(
             train_cells_norm, train_vertex_norm, train_times, shuffle=True
@@ -204,7 +287,11 @@ def create_datasets_and_model(config, data_processor, train_cells_norm, val_cell
     feature_dim = len(config.cell_features)
     print(f"Model input feature dimension: {feature_dim}")
     
-    if is_dnn_model:
+    if is_baseline_guided:
+        print(f"\n4. Building Baseline-guided DNN model...")
+        model = BaselineGuidedDNN(config)
+        keras_model = model.build_model(feature_dim, train_vertex_norm.shape[1])
+    elif is_dnn_model:
         print(f"\n4. Building DNN model...")
         model = DNNModel(config)
         if config.use_attention_mask:
@@ -239,17 +326,40 @@ def main():
         # Print training information
         print_training_info(config)
         
+        # Determine model type early for data loading
+        is_dnn_model = (isinstance(config, DNNConfig) or 
+                       getattr(config, 'model_architecture', '') == 'two_stage_dnn')
+        is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
+        is_multi_input = (getattr(config, 'model_architecture', '') in ['multi_input_dnn', 'multi_input_transformer'])
+        
         # Load data
         print(f"\n1. Loading and processing data...")
-        data_loader = DataLoader(config)
+        if is_multi_input:
+            data_loader = MultiInputDataLoader(config)
+        else:
+            data_loader = DataLoader(config)
         
         # NEW: Validate jet features setup
         if not validate_jet_features_setup(config, data_loader, args.skip_jet_validation):
             return 1
         
         try:
-            cell_sequences, vertex_features, vertex_times, sequence_lengths = \
-                data_loader.load_data_from_files()
+            if is_baseline_guided:
+                # Load data with baseline predictions for residual learning
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
+                    data_loader.load_data_with_baselines_from_files()
+                jet_sequences = track_sequences = None
+            elif is_multi_input:
+                # Load multi-input data (cells, vertex, jets, tracks)
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
+                    data_loader.load_data_from_files()
+                baseline_predictions = None
+            else:
+                # Standard data loading
+                cell_sequences, vertex_features, vertex_times, sequence_lengths = \
+                    data_loader.load_data_from_files()
+                baseline_predictions = None
+                jet_sequences = track_sequences = None
         except Exception as e:
             print(f"Error loading data: {e}")
             print("Please check that the data directory exists and contains HDF5 files.")
@@ -259,31 +369,123 @@ def main():
         print(f"Cell feature dimension: {len(config.cell_features)}")
         print(f"Vertex feature dimension: {vertex_features.shape[1]}")
         
+        if is_multi_input:
+            print(f"Jet feature dimension: {len(config.jet_features)}")
+            print(f"Track feature dimension: {len(config.track_features)}")
+            print(f"Average jets per event: {sum(len(jets) for jets in jet_sequences) / len(jet_sequences):.1f}")
+            print(f"Average tracks per event: {sum(len(tracks) for tracks in track_sequences) / len(track_sequences):.1f}")
+        
         # Process data
         print(f"\n2. Splitting and processing data...")
-        data_processor = DataProcessor(config)
+        
+        # Add physics features if enabled
+        if getattr(config, 'use_physics_informed_features', False):
+            print("Adding physics-informed features...")
+            from src.data.physics_features import PhysicsFeatureEngineer
+            physics_engineer = PhysicsFeatureEngineer(config)
+            cell_sequences, feature_names = physics_engineer.add_physics_features(
+                cell_sequences, feature_names
+            )
+            print(f"Enhanced features: {len(feature_names)} total")
+        
+        if is_multi_input:
+            data_processor = MultiInputDataProcessor(config)
+        else:
+            data_processor = DataProcessor(config)
         
         # Split data
-        (train_cells, val_cells, test_cells), \
-        (train_vertex, val_vertex, test_vertex), \
-        (train_times, val_times, test_times) = data_processor.split_data(
-            cell_sequences, vertex_features, vertex_times
-        )
+        if is_baseline_guided:
+            # For baseline-guided models, we need to split all data together to maintain consistency
+            from sklearn.model_selection import train_test_split
+            import numpy as np
+            
+            # Create indices for consistent splitting
+            indices = np.arange(len(vertex_times))
+            
+            # First split: train vs (val + test)
+            train_indices, temp_indices = train_test_split(
+                indices, test_size=config.test_size + config.val_split, 
+                random_state=config.random_state
+            )
+            
+            # Second split: val vs test
+            val_indices, test_indices = train_test_split(
+                temp_indices, test_size=config.test_size/(config.test_size + config.val_split), 
+                random_state=config.random_state
+            )
+            
+            # Split all data using these indices
+            train_cells = [cell_sequences[i] for i in train_indices]
+            val_cells = [cell_sequences[i] for i in val_indices]
+            test_cells = [cell_sequences[i] for i in test_indices]
+            
+            train_vertex = vertex_features[train_indices]
+            val_vertex = vertex_features[val_indices]
+            test_vertex = vertex_features[test_indices]
+            
+            train_times = vertex_times[train_indices]
+            val_times = vertex_times[val_indices]
+            test_times = vertex_times[test_indices]
+            
+            train_baselines = baseline_predictions[train_indices]
+            val_baselines = baseline_predictions[val_indices]
+            test_baselines = baseline_predictions[test_indices]
+        elif is_multi_input:
+            # Multi-input data splitting
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_jets, val_jets, test_jets), \
+            (train_tracks, val_tracks, test_tracks), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences
+            )
+            train_baselines = val_baselines = test_baselines = None
+        else:
+            # Standard data splitting
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times
+            )
+            train_baselines = val_baselines = test_baselines = None
         
         # Normalize features (includes time calibration if enabled)
-        (train_cells_norm, val_cells_norm, test_cells_norm), \
-        (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
-        norm_params = data_processor.normalize_features(
-            train_cells, val_cells, test_cells,
-            train_vertex, val_vertex, test_vertex,
-            train_times, val_times, test_times
-        )
+        if is_multi_input:
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            (train_jets_norm, val_jets_norm, test_jets_norm), \
+            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_jets, val_jets, test_jets,
+                train_tracks, val_tracks, test_tracks,
+                train_times, val_times, test_times
+            )
+        else:
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_times, val_times, test_times
+            )
+            train_jets_norm = val_jets_norm = test_jets_norm = None
+            train_tracks_norm = val_tracks_norm = test_tracks_norm = None
         
         # Create datasets and model based on configuration type
-        train_dataset, val_dataset, model, keras_model = create_datasets_and_model(
-            config, data_processor, train_cells_norm, val_cells_norm,
-            train_vertex_norm, val_vertex_norm, train_times, val_times
-        )
+        if is_multi_input:
+            train_data = (train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times)
+            val_data = (val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times)
+            train_dataset, val_dataset, model, keras_model = create_multi_input_datasets_and_model(
+                config, data_processor, train_data, val_data
+            )
+        else:
+            train_dataset, val_dataset, model, keras_model = create_datasets_and_model(
+                config, data_processor, train_cells_norm, val_cells_norm,
+                train_vertex_norm, val_vertex_norm, train_times, val_times,
+                train_baselines, val_baselines
+            )
         
         # Train model
         print(f"\n5. Training model...")
@@ -324,7 +526,12 @@ def main():
             print(f"Training history saved to: {config.model_dir}")
             
             # Print feature information
-            if config.use_jet_features:
+            if is_multi_input:
+                print(f"\nMulti-input features:")
+                print(f"  Cell features: {config.cell_features}")
+                print(f"  Jet features: {config.jet_features}")
+                print(f"  Track features: {config.track_features}")
+            elif config.use_jet_features:
                 print(f"\nJet features included: {config.jet_features}")
             if config.use_cell_jet_matching:
                 print(f"Cell-jet matching filter applied during training")
@@ -337,7 +544,13 @@ def main():
                 print(f"○ Traditional padding used (compatibility mode)")
             
             # Print model type information
-            if isinstance(config, DNNConfig):
+            if is_multi_input:
+                model_arch = getattr(config, 'model_architecture', '')
+                if model_arch == 'multi_input_dnn':
+                    print(f"✓ Multi-Input DNN model with jets and tracks")
+                elif model_arch == 'multi_input_transformer':
+                    print(f"✓ Multi-Input Transformer model with jets and tracks")
+            elif isinstance(config, DNNConfig):
                 print(f"✓ Two-Stage DNN model with attention pooling")
             else:
                 print(f"✓ Transformer model architecture")

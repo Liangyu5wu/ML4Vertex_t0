@@ -1,7 +1,7 @@
-# DNN experimental configuration with cell-jet matching features
+# DNN experimental configuration with comprehensive feature options
 model_name: "dnn_with_jets"
 
-# Model architecture type
+# Model architecture specification
 model_architecture: "two_stage_dnn"
 loss_function: "huber"
 huber_delta: 100.0
@@ -13,10 +13,11 @@ max_cells: 30
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
-# Feature selection parameters
-use_spatial_features: false
-use_track_features: false
-use_jet_features: true
+# Feature selection parameters (comprehensive switches)
+use_spatial_features: false         # Spatial position features
+use_track_features: false           # Track matching features
+use_jet_features: true              # Jet matching features
+use_physics_informed_features: true # Physics-based 1/sigma^2 weighting
 
 # Cell filtering parameters
 require_valid_cells: true
@@ -28,6 +29,10 @@ additional_cell_filters: {}
 use_time_quality_cut: true    # Enable time-based quality filtering
 vertex_time_sigma: 175.0       # HS vertex time uncertainty [ps]  
 time_quality_n_sigma: 3.0      # N-sigma cut threshold
+
+# Baseline method filtering parameters
+use_baseline_method_filter: false   # Enable baseline method performance filtering
+baseline_method_threshold: 500.0    # Baseline error threshold in ps (±500 ps default)
 
 # Detector calibration parameters
 use_detector_params: true
@@ -41,6 +46,7 @@ gaussian_fit_range: 120
 
 # Model architecture parameters
 use_attention_mask: true
+use_physics_informed_features: true  # Enable physics features
 
 # Data split parameters
 test_size: 0.1
@@ -64,8 +70,8 @@ use_batch_norm: true
 
 # Training parameters
 batch_size: 128
-epochs: 200
-learning_rate: 0.001
+epochs: 200                         # Default training epochs
+learning_rate: 0.001                # Default learning rate
 lr_reduction_factor: 0.5
 early_stopping_patience: 20
 lr_patience: 5
@@ -94,4 +100,4 @@ jet_features:
   - "matched_jet_phi"
   - "matched_jet_width"
   - "matched_jet_deltaR"
-skip_normalization: ["Cell_time_TOF_corrected", "Cell_Barrel", "Cell_layer"]
+skip_normalization: ["Cell_Barrel", "Cell_layer"]  # Allow time normalization
