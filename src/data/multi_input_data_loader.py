@@ -246,13 +246,7 @@ class MultiInputDataLoader:
                 jet_features.append(jet[hdf5_field])
             jet_sequence.append(jet_features)
 
-        # Pad to max_jets
-        while len(jet_sequence) < self.config.max_jets:
-            padding_values = []
-            for feature in self.config.jet_features:
-                padding_values.append(self.config.jet_padding_values[feature])
-            jet_sequence.append(padding_values)
-
+        # Return variable-length sequence (padding will be applied after normalization)
         return jet_sequence
     
     def _process_event_tracks(self, event_tracks: np.ndarray) -> List[List[float]]:
@@ -282,17 +276,7 @@ class MultiInputDataLoader:
                 track['Track_z0']
             ]
             track_sequence.append(track_features)
-        
-        # Pad to max_tracks
-        while len(track_sequence) < self.config.max_tracks:
-            padding_values = [
-                self.config.track_padding_values['pt'],
-                self.config.track_padding_values['eta'],
-                self.config.track_padding_values['phi'],
-                self.config.track_padding_values['d0'],
-                self.config.track_padding_values['z0']
-            ]
-            track_sequence.append(padding_values)
-        
+
+        # Return variable-length sequence (padding will be applied after normalization)
         return track_sequence
     
