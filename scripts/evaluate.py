@@ -16,11 +16,14 @@ from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.data.multi_input_data_loader import MultiInputDataLoader
 from src.data.multi_input_data_processor import MultiInputDataProcessor
+from src.data.hgtd_multi_input_data_loader import HGTDMultiInputDataLoader
+from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
 from src.models.transformer_model import TransformerModel
 from src.models.dnn_model import DNNModel
 from src.models.baseline_guided_model import BaselineGuidedDNN
 from src.models.multi_input_dnn_model import MultiInputDNNModel
 from src.models.multi_input_transformer_model import MultiInputTransformerModel
+from src.models.hgtd_multi_input_dnn_model import HGTDMultiInputDNNModel
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.visualizer import Visualizer
 from src.training.trainer import Trainer
@@ -61,30 +64,42 @@ def load_config_and_model(model_dir):
                 is_dnn_model = False
                 is_baseline_guided = True
                 is_multi_input = False
+                is_hgtd_multi_input = False
+            elif yaml_data.get('model_architecture') == 'hgtd_multi_input_dnn':
+                config = DNNConfig.load_config(model_dir)
+                print(f"Loaded HGTD multi-input DNN configuration from: {model_dir}")
+                is_dnn_model = True
+                is_baseline_guided = False
+                is_multi_input = False
+                is_hgtd_multi_input = True
             elif yaml_data.get('model_architecture') == 'multi_input_dnn':
                 config = DNNConfig.load_config(model_dir)
                 print(f"Loaded multi-input DNN configuration from: {model_dir}")
                 is_dnn_model = True
                 is_baseline_guided = False
                 is_multi_input = True
+                is_hgtd_multi_input = False
             elif yaml_data.get('model_architecture') == 'multi_input_transformer':
                 config = TransformerConfig.load_config(model_dir)
                 print(f"Loaded multi-input Transformer configuration from: {model_dir}")
                 is_dnn_model = False
                 is_baseline_guided = False
                 is_multi_input = True
+                is_hgtd_multi_input = False
             elif yaml_data.get('model_architecture') == 'two_stage_dnn' or 'cell_encoder_units' in yaml_data:
                 config = DNNConfig.load_config(model_dir)
                 print(f"Loaded DNN configuration from: {model_dir}")
                 is_dnn_model = True
                 is_baseline_guided = False
                 is_multi_input = False
+                is_hgtd_multi_input = False
             else:
                 config = TransformerConfig.load_config(model_dir)
                 print(f"Loaded Transformer configuration from: {model_dir}")
                 is_dnn_model = False
                 is_baseline_guided = False
                 is_multi_input = False
+                is_hgtd_multi_input = False
         else:
             # Fallback to JSON config (assume Transformer for compatibility)
             config = TransformerConfig.load_config(model_dir)
@@ -92,6 +107,7 @@ def load_config_and_model(model_dir):
             is_dnn_model = False
             is_baseline_guided = False
             is_multi_input = False
+            is_hgtd_multi_input = False
         
         # Load model - try both .h5 and .keras formats for backward compatibility
         model_h5_path = os.path.join(model_dir, "model.h5")
@@ -108,6 +124,8 @@ def load_config_and_model(model_dir):
         # Load model with appropriate custom objects
         if is_baseline_guided:
             keras_model = BaselineGuidedDNN.load_model(model_path)
+        elif is_hgtd_multi_input:
+            keras_model = HGTDMultiInputDNNModel.load_model(model_path)
         elif is_multi_input and is_dnn_model:
             keras_model = MultiInputDNNModel.load_model(model_path)
         elif is_multi_input:
@@ -117,23 +135,24 @@ def load_config_and_model(model_dir):
         else:
             keras_model = TransformerModel.load_model(model_path)
         print(f"Loaded model from: {model_path}")
-        
-        # Display model type information and get corrected multi-input status
+
+        # Display model type information and get corrected multi-input/hgtd status
         is_dnn_model = is_baseline_guided or (hasattr(config, 'model_architecture') and 'dnn' in getattr(config, 'model_architecture', ''))
-        actual_is_multi_input = print_model_info(keras_model, is_dnn_model, is_multi_input)
-        
-        # Use the corrected multi-input status
+        actual_is_multi_input, actual_is_hgtd_multi_input = print_model_info(keras_model, is_dnn_model, is_multi_input, is_hgtd_multi_input)
+
+        # Use the corrected multi-input/hgtd status
         is_multi_input = actual_is_multi_input
-        
-        return config, keras_model, is_baseline_guided, is_multi_input
+        is_hgtd_multi_input = actual_is_hgtd_multi_input
+
+        return config, keras_model, is_baseline_guided, is_multi_input, is_hgtd_multi_input
         
     except Exception as e:
         print(f"Error loading model or config: {e}")
         raise
 
 
-def print_model_info(model, is_dnn_model, is_multi_input=False):
-    """Print information about the loaded model and return corrected multi-input status."""
+def print_model_info(model, is_dnn_model, is_multi_input=False, is_hgtd_multi_input=False):
+    """Print information about the loaded model and return corrected multi-input and HGTD status."""
     # Detect model type
     if hasattr(model, 'input'):
         if isinstance(model.input, list):
@@ -145,46 +164,57 @@ def print_model_info(model, is_dnn_model, is_multi_input=False):
     else:
         num_inputs = 2  # Fallback
         input_names = ["unknown"]
-    
+
     model_type = "DNN" if is_dnn_model else "Transformer"
-    
-    # Check if the model is actually a multi-input model based on actual inputs
+
+    # Check if the model is actually a multi-input or HGTD multi-input model based on actual inputs
+    actual_is_hgtd_multi_input = is_hgtd_multi_input and num_inputs == 6
     actual_is_multi_input = is_multi_input and num_inputs == 5
-    
-    if actual_is_multi_input:
-        model_subtype = "Multi-input (jets+tracks)"
+
+    if actual_is_hgtd_multi_input:
+        model_subtype = "HGTD Multi-input (cells+jets+LAr tracks+HGTD tracks)"
+    elif actual_is_multi_input:
+        model_subtype = "Multi-input (cells+jets+tracks)"
     elif num_inputs == 3:
         model_subtype = "Mask-enabled"
-        # Override multi-input flag if model only has 3 inputs
+        # Override multi-input flags if model only has 3 inputs
         actual_is_multi_input = False
+        actual_is_hgtd_multi_input = False
     else:
         model_subtype = "Traditional"
         actual_is_multi_input = False
-    
+        actual_is_hgtd_multi_input = False
+
     print(f"\nModel Information:")
     print(f"  Type: {model_type} ({model_subtype})")
     print(f"  Inputs: {num_inputs} ({', '.join(input_names)})")
-    
-    if is_multi_input and not actual_is_multi_input:
+
+    if (is_multi_input and not actual_is_multi_input) or (is_hgtd_multi_input and not actual_is_hgtd_multi_input):
         print(f"  Note: Model was configured as multi-input but only has {num_inputs} inputs. Treating as {model_subtype.lower()}.")
-    
-    return actual_is_multi_input
+
+    return actual_is_multi_input, actual_is_hgtd_multi_input
 
 
-def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False, is_multi_input=False):
+def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False, is_multi_input=False, is_hgtd_multi_input=False):
     """Load data or try to reuse existing processed data."""
     if data_dir_override:
         config.data_dir = data_dir_override
-    
+
     if load_data:
         print("Loading and processing data...")
-        
+
         # Load raw data
-        if is_multi_input:
+        if is_hgtd_multi_input:
+            data_loader = HGTDMultiInputDataLoader(config)
+            cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, hgtd_track_sequences = \
+                data_loader.load_data_from_files()
+            baseline_predictions = None
+        elif is_multi_input:
             data_loader = MultiInputDataLoader(config)
             cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
                 data_loader.load_data_from_files()
             baseline_predictions = None
+            hgtd_track_sequences = None
         else:
             data_loader = DataLoader(config)
             if is_baseline_guided:
@@ -198,7 +228,15 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
                 jet_sequences = track_sequences = None
         
         # Process data
-        if is_multi_input:
+        # TODO: Add full HGTD multi-input evaluation support (data processing and dataset creation)
+        if is_hgtd_multi_input:
+            print("WARNING: Full HGTD multi-input evaluation not yet fully implemented.")
+            print("Model can be loaded but evaluation may not work correctly.")
+            from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
+            data_processor = HGTDMultiInputDataProcessor(config)
+            # For now, return None to indicate incomplete implementation
+            return None
+        elif is_multi_input:
             from src.data.multi_input_data_processor import MultiInputDataProcessor
             data_processor = MultiInputDataProcessor(config)
             
@@ -273,7 +311,7 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
         # processed data to avoid reprocessing
         print("Warning: --load-data not specified. You must provide processed data.")
         print("For now, will load and process data anyway...")
-        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=is_multi_input)
+        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=is_multi_input, is_hgtd_multi_input=is_hgtd_multi_input)
 
 
 def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None, test_jets_norm=None, test_tracks_norm=None):
@@ -317,7 +355,7 @@ def main():
     try:
         # Load configuration and model
         print("\n1. Loading model and configuration...")
-        config, keras_model, is_baseline_guided, is_multi_input = load_config_and_model(args.model_dir)
+        config, keras_model, is_baseline_guided, is_multi_input, is_hgtd_multi_input = load_config_and_model(args.model_dir)
         
         # Update config with model directory for saving results
         config.models_base_dir = os.path.dirname(args.model_dir)
@@ -327,7 +365,7 @@ def main():
         print("\n2. Loading evaluation data...")
         if is_multi_input:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input)
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
             
             # Calculate baseline method predictions for plotting comparison
             print("Calculating baseline method predictions for plotting comparison...")
@@ -365,11 +403,11 @@ def main():
                 test_baselines = None
         elif is_baseline_guided:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input)
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
             test_jets_norm = test_tracks_norm = None
         else:
             test_cells_norm, test_vertex_norm, test_times, data_processor = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input)
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
             test_baselines = None
             test_jets_norm = test_tracks_norm = None
         
