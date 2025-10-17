@@ -1,0 +1,66 @@
+# HGTD-only DNN experimental configuration using only HGTD tracks (no LAr data)
+model_name: "hgtd_only_dnn"
+
+# Model architecture specification
+model_architecture: "hgtd_only_dnn"
+loss_function: "huber"
+huber_delta: 100.0
+
+# Data parameters
+data_dir: "../Vertex_timing_HGTD_w_LAr/"
+num_files: 50
+
+# HGTD track parameters - ONLY input for this model
+max_hgtd_tracks: 30
+min_hgtd_tracks: 1
+
+# NO LAr parameters needed
+# No max_cells, no max_jets, no max_tracks
+
+# Feature selection parameters - only vertex spatial features
+use_spatial_features: true         # Use vertex x, y, z position
+
+# Data split parameters
+test_size: 0.2
+val_split: 0.222222
+random_state: 42
+
+# HGTD track features (7 features)
+hgtd_track_features:
+  - "pt"
+  - "eta"
+  - "phi"
+  - "d0"
+  - "z0"
+  - "time"
+  - "timeRes"
+
+# HGTD track padding values
+hgtd_track_padding_values:
+  pt: -1.0
+  eta: -999.0
+  phi: -999.0
+  d0: -999.0
+  z0: -999.0
+  time: 0.0              # Same as Cell_time_TOF_corrected default
+  timeRes: -999.0        # Invalid value for time resolution
+
+# HGTD track encoder parameters
+hgtd_track_encoder_units: [128, 64, 32]
+hgtd_track_dropout_rates: [0.2, 0.1, 0.1]
+hgtd_track_activation: "relu"
+hgtd_track_use_batch_norm: true
+
+# Event-level processing parameters
+event_encoder_units: [64, 32, 16]
+event_dropout_rates: [0.2, 0.1, 0.1]
+use_batch_norm: true
+
+# Training parameters
+batch_size: 128
+epochs: 200
+learning_rate: 0.001
+lr_reduction_factor: 0.5
+early_stopping_patience: 20
+lr_patience: 8
+min_lr: 0.0000001
