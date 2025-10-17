@@ -1,6 +1,6 @@
 # Vertex Time Prediction Models
 
-A framework for training Transformer, DNN, Multi-Input, and Baseline-Guided models for vertex t0 prediction with LAr Calorimeter in ATLAS. Features optimized parameter sweeps, attention mask support, physics-informed residual learning, and event-level jets/tracks integration.
+A framework for training Transformer, DNN, Multi-Input, Baseline-Guided, and HGTD models for vertex t0 prediction in ATLAS. Features optimized parameter sweeps, attention mask support, physics-informed residual learning, event-level jets/tracks integration, and HGTD timing detector models.
 
 ## Project Structure
 
@@ -64,6 +64,8 @@ uv pip install -r requirements.txt
 | **Baseline-Guided DNN** | 3 | Cells + Vertex + Baseline | `cell_sequence`, `vertex_features`, `baseline_prediction` |
 | **Multi-Input DNN** | 5 | Cells + Vertex + Jets + Tracks + Mask | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` |
 | **Multi-Input Transformer** | 5 | Cells + Vertex + Jets + Tracks + Mask | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` |
+| **HGTD Multi-Input DNN** 🆕 | 6 | Cells + Vertex + Jets + LAr Tracks + HGTD Tracks + Mask | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `hgtd_track_inputs`, `mask_inputs` |
+| **HGTD-Only DNN** 🆕 | 2 | HGTD Tracks + Vertex | `hgtd_track_inputs`, `vertex_inputs` |
 
 ### Transformer Model
 **Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
@@ -109,12 +111,34 @@ Attention Mask → Masking
 - **Flexible Design**: Available in both DNN and Transformer variants
 - **Advanced Filtering**: Time quality cuts with specialized detector calibration
 
+### HGTD Models 🆕
+**HGTD Multi-Input DNN Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `hgtd_track_inputs` (H×7), `mask_inputs` (N)
+```
+Cells → Cell-level MLP → Masked Attention Pooling
+Jets → Configurable Encoder → Global Pool
+LAr Tracks → Configurable Encoder → Global Pool     } → Concat → Event-level MLP → Vertex Time
+HGTD Tracks → Configurable Encoder → Global Pool
+Vertex Features → Dense Processing
+```
+- **Six-Input Architecture**: LAr cells + Vertex + Jets + LAr tracks + HGTD tracks + Mask
+- **HGTD Track Features**: pt, eta, phi, d0, z0, time, timeRes (7 features from HGTD timing detector)
+- **Event-Level Fusion**: All processed features concatenated before prediction
+
+**HGTD-Only DNN Inputs**: `hgtd_track_inputs` (H×7), `vertex_inputs` (V)
+```
+HGTD Tracks → Track Encoder MLP → Global Pool ┐
+Vertex Features → Dense Processing ────────────┤→ Concat → Event MLP → Vertex Time
+```
+- **Simplified Design**: Uses only HGTD timing detector (no LAr calorimeter data)
+- **Independent Pipeline**: Completely separate from LAr-based workflows
+
 ### Input Dimensions
 - **N**: Max cells (configurable, default 60)
-- **F**: Cell features (7: eta, phi, barrel, layer, time, energy, significance)  
+- **F**: Cell features (7: eta, phi, barrel, layer, time, energy, significance)
 - **V**: Vertex features (varies based on configuration)
 - **J**: Max jets (7)
-- **T**: Max tracks (30)
+- **T**: Max LAr tracks (30)
+- **H**: Max HGTD tracks (30)
 
 ## Quick Start
 
@@ -136,6 +160,12 @@ python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tr
 # Train Multi-Input Transformer model 🆕
 python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml
 
+# Train HGTD Multi-Input DNN model 🆕
+python scripts/train.py --config-file config/configs/experiment_hgtd_dnn_with_jets_tracks.yaml
+
+# Train HGTD-Only DNN model 🆕
+python scripts/train.py --config-file config/configs/experiment_hgtd_only.yaml
+
 # Override parameters
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
@@ -152,6 +182,10 @@ python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks
 # Evaluate multi-input models 🆕
 python scripts/evaluate.py --model-dir ../models/multi_input_dnn_with_jets_tracks --load-data
 python scripts/evaluate.py --model-dir ../models/multi_input_transformer_with_jets_tracks --load-data
+
+# Evaluate HGTD models 🆕
+python scripts/evaluate.py --model-dir ../models/hgtd_multi_input_dnn_with_jets_tracks --load-data
+python scripts/evaluate.py --model-dir ../models/hgtd_only_dnn --load-data
 ```
 
 ### Optimized Parameter Sweeps ⚡
@@ -195,6 +229,10 @@ sbatch jobs/sweep_dnn_comparison.sh
 # Multi-input model training 🆕
 sbatch jobs/model_multi_input_dnn_nersc.sh
 sbatch jobs/model_multi_input_transformer_nersc.sh
+
+# HGTD model training 🆕
+sbatch jobs/model_hgtd_multi_input_dnn_nersc.sh
+sbatch jobs/model_hgtd_only_dnn_nersc.sh
 ```
 
 ## Key Features
@@ -222,12 +260,18 @@ sbatch jobs/model_multi_input_transformer_nersc.sh
 - **Domain Knowledge**: Incorporates detector calibration and track matching
 - **Robust Performance**: Handles imperfect baseline predictions gracefully
 
-### 🔍 **Baseline Analysis Tools** 🆕  
+### 🔍 **Baseline Analysis Tools** 🆕
 - **Standalone Analysis**: Comprehensive baseline method reconstruction analysis
 - **Configurable Matching**: Support for track-matching or jet-matching via YAML
 - **Event Investigation**: Detailed analysis of worst-performing events
 - **Feature Comparisons**: Best vs worst event feature distribution analysis
 - **Multi-level Plotting**: Standard baseline plots + feature comparisons + correlation analysis
+
+### ⚡ **HGTD Timing Detector Models** 🆕
+- **HGTD Multi-Input**: Combines LAr calorimeter data with HGTD timing tracks
+- **HGTD-Only**: Pure timing-based prediction using only HGTD tracks (no LAr data)
+- **High-Precision Timing**: Leverages HGTD track timing features (time, timeRes)
+- **Independent Workflows**: HGTD-only model completely separate from LAr pipelines
 
 ## Configuration
 
@@ -392,11 +436,13 @@ track_features: ["pt", "eta", "phi", "d0", "z0"]
 | `calibration_validation` | `false` | Generate calibration validation plots |
 | `use_baseline_method_filter` | `false` | Filter events by baseline method performance |
 | `baseline_method_threshold` | `500.0` | Baseline error threshold in ps (±500 ps default) |
-| `model_architecture` | `"two_stage_dnn"` | Model type: `transformer`, `two_stage_dnn`, `baseline_guided_dnn`, `multi_input_dnn`, `multi_input_transformer` |
+| `model_architecture` | `"two_stage_dnn"` | Model type: `transformer`, `two_stage_dnn`, `baseline_guided_dnn`, `multi_input_dnn`, `multi_input_transformer`, `hgtd_multi_input_dnn`, `hgtd_only_dnn` |
 | `max_jets` | `7` | Maximum number of jets per event (multi-input models) |
-| `max_tracks` | `30` | Maximum number of tracks per event (multi-input models) |
+| `max_tracks` | `30` | Maximum number of LAr tracks per event (multi-input models) |
+| `max_hgtd_tracks` | `30` | Maximum number of HGTD tracks per event (HGTD models) |
 | `use_event_jets` | `false` | Enable event-level jet features (multi-input models) |
 | `use_event_tracks` | `false` | Enable event-level track features (multi-input models) |
+| `use_event_hgtd_tracks` | `false` | Enable event-level HGTD track features (HGTD models) |
 
 ## Parameter Sweep Types
 
@@ -448,8 +494,10 @@ python scripts/train.py --config-file config/configs/experiment_dnn.yaml --model
 python scripts/train.py --config-file config/configs/experiment_baseline_guided_track.yaml --model-name baseline_guided_test
 python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tracks.yaml --model-name multi_input_dnn_test
 python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml --model-name multi_input_transformer_test
+python scripts/train.py --config-file config/configs/experiment_hgtd_dnn_with_jets_tracks.yaml --model-name hgtd_multi_input_test
+python scripts/train.py --config-file config/configs/experiment_hgtd_only.yaml --model-name hgtd_only_test
 
-# Run efficient parameter sweep  
+# Run efficient parameter sweep
 python scripts/parameter_sweep.py --config config/configs/experiment_dnn.yaml --grid comparison --max-exp 20
 
 # Evaluate results (auto-detects model type)
@@ -458,8 +506,10 @@ python scripts/evaluate.py --model-dir ../models/dnn_test --load-data
 python scripts/evaluate.py --model-dir ../models/baseline_guided_test --load-data
 python scripts/evaluate.py --model-dir ../models/multi_input_dnn_test --load-data
 python scripts/evaluate.py --model-dir ../models/multi_input_transformer_test --load-data
+python scripts/evaluate.py --model-dir ../models/hgtd_multi_input_test --load-data
+python scripts/evaluate.py --model-dir ../models/hgtd_only_test --load-data
 
-# Analyze baseline reconstruction failures  🆕
+# Analyze baseline reconstruction failures 🆕
 cd baseline_analysis
 python baseline_analysis.py --top-events 20 --sample-size 2000
 ```
