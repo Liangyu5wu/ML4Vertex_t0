@@ -228,14 +228,36 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
                 jet_sequences = track_sequences = None
         
         # Process data
-        # TODO: Add full HGTD multi-input evaluation support (data processing and dataset creation)
         if is_hgtd_multi_input:
-            print("WARNING: Full HGTD multi-input evaluation not yet fully implemented.")
-            print("Model can be loaded but evaluation may not work correctly.")
             from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
             data_processor = HGTDMultiInputDataProcessor(config)
-            # For now, return None to indicate incomplete implementation
-            return None
+
+            # Split HGTD multi-input data
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_jets, val_jets, test_jets), \
+            (train_tracks, val_tracks, test_tracks), \
+            (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences, hgtd_track_sequences
+            )
+
+            # Normalize HGTD multi-input features
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            (train_jets_norm, val_jets_norm, test_jets_norm), \
+            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
+            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_jets, val_jets, test_jets,
+                train_tracks, val_tracks, test_tracks,
+                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
+                train_times, val_times, test_times
+            )
+
+            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm)
         elif is_multi_input:
             from src.data.multi_input_data_processor import MultiInputDataProcessor
             data_processor = MultiInputDataProcessor(config)
@@ -314,12 +336,19 @@ def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_basel
         return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=is_multi_input, is_hgtd_multi_input=is_hgtd_multi_input)
 
 
-def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None, test_jets_norm=None, test_tracks_norm=None):
+def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None, test_jets_norm=None, test_tracks_norm=None, test_hgtd_tracks_norm=None):
     """Create test dataset automatically based on model type."""
     print("\n3. Creating test dataset for evaluation...")
-    
+
+    # Check if this is a HGTD multi-input model
+    if test_hgtd_tracks_norm is not None:
+        print("Creating test dataset for HGTD multi-input model...")
+        # For HGTD multi-input models, create dataset with jets, tracks, and HGTD tracks
+        return data_processor.create_hgtd_multi_input_dataset(
+            test_cells_norm, test_vertex_norm, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm, test_times, shuffle=False
+        )
     # Check if this is a multi-input model
-    if test_jets_norm is not None and test_tracks_norm is not None:
+    elif test_jets_norm is not None and test_tracks_norm is not None:
         print("Creating test dataset for multi-input model...")
         # For multi-input models, create dataset with jets and tracks
         return data_processor.create_multi_input_dataset(
@@ -363,10 +392,49 @@ def main():
         
         # Load or process data
         print("\n2. Loading evaluation data...")
-        if is_multi_input:
+        if is_hgtd_multi_input:
+            test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm = \
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
+
+            # Calculate baseline method predictions for plotting comparison
+            print("Calculating baseline method predictions for plotting comparison...")
+            try:
+                # Load original cell sequences for baseline calculation
+                from src.data.hgtd_multi_input_data_loader import HGTDMultiInputDataLoader
+                temp_data_loader = HGTDMultiInputDataLoader(config)
+                # We need to get the original (before normalization) cell sequences
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, hgtd_track_sequences = \
+                    temp_data_loader.load_data_from_files()
+
+                # Split data to get test portion (matching the same split as normalized data)
+                from sklearn.model_selection import train_test_split
+                indices = np.arange(len(vertex_times))
+                train_indices, temp_indices = train_test_split(
+                    indices, test_size=config.test_size, random_state=config.random_state
+                )
+                val_indices, test_indices = train_test_split(
+                    temp_indices, test_size=config.val_split, random_state=config.random_state
+                )
+
+                test_cell_sequences_orig = [cell_sequences[i] for i in test_indices]
+                test_vertex_times_orig = vertex_times[test_indices]
+
+                # Use existing calculate_traditional_t0 method from data processor
+                # This reuses the well-tested baseline method calculation
+                test_baselines, _ = data_processor.calculate_traditional_t0(
+                    test_cell_sequences_orig, test_vertex_times_orig
+                )
+                print(f"Calculated baseline predictions for {len(test_baselines)} test events using existing method")
+
+            except Exception as e:
+                print(f"Warning: Could not calculate baseline method predictions: {e}")
+                print("Error distribution plot will not include baseline method comparison")
+                test_baselines = None
+        elif is_multi_input:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm = \
                 load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
-            
+            test_hgtd_tracks_norm = None
+
             # Calculate baseline method predictions for plotting comparison
             print("Calculating baseline method predictions for plotting comparison...")
             try:
@@ -404,12 +472,12 @@ def main():
         elif is_baseline_guided:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines = \
                 load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
-            test_jets_norm = test_tracks_norm = None
+            test_jets_norm = test_tracks_norm = test_hgtd_tracks_norm = None
         else:
             test_cells_norm, test_vertex_norm, test_times, data_processor = \
                 load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
             test_baselines = None
-            test_jets_norm = test_tracks_norm = None
+            test_jets_norm = test_tracks_norm = test_hgtd_tracks_norm = None
         
         print(f"Test data loaded: {len(test_times)} samples")
         
@@ -418,7 +486,11 @@ def main():
         evaluator = Evaluator(config)
         
         # Create test dataset automatically based on model type
-        if is_multi_input:
+        if is_hgtd_multi_input:
+            test_dataset = create_test_dataset_automatically(
+                evaluator, keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm
+            )
+        elif is_multi_input:
             test_dataset = create_test_dataset_automatically(
                 evaluator, keras_model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines, test_jets_norm, test_tracks_norm
             )
@@ -433,7 +505,14 @@ def main():
         
         # Make predictions and compute detailed metrics
         print("\n5. Computing detailed metrics...")
-        if is_multi_input:
+        if is_hgtd_multi_input:
+            # For HGTD multi-input models, make predictions directly using the dataset
+            print("Making predictions for HGTD multi-input model...")
+            y_pred = keras_model.predict(test_dataset)
+            # Flatten predictions to match expected shape for metrics computation
+            y_pred = y_pred.flatten()
+            detailed_metrics = evaluator.compute_metrics(test_times, y_pred)
+        elif is_multi_input:
             # For multi-input models, make predictions directly using the dataset
             print("Making predictions for multi-input model...")
             y_pred = keras_model.predict(test_dataset)
