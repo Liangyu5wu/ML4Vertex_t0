@@ -43,14 +43,11 @@ class MultiInputDataLoader:
                     mask = mask & additional_mask
         
         filtered_cells = event_cells[mask]
-        
+
         # Apply time quality cut if enabled
         if self.config.use_time_quality_cut:
-            try:
-                filtered_cells = self.apply_time_quality_cut(filtered_cells)
-            except Exception:
-                pass  # Skip if calibration data unavailable
-        
+            filtered_cells = self.apply_time_quality_cut(filtered_cells)
+
         return filtered_cells
     
     def apply_time_quality_cut(self, event_cells: np.ndarray) -> np.ndarray:

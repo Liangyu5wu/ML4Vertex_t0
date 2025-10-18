@@ -41,14 +41,9 @@ use_cell_jet_matching: false        # No cell-jet matching
 additional_cell_filters: {}         # No additional filters
 
 # Time quality cut parameters
-# NOTE: HGTD data has very wide cell time distribution (std ~4000 ps, range ~40000 ps)
-# Options:
-# 1. Disable time cut: use_time_quality_cut: false
-# 2. Use very loose cut: time_quality_n_sigma: 50.0 (keeps ~95% of cells)
-# 3. Enable detector calibration: use_detector_params: true (may help reduce spread)
-use_time_quality_cut: false         # Disabled due to uncalibrated wide time distribution
+use_time_quality_cut: true
 vertex_time_sigma: 175.0            # HS vertex time uncertainty [ps]
-time_quality_n_sigma: 3.0           # N-sigma cut threshold (would be 525 ps, but cell std is ~4000 ps)
+time_quality_n_sigma: 3.0
 
 # Baseline method filtering parameters - DISABLED
 use_baseline_method_filter: false   # Disable baseline method filtering
