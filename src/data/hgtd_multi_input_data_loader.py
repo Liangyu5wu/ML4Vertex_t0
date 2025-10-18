@@ -69,6 +69,12 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
         all_hgtd_track_sequences = []
         sequence_lengths = []
 
+        # Diagnostic counters
+        total_events = 0
+        events_after_cell_filtering = 0
+        events_after_cell_processing = 0
+        events_loaded = 0
+
         for file_path in file_paths:
             if not os.path.exists(file_path):
                 continue
@@ -81,6 +87,8 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                 hgtd_tracks_data = f['tracks_HGTD'][:]
 
                 for i in range(len(vertex_data)):
+                    total_events += 1
+
                     try:
                         # Process cells
                         event_cells = cells_data[i]
@@ -89,10 +97,14 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                         if len(valid_cells) < self.config.min_cells:
                             continue
 
+                        events_after_cell_filtering += 1
+
                         # Process cells sequence
                         cell_sequence = self._process_event_cells(valid_cells)
                         if cell_sequence is None:
                             continue
+
+                        events_after_cell_processing += 1
 
                         # Process jets
                         jet_sequence = self._process_event_jets(jets_data[i])
@@ -126,6 +138,25 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                     all_track_sequences.append(track_sequence)
                     all_hgtd_track_sequences.append(hgtd_track_sequence)
                     sequence_lengths.append(len(cell_sequence))
+                    events_loaded += 1
+
+        # Print diagnostic information
+        print(f"\n{'='*70}")
+        print(f"HGTD Multi-Input Data Loading Statistics:")
+        print(f"{'='*70}")
+        print(f"Total events processed:           {total_events}")
+        print(f"Events after cell filtering:      {events_after_cell_filtering} ({100*events_after_cell_filtering/total_events if total_events > 0 else 0:.1f}%)")
+        print(f"Events after cell processing:     {events_after_cell_processing} ({100*events_after_cell_processing/total_events if total_events > 0 else 0:.1f}%)")
+        print(f"Events successfully loaded:       {events_loaded} ({100*events_loaded/total_events if total_events > 0 else 0:.1f}%)")
+        print(f"{'='*70}\n")
+
+        if events_loaded == 0:
+            print("⚠️  WARNING: 0 events loaded!")
+            if events_after_cell_filtering == 0:
+                print("   → All events filtered out by cell filtering (time quality cut or min_cells)")
+                print(f"   → Config: use_time_quality_cut={self.config.use_time_quality_cut}, min_cells={self.config.min_cells}")
+            elif events_after_cell_processing == 0:
+                print("   → All events filtered out during cell processing")
 
         return (all_cell_sequences, np.array(all_vertex_features),
                 np.array(all_vertex_times), sequence_lengths,
