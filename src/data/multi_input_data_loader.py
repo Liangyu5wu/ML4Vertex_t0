@@ -104,7 +104,15 @@ class MultiInputDataLoader:
         
         for i, cell in enumerate(event_cells):
             try:
-                barrel, layer, energy = int(cell['Cell_Barrel']), int(cell['Cell_layer']), cell['Cell_e']
+                # Handle different field names in LAr vs HGTD datasets
+                if 'Cell_Barrel' in event_cells.dtype.names:
+                    barrel = int(cell['Cell_Barrel'])
+                else:
+                    # HGTD dataset uses Cell_isEM_Barrel instead
+                    barrel = 1 if cell['Cell_isEM_Barrel'] else 0
+
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
                 cell_time = cell['Cell_time_TOF_corrected']
                 
                 if layer not in [1, 2, 3]:
