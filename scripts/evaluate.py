@@ -460,7 +460,7 @@ def main():
             test_baselines = None
         elif is_hgtd_multi_input:
             test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
+                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input)
 
             # Calculate baseline method predictions for plotting comparison
             print("Calculating baseline method predictions for plotting comparison...")
