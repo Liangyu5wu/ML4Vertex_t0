@@ -164,25 +164,49 @@ def print_training_info(config):
     # Print configuration
     config.print_config()
 
-    # Check if this is HGTD-only model
-    is_hgtd_only = (getattr(config, 'model_architecture', '') == 'hgtd_only_dnn')
+    # Detect model type
+    model_arch = getattr(config, 'model_architecture', '')
+    is_hgtd_only = (model_arch == 'hgtd_only_dnn')
+    is_hgtd_multi_input = (model_arch == 'hgtd_multi_input_dnn')
+    is_multi_input_dnn = (model_arch == 'multi_input_dnn')
+    is_multi_input_transformer = (model_arch == 'multi_input_transformer')
+    is_multi_input = is_multi_input_dnn or is_multi_input_transformer or is_hgtd_multi_input
 
     # Print derived information
     print(f"\nDerived Information:")
+
     if is_hgtd_only:
+        # HGTD-only: only HGTD tracks + vertex
         print(f"  HGTD track features: {len(config.hgtd_track_features)} features")
         print(f"  HGTD track feature list: {config.hgtd_track_features}")
         print(f"  Vertex features: {3 if config.use_spatial_features else 0} features (x, y, z)")
-    else:
+    elif is_multi_input:
+        # Multi-input models: cells + jets + tracks (+ HGTD tracks for HGTD multi-input)
         print(f"  Cell features: {len(config.cell_features)} features")
+        print(f"  Jet features: {len(config.jet_features)} features {config.jet_features}")
+        print(f"  LAr track features: {len(config.track_features)} features {config.track_features}")
+        if is_hgtd_multi_input:
+            print(f"  HGTD track features: {len(config.hgtd_track_features)} features {config.hgtd_track_features}")
+        print(f"  Vertex features: {3 if config.use_spatial_features else 0} features")
+    else:
+        # Regular models: cells + vertex
+        print(f"  Cell features: {len(config.cell_features)} features")
+
     print(f"  Model directory: {config.model_dir}")
     print(f"  Model path: {config.model_path}")
+
     if not is_hgtd_only:
         print(f"  Using attention mask: {config.use_attention_mask}")
 
-    # Print model type
+    # Print model type with correct labels
     if is_hgtd_only:
         print(f"  Model type: HGTD-Only DNN (no LAr data)")
+    elif is_hgtd_multi_input:
+        print(f"  Model type: HGTD Multi-Input DNN (cells + jets + LAr tracks + HGTD tracks)")
+    elif is_multi_input_dnn:
+        print(f"  Model type: Multi-Input DNN (cells + jets + tracks)")
+    elif is_multi_input_transformer:
+        print(f"  Model type: Multi-Input Transformer (cells + jets + tracks)")
     elif isinstance(config, DNNConfig):
         print(f"  Model type: Two-Stage DNN")
     else:
