@@ -41,9 +41,9 @@ use_cell_jet_matching: false        # No cell-jet matching
 additional_cell_filters: {}         # No additional filters
 
 # Time quality cut parameters
-use_time_quality_cut: false         # Disable time quality cut to ensure data loads (was filtering all events with 3σ)
+use_time_quality_cut: true          # Enable time-based quality filtering
 vertex_time_sigma: 175.0            # HS vertex time uncertainty [ps]
-time_quality_n_sigma: 3.0           # N-sigma cut threshold (can re-enable with larger value like 5.0 after confirming data loads)
+time_quality_n_sigma: 5.0           # N-sigma cut threshold (increased from 3.0 to allow sufficient events)
 
 # Baseline method filtering parameters - DISABLED
 use_baseline_method_filter: false   # Disable baseline method filtering
