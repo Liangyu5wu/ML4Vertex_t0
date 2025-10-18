@@ -248,9 +248,10 @@ class MultiInputDataLoader:
     
     def _process_event_tracks(self, event_tracks: np.ndarray) -> List[List[float]]:
         """Process tracks for a single event."""
-        valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS_old_files'] == 1)
+        # Filter tracks: valid=true and Track_isGoodFromHS=1
+        valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS'] == 1)
         valid_tracks = event_tracks[valid_mask]
-        
+
         # Apply track eta cut if enabled
         if hasattr(self.config, 'use_track_eta_cut') and self.config.use_track_eta_cut:
             eta_cut_value = getattr(self.config, 'track_eta_cut_value', 2.5)  # Default value
