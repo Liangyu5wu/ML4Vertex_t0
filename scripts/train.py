@@ -160,19 +160,30 @@ def print_training_info(config):
     print("\n" + "="*60)
     print("VERTEX TIME PREDICTION MODEL TRAINING")
     print("="*60)
-    
+
     # Print configuration
     config.print_config()
-    
+
+    # Check if this is HGTD-only model
+    is_hgtd_only = (getattr(config, 'model_architecture', '') == 'hgtd_only_dnn')
+
     # Print derived information
     print(f"\nDerived Information:")
-    print(f"  Cell features: {len(config.cell_features)} features")
+    if is_hgtd_only:
+        print(f"  HGTD track features: {len(config.hgtd_track_features)} features")
+        print(f"  HGTD track feature list: {config.hgtd_track_features}")
+        print(f"  Vertex features: {3 if config.use_spatial_features else 0} features (x, y, z)")
+    else:
+        print(f"  Cell features: {len(config.cell_features)} features")
     print(f"  Model directory: {config.model_dir}")
     print(f"  Model path: {config.model_path}")
-    print(f"  Using attention mask: {config.use_attention_mask}")
-    
+    if not is_hgtd_only:
+        print(f"  Using attention mask: {config.use_attention_mask}")
+
     # Print model type
-    if isinstance(config, DNNConfig):
+    if is_hgtd_only:
+        print(f"  Model type: HGTD-Only DNN (no LAr data)")
+    elif isinstance(config, DNNConfig):
         print(f"  Model type: Two-Stage DNN")
     else:
         print(f"  Model type: Transformer")
