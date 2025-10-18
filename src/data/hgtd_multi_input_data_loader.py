@@ -81,26 +81,32 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                 hgtd_tracks_data = f['tracks_HGTD'][:]
 
                 for i in range(len(vertex_data)):
-                    # Process cells
-                    event_cells = cells_data[i]
-                    valid_cells = self.apply_cell_filtering(event_cells)
+                    try:
+                        # Process cells
+                        event_cells = cells_data[i]
+                        valid_cells = self.apply_cell_filtering(event_cells)
 
-                    if len(valid_cells) < self.config.min_cells:
-                        continue
+                        if len(valid_cells) < self.config.min_cells:
+                            continue
 
-                    # Process cells sequence
-                    cell_sequence = self._process_event_cells(valid_cells)
-                    if cell_sequence is None:
-                        continue
+                        # Process cells sequence
+                        cell_sequence = self._process_event_cells(valid_cells)
+                        if cell_sequence is None:
+                            continue
 
-                    # Process jets
-                    jet_sequence = self._process_event_jets(jets_data[i])
+                        # Process jets
+                        jet_sequence = self._process_event_jets(jets_data[i])
 
-                    # Process LAr tracks
-                    track_sequence = self._process_event_tracks(tracks_data[i])
+                        # Process LAr tracks
+                        track_sequence = self._process_event_tracks(tracks_data[i])
 
-                    # Process HGTD tracks (NEW)
-                    hgtd_track_sequence = self._process_event_hgtd_tracks(hgtd_tracks_data[i])
+                        # Process HGTD tracks (NEW)
+                        hgtd_track_sequence = self._process_event_hgtd_tracks(hgtd_tracks_data[i])
+                    except Exception as e:
+                        print(f"Error processing event {i} in {os.path.basename(file_path)}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        raise  # Re-raise to see the full error
 
                     # Vertex features based on spatial features configuration
                     if self.config.use_spatial_features:
