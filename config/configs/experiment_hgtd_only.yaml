@@ -19,6 +19,13 @@ min_hgtd_tracks: 1
 
 # Feature selection parameters - only vertex spatial features
 use_spatial_features: true         # Use vertex x, y, z position
+use_track_features: false          # NO LAr track features
+use_jet_features: false            # NO LAr jet features
+
+# Cell filtering parameters - DISABLE all LAr cell filtering
+require_valid_cells: false         # No LAr cells
+use_cell_track_matching: false     # No LAr cell-track matching
+use_cell_jet_matching: false       # No LAr cell-jet matching
 
 # Data split parameters
 test_size: 0.2
