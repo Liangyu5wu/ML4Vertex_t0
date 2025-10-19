@@ -170,6 +170,6 @@ track_eta_cut_value: 2.5           # |eta| <= this value
 
 # Error distribution Gaussian fitting parameters
 error_fit_method: "double_gaussian"  # Options: "single_gaussian" or "double_gaussian"
-error_fit_range: 120                 # Fit range in ps, plus-minus 120ps
+error_fit_range: 120                 # Fit range in ps (single Gaussian only: ±120ps; double Gaussian uses full range)
 pileup_sigma: 175.0                  # Pileup background Gaussian width [ps] (double Gaussian only)
 fix_pileup_sigma: true               # Whether to fix background width (double Gaussian only)

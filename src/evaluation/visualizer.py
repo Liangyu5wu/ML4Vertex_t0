@@ -400,7 +400,6 @@ class Visualizer:
         self,
         bin_centers: np.ndarray,
         counts: np.ndarray,
-        fit_range: float,
         pileup_sigma: float,
         fix_pileup: bool,
         error_mean: float,
@@ -409,10 +408,12 @@ class Visualizer:
         """
         Fit double Gaussian to error distribution (matching C++ ROOT implementation).
 
+        NOTE: Unlike single Gaussian, double Gaussian fits over the ENTIRE data range,
+        not just the core region. This matches the C++ ROOT implementation.
+
         Args:
-            bin_centers: Histogram bin centers
-            counts: Histogram bin counts
-            fit_range: Fit range in ps (±fit_range)
+            bin_centers: Histogram bin centers (full range)
+            counts: Histogram bin counts (full range)
             pileup_sigma: Background Gaussian width [ps]
             fix_pileup: Whether to fix background width
             error_mean: Error mean for initial guess
@@ -435,14 +436,13 @@ class Visualizer:
                 return (a1 * np.exp(-0.5 * ((x - mu) / sigma1) ** 2) +
                        a2 * np.exp(-0.5 * ((x - mu) / pileup_sigma) ** 2))
 
-            # Select data within fit range
-            mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+            # Use ALL data for double Gaussian fitting (matching C++ ROOT implementation)
+            # No range restriction - fit the entire histogram
+            fit_x = bin_centers
+            fit_y = counts
 
-            if np.sum(mask) <= 4:  # Need at least 5 points for reasonable fit
+            if len(fit_x) <= 4:  # Need at least 5 points for reasonable fit
                 return None, None, None
-
-            fit_x = bin_centers[mask]
-            fit_y = counts[mask]
 
             # Calculate fit uncertainties (Poisson statistics)
             fit_error = np.sqrt(fit_y)
@@ -457,7 +457,7 @@ class Visualizer:
             p0_sigma2 = pileup_sigma     # Background width: 175ps
 
             if fix_pileup:
-                # Fit with fixed background width
+                # Fit with fixed background width (matches C++ with fixbkg=true)
                 initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1]
 
                 # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1
@@ -477,7 +477,7 @@ class Visualizer:
                 fit_params = np.array([popt[0], popt[1], popt[2], popt[3], pileup_sigma])
 
             else:
-                # Fit with free background width
+                # Fit with free background width (matches C++ with fixbkg=false)
                 initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1, p0_sigma2]
 
                 # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1, sigma2>0
@@ -588,9 +588,9 @@ class Visualizer:
             from scipy.optimize import curve_fit
 
             if fit_method == 'double_gaussian':
-                # Use double Gaussian fitting
+                # Use double Gaussian fitting (fits entire histogram range, not just core)
                 ml_fit_mean, ml_fit_std, ml_fit_params = self._fit_double_gaussian(
-                    bin_centers, ml_counts, fit_range, pileup_sigma, fix_pileup,
+                    bin_centers, ml_counts, pileup_sigma, fix_pileup,
                     error_mean, error_std
                 )
 
@@ -636,9 +636,9 @@ class Visualizer:
         if baseline_predictions is not None:
             try:
                 if fit_method == 'double_gaussian':
-                    # Use double Gaussian fitting for baseline
+                    # Use double Gaussian fitting for baseline (fits entire histogram range)
                     baseline_fit_mean, baseline_fit_std, baseline_fit_params = self._fit_double_gaussian(
-                        bin_centers, baseline_counts, fit_range, pileup_sigma, fix_pileup,
+                        bin_centers, baseline_counts, pileup_sigma, fix_pileup,
                         baseline_mean, baseline_std
                     )
 
@@ -692,28 +692,36 @@ class Visualizer:
         # Add custom legend with fit parameters
         blue_patch = plt.Rectangle((0, 0), 1, 1, fc='#4682B4', ec='blue', alpha=0.5)
         blue_line = plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2)
-        
+
+        # Create fit method description for legend
+        if fit_method == 'double_gaussian':
+            fit_label = f"Double Gaussian fit (σ_core, σ_bkg={pileup_sigma:.0f}ps fixed)"
+            sigma_label = "σ_core"  # Core Gaussian width
+        else:
+            fit_label = "Single Gaussian fit"
+            sigma_label = "σ"  # Single Gaussian width
+
         legend_labels = [
             f"Events: N = {len(errors):,}",
             f"ML model",
             f"ML data: μ = {error_mean:.2f}, σ = {error_std:.2f} ps",
-            f"ML fit: μ = {ml_fit_mean:.2f}, σ = {ml_fit_std:.2f} ps"
+            f"ML fit ({fit_label}): μ = {ml_fit_mean:.2f}, {sigma_label} = {ml_fit_std:.2f} ps"
         ]
-        
-        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch, 
+
+        legend_handles = [plt.Rectangle((0,0),0,0,alpha=0.0), blue_patch,
                          plt.Rectangle((0,0),0,0,alpha=0.0), blue_line]
         
         if baseline_predictions is not None:
             red_patch = plt.Rectangle((0, 0), 1, 1, fc='#D46A6A', ec='red', alpha=0.5)
             red_line = plt.Line2D([0], [0], color='red', linestyle='--', linewidth=2)
-            
+
             legend_labels.extend([
                 "Baseline method",
                 f"Baseline data: μ = {baseline_mean:.2f}, σ = {baseline_std:.2f} ps",
-                f"Baseline fit: μ = {baseline_fit_mean:.2f}, σ = {baseline_fit_std:.2f} ps"
+                f"Baseline fit ({fit_label}): μ = {baseline_fit_mean:.2f}, {sigma_label} = {baseline_fit_std:.2f} ps"
             ])
-            
-            legend_handles.extend([red_patch, 
+
+            legend_handles.extend([red_patch,
                                   plt.Rectangle((0,0),0,0,alpha=0.0), red_line])
         
         ax.legend(legend_handles, legend_labels, 
