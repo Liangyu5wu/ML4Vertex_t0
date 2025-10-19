@@ -465,8 +465,9 @@ class Visualizer:
                 # Fit with fixed background width (matches C++ with fixbkg=true)
                 initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1]
 
-                # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1
-                bounds = ([0, 0, 0, 0.1], [np.inf, np.inf, 0, np.inf])
+                # Parameter bounds: a1>0, a2>0, mu≈0 (very tight), sigma1>0.1
+                # Note: mu must have range to satisfy scipy bounds requirement, use [-0.1, 0.1] for tight constraint
+                bounds = ([0, 0, -0.1, 0.1], [np.inf, np.inf, 0.1, np.inf])
 
                 popt, pcov = curve_fit(
                     double_gaussian_fixed_sigma2, fit_x, fit_y,
@@ -489,8 +490,9 @@ class Visualizer:
                 # Fit with free background width (matches C++ with fixbkg=false)
                 initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1, p0_sigma2]
 
-                # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1, sigma2>0
-                bounds = ([0, 0, 0, 0.1, 0], [np.inf, np.inf, 0, np.inf, np.inf])
+                # Parameter bounds: a1>0, a2>0, mu≈0 (very tight), sigma1>0.1, sigma2>0.1
+                # Note: mu must have range to satisfy scipy bounds requirement, use [-0.1, 0.1] for tight constraint
+                bounds = ([0, 0, -0.1, 0.1, 0.1], [np.inf, np.inf, 0.1, np.inf, np.inf])
 
                 popt, pcov = curve_fit(
                     double_gaussian_func, fit_x, fit_y,
