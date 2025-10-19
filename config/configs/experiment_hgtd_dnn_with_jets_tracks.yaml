@@ -167,3 +167,9 @@ hgtd_track_use_batch_norm: true
 # Track eta cut parameters
 use_track_eta_cut: false           # Enable track eta cut
 track_eta_cut_value: 2.5           # |eta| <= this value
+
+# Error distribution Gaussian fitting parameters
+error_fit_method: "double_gaussian"  # Options: "single_gaussian" or "double_gaussian"
+error_fit_range: 120                 # Fit range in ps, plus-minus 120ps
+pileup_sigma: 175.0                  # Pileup background Gaussian width [ps] (double Gaussian only)
+fix_pileup_sigma: true               # Whether to fix background width (double Gaussian only)

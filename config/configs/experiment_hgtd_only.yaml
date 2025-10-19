@@ -71,3 +71,9 @@ lr_reduction_factor: 0.5
 early_stopping_patience: 20
 lr_patience: 8
 min_lr: 0.0000001
+
+# Error distribution Gaussian fitting parameters
+error_fit_method: "double_gaussian"  # Options: "single_gaussian" or "double_gaussian"
+error_fit_range: 120                 # Fit range in ps, plus-minus 120ps
+pileup_sigma: 175.0                  # Pileup background Gaussian width [ps] (double Gaussian only)
+fix_pileup_sigma: true               # Whether to fix background width (double Gaussian only)

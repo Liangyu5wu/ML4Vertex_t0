@@ -396,16 +396,120 @@ class Visualizer:
         print(f"Histogram comparison plot saved to: {save_path}")
         plt.close()
     
+    def _fit_double_gaussian(
+        self,
+        bin_centers: np.ndarray,
+        counts: np.ndarray,
+        fit_range: float,
+        pileup_sigma: float,
+        fix_pileup: bool,
+        error_mean: float,
+        error_std: float
+    ) -> Tuple[Optional[float], Optional[float], Optional[np.ndarray]]:
+        """
+        Fit double Gaussian to error distribution (matching C++ ROOT implementation).
+
+        Args:
+            bin_centers: Histogram bin centers
+            counts: Histogram bin counts
+            fit_range: Fit range in ps (±fit_range)
+            pileup_sigma: Background Gaussian width [ps]
+            fix_pileup: Whether to fix background width
+            error_mean: Error mean for initial guess
+            error_std: Error std for initial guess
+
+        Returns:
+            Tuple of (fit_mean, fit_sigma_core, fit_params) or (None, None, None) if fit fails
+        """
+        try:
+            from scipy.optimize import curve_fit
+
+            # Define double Gaussian function
+            # f(x) = a1*exp(-0.5*((x-mu)/sigma1)^2) + a2*exp(-0.5*((x-mu)/sigma2)^2)
+            def double_gaussian_func(x, a1, a2, mu, sigma1, sigma2):
+                return (a1 * np.exp(-0.5 * ((x - mu) / sigma1) ** 2) +
+                       a2 * np.exp(-0.5 * ((x - mu) / sigma2) ** 2))
+
+            # Define double Gaussian with fixed sigma2
+            def double_gaussian_fixed_sigma2(x, a1, a2, mu, sigma1):
+                return (a1 * np.exp(-0.5 * ((x - mu) / sigma1) ** 2) +
+                       a2 * np.exp(-0.5 * ((x - mu) / pileup_sigma) ** 2))
+
+            # Select data within fit range
+            mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+
+            if np.sum(mask) <= 4:  # Need at least 5 points for reasonable fit
+                return None, None, None
+
+            fit_x = bin_centers[mask]
+            fit_y = counts[mask]
+
+            # Calculate fit uncertainties (Poisson statistics)
+            fit_error = np.sqrt(fit_y)
+            fit_error[fit_error == 0] = 1
+
+            # Initial parameter guesses (matching C++ implementation)
+            max_count = np.max(fit_y)
+            p0_a1 = 0.8 * max_count      # Core amplitude: 80% of peak
+            p0_a2 = 0.01 * max_count     # Background amplitude: 1% of peak
+            p0_mu = 0.0                  # Mean fixed at zero
+            p0_sigma1 = 26.0             # Core width: ~26ps initial guess
+            p0_sigma2 = pileup_sigma     # Background width: 175ps
+
+            if fix_pileup:
+                # Fit with fixed background width
+                initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1]
+
+                # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1
+                bounds = ([0, 0, 0, 0.1], [np.inf, np.inf, 0, np.inf])
+
+                popt, pcov = curve_fit(
+                    double_gaussian_fixed_sigma2, fit_x, fit_y,
+                    p0=initial_params, sigma=fit_error, absolute_sigma=True,
+                    bounds=bounds
+                )
+
+                # Extract parameters
+                fit_mean = popt[2]
+                fit_sigma_core = abs(popt[3])
+
+                # Reconstruct full parameter array for plotting
+                fit_params = np.array([popt[0], popt[1], popt[2], popt[3], pileup_sigma])
+
+            else:
+                # Fit with free background width
+                initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1, p0_sigma2]
+
+                # Parameter bounds: a1>0, a2>0, mu=0, sigma1>0.1, sigma2>0
+                bounds = ([0, 0, 0, 0.1, 0], [np.inf, np.inf, 0, np.inf, np.inf])
+
+                popt, pcov = curve_fit(
+                    double_gaussian_func, fit_x, fit_y,
+                    p0=initial_params, sigma=fit_error, absolute_sigma=True,
+                    bounds=bounds
+                )
+
+                # Extract parameters
+                fit_mean = popt[2]
+                fit_sigma_core = abs(popt[3])
+                fit_params = popt
+
+            return fit_mean, fit_sigma_core, fit_params
+
+        except Exception as e:
+            print(f"Warning: Double Gaussian fit failed: {e}")
+            return None, None, None
+
     def plot_error_distribution(
-        self, 
-        y_true: np.ndarray, 
+        self,
+        y_true: np.ndarray,
         y_pred: np.ndarray,
         save_path: Optional[str] = None,
         baseline_predictions: Optional[np.ndarray] = None
     ):
         """
         Plot distribution of prediction errors with optional baseline comparison.
-        
+
         Args:
             y_true: True values
             y_pred: Predicted values
@@ -414,7 +518,7 @@ class Visualizer:
         """
         if save_path is None:
             save_path = os.path.join(self.config.plots_dir, "error_distribution.png")
-        
+
         errors = y_pred - y_true
         error_mean = np.mean(errors)
         error_std = np.std(errors)
@@ -464,61 +568,112 @@ class Visualizer:
                    histtype='stepfilled', color='#D46A6A', edgecolor='red', 
                    linewidth=2, alpha=0.5)
         
-        # Gaussian fitting function
+        # Get fitting parameters from config (with defaults for backward compatibility)
+        fit_method = getattr(self.config, 'error_fit_method', 'single_gaussian')
+        fit_range = getattr(self.config, 'error_fit_range', 120)
+        pileup_sigma = getattr(self.config, 'pileup_sigma', 175.0)
+        fix_pileup = getattr(self.config, 'fix_pileup_sigma', True)
+
+        # Gaussian fitting function (single Gaussian)
         def gaussian_func(x, a, mu, sigma):
             return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
-        
+
+        # Double Gaussian fitting function
+        def double_gaussian_func(x, a1, a2, mu, sigma1, sigma2):
+            return (a1 * np.exp(-0.5 * ((x - mu) / sigma1) ** 2) +
+                   a2 * np.exp(-0.5 * ((x - mu) / sigma2) ** 2))
+
         # Fit ML model errors
         try:
             from scipy.optimize import curve_fit
-            fit_range = 120  # Standard fit range
-            mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
-            
-            if np.sum(mask) > 3:
-                fit_x = bin_centers[mask]
-                fit_y = ml_counts[mask]
-                fit_error = np.sqrt(fit_y)
-                fit_error[fit_error == 0] = 1
-                
-                # Initial parameters for fit (amplitude, mean, sigma)
-                p0 = [np.max(fit_y), error_mean, error_std]
-                
-                popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
-                                      p0=p0, sigma=fit_error, absolute_sigma=True)
-                ml_fit_mean, ml_fit_std = popt[1], abs(popt[2])
-                
-                # Plot fitted curve extended to ±2000ps display range
-                x_fit = np.linspace(-2000, 2000, 1000)
-                y_fit = gaussian_func(x_fit, *popt)
-                ax.plot(x_fit, y_fit, 'b--', linewidth=2)
+
+            if fit_method == 'double_gaussian':
+                # Use double Gaussian fitting
+                ml_fit_mean, ml_fit_std, ml_fit_params = self._fit_double_gaussian(
+                    bin_centers, ml_counts, fit_range, pileup_sigma, fix_pileup,
+                    error_mean, error_std
+                )
+
+                if ml_fit_params is not None:
+                    # Plot fitted curve extended to ±2000ps display range
+                    x_fit = np.linspace(-2000, 2000, 1000)
+                    y_fit = double_gaussian_func(x_fit, *ml_fit_params)
+                    ax.plot(x_fit, y_fit, 'b--', linewidth=2)
+                else:
+                    # Fallback to data statistics
+                    ml_fit_mean, ml_fit_std = error_mean, error_std
+
             else:
-                ml_fit_mean, ml_fit_std = error_mean, error_std
-        except:
+                # Use single Gaussian fitting (default)
+                mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+
+                if np.sum(mask) > 3:
+                    fit_x = bin_centers[mask]
+                    fit_y = ml_counts[mask]
+                    fit_error = np.sqrt(fit_y)
+                    fit_error[fit_error == 0] = 1
+
+                    # Initial parameters for fit (amplitude, mean, sigma)
+                    p0 = [np.max(fit_y), error_mean, error_std]
+
+                    popt, pcov = curve_fit(gaussian_func, fit_x, fit_y,
+                                          p0=p0, sigma=fit_error, absolute_sigma=True)
+                    ml_fit_mean, ml_fit_std = popt[1], abs(popt[2])
+
+                    # Plot fitted curve extended to ±2000ps display range
+                    x_fit = np.linspace(-2000, 2000, 1000)
+                    y_fit = gaussian_func(x_fit, *popt)
+                    ax.plot(x_fit, y_fit, 'b--', linewidth=2)
+                else:
+                    ml_fit_mean, ml_fit_std = error_mean, error_std
+
+        except Exception as e:
+            print(f"Warning: Gaussian fit failed: {e}")
             ml_fit_mean, ml_fit_std = error_mean, error_std
         
         # Fit baseline errors if provided
         baseline_fit_mean, baseline_fit_std = None, None
         if baseline_predictions is not None:
             try:
-                mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
-                if np.sum(mask) > 3:
-                    fit_x = bin_centers[mask]
-                    fit_y = baseline_counts[mask]
-                    fit_error = np.sqrt(fit_y)
-                    fit_error[fit_error == 0] = 1
-                    
-                    p0 = [np.max(fit_y), baseline_mean, baseline_std]
-                    
-                    popt, pcov = curve_fit(gaussian_func, fit_x, fit_y, 
-                                          p0=p0, sigma=fit_error, absolute_sigma=True)
-                    baseline_fit_mean, baseline_fit_std = popt[1], abs(popt[2])
-                    
-                    x_fit = np.linspace(-2000, 2000, 1000)
-                    y_fit = gaussian_func(x_fit, *popt)
-                    ax.plot(x_fit, y_fit, 'r--', linewidth=2)
+                if fit_method == 'double_gaussian':
+                    # Use double Gaussian fitting for baseline
+                    baseline_fit_mean, baseline_fit_std, baseline_fit_params = self._fit_double_gaussian(
+                        bin_centers, baseline_counts, fit_range, pileup_sigma, fix_pileup,
+                        baseline_mean, baseline_std
+                    )
+
+                    if baseline_fit_params is not None:
+                        # Plot fitted curve extended to ±2000ps display range
+                        x_fit = np.linspace(-2000, 2000, 1000)
+                        y_fit = double_gaussian_func(x_fit, *baseline_fit_params)
+                        ax.plot(x_fit, y_fit, 'r--', linewidth=2)
+                    else:
+                        # Fallback to data statistics
+                        baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
+
                 else:
-                    baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
-            except:
+                    # Use single Gaussian fitting (default)
+                    mask = (bin_centers >= -fit_range) & (bin_centers <= fit_range)
+                    if np.sum(mask) > 3:
+                        fit_x = bin_centers[mask]
+                        fit_y = baseline_counts[mask]
+                        fit_error = np.sqrt(fit_y)
+                        fit_error[fit_error == 0] = 1
+
+                        p0 = [np.max(fit_y), baseline_mean, baseline_std]
+
+                        popt, pcov = curve_fit(gaussian_func, fit_x, fit_y,
+                                              p0=p0, sigma=fit_error, absolute_sigma=True)
+                        baseline_fit_mean, baseline_fit_std = popt[1], abs(popt[2])
+
+                        x_fit = np.linspace(-2000, 2000, 1000)
+                        y_fit = gaussian_func(x_fit, *popt)
+                        ax.plot(x_fit, y_fit, 'r--', linewidth=2)
+                    else:
+                        baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
+
+            except Exception as e:
+                print(f"Warning: Baseline Gaussian fit failed: {e}")
                 baseline_fit_mean, baseline_fit_std = baseline_mean, baseline_std
         
         # Set axis labels and title
