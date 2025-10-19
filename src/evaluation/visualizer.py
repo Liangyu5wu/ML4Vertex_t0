@@ -441,6 +441,11 @@ class Visualizer:
             fit_x = bin_centers
             fit_y = counts
 
+            # Debug: print fitting range and data statistics
+            print(f"  Double Gaussian fitting range: [{np.min(fit_x):.1f}, {np.max(fit_x):.1f}] ps")
+            print(f"  Number of bins: {len(fit_x)}, Total counts: {np.sum(fit_y):.0f}")
+            print(f"  Peak bin value: {np.max(fit_y):.0f} at x={fit_x[np.argmax(fit_y)]:.1f} ps")
+
             if len(fit_x) <= 4:  # Need at least 5 points for reasonable fit
                 return None, None, None
 
@@ -476,6 +481,10 @@ class Visualizer:
                 # Reconstruct full parameter array for plotting
                 fit_params = np.array([popt[0], popt[1], popt[2], popt[3], pileup_sigma])
 
+                # Debug: print fitted parameters
+                print(f"  Double Gaussian fit SUCCESS (fixed σ_bkg={pileup_sigma:.0f}ps):")
+                print(f"    N_core={popt[0]:.1f}, N_bkg={popt[1]:.1f}, μ={popt[2]:.2f}, σ_core={popt[3]:.2f} ps")
+
             else:
                 # Fit with free background width (matches C++ with fixbkg=false)
                 initial_params = [p0_a1, p0_a2, p0_mu, p0_sigma1, p0_sigma2]
@@ -494,10 +503,16 @@ class Visualizer:
                 fit_sigma_core = abs(popt[3])
                 fit_params = popt
 
+                # Debug: print fitted parameters
+                print(f"  Double Gaussian fit SUCCESS (free σ_bkg):")
+                print(f"    N_core={popt[0]:.1f}, N_bkg={popt[1]:.1f}, μ={popt[2]:.2f}, σ_core={popt[3]:.2f}, σ_bkg={popt[4]:.2f} ps")
+
             return fit_mean, fit_sigma_core, fit_params
 
         except Exception as e:
-            print(f"Warning: Double Gaussian fit failed: {e}")
+            print(f"  WARNING: Double Gaussian fit FAILED: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None, None
 
     def plot_error_distribution(
