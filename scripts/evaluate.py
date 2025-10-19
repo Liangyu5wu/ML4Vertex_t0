@@ -35,7 +35,7 @@ from src.training.trainer import Trainer
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Evaluate vertex time prediction model')
-    
+
     parser.add_argument('--model-dir', type=str, required=True,
                        help='Directory containing saved model and config')
     parser.add_argument('--data-dir', type=str, default=None,
@@ -46,8 +46,59 @@ def parse_args():
                        help='Create evaluation plots')
     parser.add_argument('--verbose', type=int, default=1,
                        help='Verbosity level (0, 1, 2)')
-    
+    parser.add_argument('--config-file', type=str, default=None,
+                       help='Path to config file to override evaluation parameters (e.g., fitting method)')
+
     return parser.parse_args()
+
+
+def override_evaluation_params(config, config_file_path):
+    """
+    Override evaluation-specific parameters from a config file.
+
+    This allows updating evaluation parameters (like fitting method) without retraining.
+    Only evaluation-related parameters are overridden, not training parameters.
+
+    Args:
+        config: Loaded config object from model directory
+        config_file_path: Path to YAML config file with updated parameters
+
+    Returns:
+        Updated config object
+    """
+    if not config_file_path or not os.path.exists(config_file_path):
+        return config
+
+    import yaml
+
+    try:
+        with open(config_file_path, 'r') as f:
+            override_params = yaml.safe_load(f)
+
+        # List of evaluation-specific parameters that can be overridden
+        evaluation_params = [
+            'error_fit_method',
+            'error_fit_range',
+            'pileup_sigma',
+            'fix_pileup_sigma'
+        ]
+
+        overridden = []
+        for param in evaluation_params:
+            if param in override_params:
+                old_value = getattr(config, param, None)
+                setattr(config, param, override_params[param])
+                overridden.append(f"  {param}: {old_value} -> {override_params[param]}")
+
+        if overridden:
+            print("\nOverriding evaluation parameters from config file:")
+            for msg in overridden:
+                print(msg)
+
+    except Exception as e:
+        print(f"Warning: Could not override parameters from {config_file_path}: {e}")
+
+    return config
 
 
 def load_config_and_model(model_dir):
@@ -444,7 +495,12 @@ def main():
         # Load configuration and model
         print("\n1. Loading model and configuration...")
         config, keras_model, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input = load_config_and_model(args.model_dir)
-        
+
+        # Override evaluation-specific parameters if config file provided
+        if args.config_file:
+            print(f"\nAttempting to override evaluation parameters from: {args.config_file}")
+            config = override_evaluation_params(config, args.config_file)
+
         # Update config with model directory for saving results
         config.models_base_dir = os.path.dirname(args.model_dir)
         config.model_name = os.path.basename(args.model_dir)

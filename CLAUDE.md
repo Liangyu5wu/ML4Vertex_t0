@@ -66,6 +66,10 @@ python scripts/evaluate.py --model-dir ../models/multi_input_transformer_with_je
 # Evaluate HGTD models
 python scripts/evaluate.py --model-dir ../models/hgtd_multi_input_dnn_with_jets_tracks --load-data
 python scripts/evaluate.py --model-dir ../models/hgtd_only_dnn --load-data
+
+# Override evaluation parameters (e.g., fitting method) without retraining
+python scripts/evaluate.py --model-dir ../models/hgtd_only_dnn --load-data \
+    --config-file config/configs/experiment_hgtd_only.yaml
 ```
 
 ### Parameter Sweeps
@@ -443,6 +447,17 @@ Standalone analysis tool in `baseline_analysis/`:
 - Use appropriate time limits based on experiment size
 - Monitor GPU memory usage with TensorFlow
 - Check logs in `../logs/` directory
+
+### Evaluation Parameter Override
+- **Purpose**: Update evaluation-specific parameters without retraining models
+- **Use case**: Change error distribution fitting method (single vs double Gaussian) for existing models
+- **Usage**: `python scripts/evaluate.py --model-dir <model> --load-data --config-file <config.yaml>`
+- **Overridable parameters**:
+  - `error_fit_method`: "single_gaussian" or "double_gaussian"
+  - `error_fit_range`: Fit range in ps (single Gaussian only)
+  - `pileup_sigma`: Background Gaussian width (double Gaussian only)
+  - `fix_pileup_sigma`: Whether to fix background width (double Gaussian only)
+- **Note**: Only evaluation parameters are overridden; training parameters are not affected
 
 ### Baseline Analysis
 - Use `baseline_analysis.py` for understanding reconstruction failures
