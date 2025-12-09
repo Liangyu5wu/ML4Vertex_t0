@@ -48,7 +48,11 @@ class BaseConfig:
     min_jets: int = 1
     max_tracks: int = 30
     min_tracks: int = 1
-    
+
+    # NEW: HGTD track parameters
+    max_hgtd_tracks: int = 30
+    min_hgtd_tracks: int = 1
+
     # NEW: Track eta cut parameters
     use_track_eta_cut: bool = False
     track_eta_cut_value: float = 2.5
@@ -61,6 +65,7 @@ class BaseConfig:
     # NEW: Event-level jet and track features
     use_event_jets: bool = False      # Use event-level jet features
     use_event_tracks: bool = False    # Use event-level track features
+    use_event_hgtd_tracks: bool = False  # Use event-level HGTD track features
     
     # Cell filtering parameters
     require_valid_cells: bool = True
@@ -116,6 +121,10 @@ class BaseConfig:
     event_track_features: List[str] = None
     jet_padding_values: Dict[str, float] = None
     track_padding_values: Dict[str, float] = None
+
+    # NEW: HGTD track features
+    hgtd_track_features: List[str] = None
+    hgtd_track_padding_values: Dict[str, float] = None
     
     skip_normalization: List[str] = None
     
@@ -185,6 +194,21 @@ class BaseConfig:
                 'phi': -999.0,
                 'd0': -999.0,
                 'z0': -999.0
+            }
+
+        # NEW: Initialize HGTD track features
+        if self.hgtd_track_features is None:
+            self.hgtd_track_features = ['pt', 'eta', 'phi', 'd0', 'z0', 'time', 'timeRes']
+
+        if self.hgtd_track_padding_values is None:
+            self.hgtd_track_padding_values = {
+                'pt': -1.0,
+                'eta': -999.0,
+                'phi': -999.0,
+                'd0': -999.0,
+                'z0': -999.0,
+                'time': 0.0,      # Same as Cell_time_TOF_corrected default
+                'timeRes': -999.0  # Invalid value for time resolution
             }
     
     @property

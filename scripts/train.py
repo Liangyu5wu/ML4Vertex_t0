@@ -21,11 +21,17 @@ from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
 from src.data.multi_input_data_loader import MultiInputDataLoader
 from src.data.multi_input_data_processor import MultiInputDataProcessor
+from src.data.hgtd_multi_input_data_loader import HGTDMultiInputDataLoader
+from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
+from src.data.hgtd_only_data_loader import HGTDOnlyDataLoader
+from src.data.hgtd_only_data_processor import HGTDOnlyDataProcessor
 from src.models.transformer_model import TransformerModel
 from src.models.dnn_model import DNNModel
 from src.models.baseline_guided_model import BaselineGuidedDNN
 from src.models.multi_input_dnn_model import MultiInputDNNModel
 from src.models.multi_input_transformer_model import MultiInputTransformerModel
+from src.models.hgtd_multi_input_dnn_model import HGTDMultiInputDNNModel
+from src.models.hgtd_only_dnn_model import HGTDOnlyDNNModel
 from src.training.trainer import Trainer
 
 
@@ -82,6 +88,12 @@ def create_config_from_yaml(yaml_path):
         if yaml_data.get('model_architecture') == 'baseline_guided_dnn':
             config = DNNConfig.from_yaml(yaml_path)
             logger.info(f"Loaded baseline-guided DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'hgtd_only_dnn':
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded HGTD-only DNN configuration from: {yaml_path}")
+        elif yaml_data.get('model_architecture') == 'hgtd_multi_input_dnn':
+            config = DNNConfig.from_yaml(yaml_path)
+            logger.info(f"Loaded HGTD multi-input DNN configuration from: {yaml_path}")
         elif yaml_data.get('model_architecture') == 'multi_input_dnn':
             config = DNNConfig.from_yaml(yaml_path)
             logger.info(f"Loaded multi-input DNN configuration from: {yaml_path}")
@@ -148,19 +160,54 @@ def print_training_info(config):
     print("\n" + "="*60)
     print("VERTEX TIME PREDICTION MODEL TRAINING")
     print("="*60)
-    
+
     # Print configuration
     config.print_config()
-    
+
+    # Detect model type
+    model_arch = getattr(config, 'model_architecture', '')
+    is_hgtd_only = (model_arch == 'hgtd_only_dnn')
+    is_hgtd_multi_input = (model_arch == 'hgtd_multi_input_dnn')
+    is_multi_input_dnn = (model_arch == 'multi_input_dnn')
+    is_multi_input_transformer = (model_arch == 'multi_input_transformer')
+    is_multi_input = is_multi_input_dnn or is_multi_input_transformer or is_hgtd_multi_input
+
     # Print derived information
     print(f"\nDerived Information:")
-    print(f"  Cell features: {len(config.cell_features)} features")
+
+    if is_hgtd_only:
+        # HGTD-only: only HGTD tracks + vertex
+        print(f"  HGTD track features: {len(config.hgtd_track_features)} features")
+        print(f"  HGTD track feature list: {config.hgtd_track_features}")
+        print(f"  Vertex features: {3 if config.use_spatial_features else 0} features (x, y, z)")
+    elif is_multi_input:
+        # Multi-input models: cells + jets + tracks (+ HGTD tracks for HGTD multi-input)
+        print(f"  Cell features: {len(config.cell_features)} features")
+        print(f"  Jet features: {len(config.jet_features)} features {config.jet_features}")
+        print(f"  LAr track features: {len(config.track_features)} features {config.track_features}")
+        if is_hgtd_multi_input:
+            print(f"  HGTD track features: {len(config.hgtd_track_features)} features {config.hgtd_track_features}")
+        print(f"  Vertex features: {3 if config.use_spatial_features else 0} features")
+    else:
+        # Regular models: cells + vertex
+        print(f"  Cell features: {len(config.cell_features)} features")
+
     print(f"  Model directory: {config.model_dir}")
     print(f"  Model path: {config.model_path}")
-    print(f"  Using attention mask: {config.use_attention_mask}")
-    
-    # Print model type
-    if isinstance(config, DNNConfig):
+
+    if not is_hgtd_only:
+        print(f"  Using attention mask: {config.use_attention_mask}")
+
+    # Print model type with correct labels
+    if is_hgtd_only:
+        print(f"  Model type: HGTD-Only DNN (no LAr data)")
+    elif is_hgtd_multi_input:
+        print(f"  Model type: HGTD Multi-Input DNN (cells + jets + LAr tracks + HGTD tracks)")
+    elif is_multi_input_dnn:
+        print(f"  Model type: Multi-Input DNN (cells + jets + tracks)")
+    elif is_multi_input_transformer:
+        print(f"  Model type: Multi-Input Transformer (cells + jets + tracks)")
+    elif isinstance(config, DNNConfig):
         print(f"  Model type: Two-Stage DNN")
     else:
         print(f"  Model type: Transformer")
@@ -191,20 +238,105 @@ def validate_jet_features_setup(config, data_loader, skip_validation=False):
     return True
 
 
+def create_hgtd_only_datasets_and_model(config, data_processor, train_data, val_data):
+    """Create datasets and model for HGTD-only models."""
+
+    (
+        train_hgtd_tracks_norm, train_vertex_norm, train_times
+    ) = train_data
+
+    (
+        val_hgtd_tracks_norm, val_vertex_norm, val_times
+    ) = val_data
+
+    print(f"\n3. Creating HGTD-only TensorFlow datasets...")
+
+    # Create HGTD-only datasets
+    train_dataset = data_processor.create_hgtd_only_dataset(
+        train_hgtd_tracks_norm, train_vertex_norm, train_times, shuffle=True
+    )
+    val_dataset = data_processor.create_hgtd_only_dataset(
+        val_hgtd_tracks_norm, val_vertex_norm, val_times, shuffle=False
+    )
+
+    # Create HGTD-only model
+    hgtd_track_feature_dim = len(config.hgtd_track_features)
+    vertex_dim = train_vertex_norm.shape[1]
+
+    print(f"Model input dimensions:")
+    print(f"  HGTD track features: {hgtd_track_feature_dim}")
+    print(f"  Vertex features: {vertex_dim}")
+
+    print(f"\n4. Building HGTD-Only DNN model...")
+    model = HGTDOnlyDNNModel(config)
+    keras_model = model.build_model(hgtd_track_feature_dim, vertex_dim)
+
+    print(f"Using HGTD track features: {config.hgtd_track_features}")
+
+    return train_dataset, val_dataset, model, keras_model
+
+
+def create_hgtd_multi_input_datasets_and_model(config, data_processor, train_data, val_data):
+    """Create datasets and model for HGTD multi-input models."""
+
+    (
+        train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_hgtd_tracks_norm, train_times
+    ) = train_data
+
+    (
+        val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_hgtd_tracks_norm, val_times
+    ) = val_data
+
+    print(f"\n3. Creating HGTD multi-input TensorFlow datasets...")
+    print(f"Using attention mask: {config.use_attention_mask}")
+
+    # Create HGTD multi-input datasets
+    train_dataset = data_processor.create_hgtd_multi_input_dataset(
+        train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_hgtd_tracks_norm, train_times, shuffle=True
+    )
+    val_dataset = data_processor.create_hgtd_multi_input_dataset(
+        val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_hgtd_tracks_norm, val_times, shuffle=False
+    )
+
+    # Create HGTD multi-input model
+    feature_dim = len(config.cell_features)
+    vertex_dim = train_vertex_norm.shape[1]
+    jet_feature_dim = len(config.jet_features)
+    track_feature_dim = len(config.track_features)
+    hgtd_track_feature_dim = len(config.hgtd_track_features)
+
+    print(f"Model input dimensions:")
+    print(f"  Cell features: {feature_dim}")
+    print(f"  Vertex features: {vertex_dim}")
+    print(f"  Jet features: {jet_feature_dim}")
+    print(f"  LAr track features: {track_feature_dim}")
+    print(f"  HGTD track features: {hgtd_track_feature_dim}")
+
+    print(f"\n4. Building HGTD Multi-Input DNN model...")
+    model = HGTDMultiInputDNNModel(config)
+    keras_model = model.build_model(feature_dim, vertex_dim, jet_feature_dim, track_feature_dim, hgtd_track_feature_dim)
+
+    print(f"Including jet features: {config.jet_features}")
+    print(f"Including LAr track features: {config.track_features}")
+    print(f"Including HGTD track features: {config.hgtd_track_features}")
+
+    return train_dataset, val_dataset, model, keras_model
+
+
 def create_multi_input_datasets_and_model(config, data_processor, train_data, val_data):
     """Create datasets and model for multi-input models."""
-    
+
     (
         train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times
     ) = train_data
-    
+
     (
         val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times
     ) = val_data
-    
+
     print(f"\n3. Creating multi-input TensorFlow datasets...")
     print(f"Using attention mask: {config.use_attention_mask}")
-    
+
     # Create multi-input datasets
     train_dataset = data_processor.create_multi_input_dataset(
         train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times, shuffle=True
@@ -212,22 +344,22 @@ def create_multi_input_datasets_and_model(config, data_processor, train_data, va
     val_dataset = data_processor.create_multi_input_dataset(
         val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times, shuffle=False
     )
-    
+
     # Create appropriate multi-input model
     feature_dim = len(config.cell_features)
     vertex_dim = train_vertex_norm.shape[1]
     jet_feature_dim = len(config.jet_features)
     track_feature_dim = len(config.track_features)
-    
+
     print(f"Model input dimensions:")
     print(f"  Cell features: {feature_dim}")
     print(f"  Vertex features: {vertex_dim}")
     print(f"  Jet features: {jet_feature_dim}")
     print(f"  Track features: {track_feature_dim}")
-    
+
     is_multi_input_dnn = (getattr(config, 'model_architecture', '') == 'multi_input_dnn')
     is_multi_input_transformer = (getattr(config, 'model_architecture', '') == 'multi_input_transformer')
-    
+
     if is_multi_input_dnn:
         print(f"\n4. Building Multi-Input DNN model...")
         model = MultiInputDNNModel(config)
@@ -238,10 +370,10 @@ def create_multi_input_datasets_and_model(config, data_processor, train_data, va
         keras_model = model.build_model(feature_dim, vertex_dim, jet_feature_dim, track_feature_dim)
     else:
         raise ValueError(f"Unsupported multi-input model architecture: {getattr(config, 'model_architecture', '')}")
-    
+
     print(f"Including jet features: {config.jet_features}")
     print(f"Including track features: {config.track_features}")
-    
+
     return train_dataset, val_dataset, model, keras_model
 
 
@@ -327,14 +459,20 @@ def main():
         print_training_info(config)
         
         # Determine model type early for data loading
-        is_dnn_model = (isinstance(config, DNNConfig) or 
+        is_dnn_model = (isinstance(config, DNNConfig) or
                        getattr(config, 'model_architecture', '') == 'two_stage_dnn')
         is_baseline_guided = (getattr(config, 'model_architecture', '') == 'baseline_guided_dnn')
+        is_hgtd_only = (getattr(config, 'model_architecture', '') == 'hgtd_only_dnn')
+        is_hgtd_multi_input = (getattr(config, 'model_architecture', '') == 'hgtd_multi_input_dnn')
         is_multi_input = (getattr(config, 'model_architecture', '') in ['multi_input_dnn', 'multi_input_transformer'])
         
         # Load data
         print(f"\n1. Loading and processing data...")
-        if is_multi_input:
+        if is_hgtd_only:
+            data_loader = HGTDOnlyDataLoader(config)
+        elif is_hgtd_multi_input:
+            data_loader = HGTDMultiInputDataLoader(config)
+        elif is_multi_input:
             data_loader = MultiInputDataLoader(config)
         else:
             data_loader = DataLoader(config)
@@ -344,32 +482,56 @@ def main():
             return 1
         
         try:
-            if is_baseline_guided:
+            if is_hgtd_only:
+                # Load HGTD-only data (no LAr cells, jets, or tracks)
+                hgtd_track_sequences, vertex_features, vertex_times, sequence_lengths = \
+                    data_loader.load_data_from_files()
+                cell_sequences = baseline_predictions = jet_sequences = track_sequences = None
+            elif is_baseline_guided:
                 # Load data with baseline predictions for residual learning
                 cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
                     data_loader.load_data_with_baselines_from_files()
-                jet_sequences = track_sequences = None
+                jet_sequences = track_sequences = hgtd_track_sequences = None
+            elif is_hgtd_multi_input:
+                # Load HGTD multi-input data (cells, vertex, jets, LAr tracks, HGTD tracks)
+                cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, hgtd_track_sequences = \
+                    data_loader.load_data_from_files()
+                baseline_predictions = None
             elif is_multi_input:
                 # Load multi-input data (cells, vertex, jets, tracks)
                 cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
                     data_loader.load_data_from_files()
                 baseline_predictions = None
+                hgtd_track_sequences = None
             else:
                 # Standard data loading
                 cell_sequences, vertex_features, vertex_times, sequence_lengths = \
                     data_loader.load_data_from_files()
                 baseline_predictions = None
-                jet_sequences = track_sequences = None
+                jet_sequences = track_sequences = hgtd_track_sequences = None
         except Exception as e:
             print(f"Error loading data: {e}")
             print("Please check that the data directory exists and contains HDF5 files.")
             return 1
         
         print(f"Loaded {len(vertex_times)} events")
-        print(f"Cell feature dimension: {len(config.cell_features)}")
-        print(f"Vertex feature dimension: {vertex_features.shape[1]}")
-        
-        if is_multi_input:
+
+        if is_hgtd_only:
+            print(f"HGTD track feature dimension: {len(config.hgtd_track_features)}")
+            print(f"Vertex feature dimension: {vertex_features.shape[1]}")
+            print(f"Average HGTD tracks per event: {sum(len(hgtd_tracks) for hgtd_tracks in hgtd_track_sequences) / len(hgtd_track_sequences):.1f}")
+        else:
+            print(f"Cell feature dimension: {len(config.cell_features)}")
+            print(f"Vertex feature dimension: {vertex_features.shape[1]}")
+
+        if is_hgtd_multi_input:
+            print(f"Jet feature dimension: {len(config.jet_features)}")
+            print(f"LAr track feature dimension: {len(config.track_features)}")
+            print(f"HGTD track feature dimension: {len(config.hgtd_track_features)}")
+            print(f"Average jets per event: {sum(len(jets) for jets in jet_sequences) / len(jet_sequences):.1f}")
+            print(f"Average LAr tracks per event: {sum(len(tracks) for tracks in track_sequences) / len(track_sequences):.1f}")
+            print(f"Average HGTD tracks per event: {sum(len(hgtd_tracks) for hgtd_tracks in hgtd_track_sequences) / len(hgtd_track_sequences):.1f}")
+        elif is_multi_input:
             print(f"Jet feature dimension: {len(config.jet_features)}")
             print(f"Track feature dimension: {len(config.track_features)}")
             print(f"Average jets per event: {sum(len(jets) for jets in jet_sequences) / len(jet_sequences):.1f}")
@@ -377,9 +539,9 @@ def main():
         
         # Process data
         print(f"\n2. Splitting and processing data...")
-        
-        # Add physics features if enabled
-        if getattr(config, 'use_physics_informed_features', False):
+
+        # Add physics features if enabled (skip for HGTD-only)
+        if not is_hgtd_only and getattr(config, 'use_physics_informed_features', False):
             print("Adding physics-informed features...")
             from src.data.physics_features import PhysicsFeatureEngineer
             physics_engineer = PhysicsFeatureEngineer(config)
@@ -387,49 +549,75 @@ def main():
                 cell_sequences, feature_names
             )
             print(f"Enhanced features: {len(feature_names)} total")
-        
-        if is_multi_input:
+
+        if is_hgtd_only:
+            data_processor = HGTDOnlyDataProcessor(config)
+        elif is_hgtd_multi_input:
+            data_processor = HGTDMultiInputDataProcessor(config)
+        elif is_multi_input:
             data_processor = MultiInputDataProcessor(config)
         else:
             data_processor = DataProcessor(config)
         
         # Split data
-        if is_baseline_guided:
+        if is_hgtd_only:
+            # HGTD-only data splitting (no cells, jets, or LAr tracks)
+            (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                hgtd_track_sequences, vertex_features, vertex_times
+            )
+            train_cells = val_cells = test_cells = None
+            train_jets = val_jets = test_jets = None
+            train_tracks = val_tracks = test_tracks = None
+            train_baselines = val_baselines = test_baselines = None
+        elif is_baseline_guided:
             # For baseline-guided models, we need to split all data together to maintain consistency
             from sklearn.model_selection import train_test_split
             import numpy as np
-            
+
             # Create indices for consistent splitting
             indices = np.arange(len(vertex_times))
-            
+
             # First split: train vs (val + test)
             train_indices, temp_indices = train_test_split(
-                indices, test_size=config.test_size + config.val_split, 
+                indices, test_size=config.test_size + config.val_split,
                 random_state=config.random_state
             )
-            
+
             # Second split: val vs test
             val_indices, test_indices = train_test_split(
-                temp_indices, test_size=config.test_size/(config.test_size + config.val_split), 
+                temp_indices, test_size=config.test_size/(config.test_size + config.val_split),
                 random_state=config.random_state
             )
-            
+
             # Split all data using these indices
             train_cells = [cell_sequences[i] for i in train_indices]
             val_cells = [cell_sequences[i] for i in val_indices]
             test_cells = [cell_sequences[i] for i in test_indices]
-            
+
             train_vertex = vertex_features[train_indices]
             val_vertex = vertex_features[val_indices]
             test_vertex = vertex_features[test_indices]
-            
+
             train_times = vertex_times[train_indices]
             val_times = vertex_times[val_indices]
             test_times = vertex_times[test_indices]
-            
+
             train_baselines = baseline_predictions[train_indices]
             val_baselines = baseline_predictions[val_indices]
             test_baselines = baseline_predictions[test_indices]
+        elif is_hgtd_multi_input:
+            # HGTD multi-input data splitting
+            (train_cells, val_cells, test_cells), \
+            (train_vertex, val_vertex, test_vertex), \
+            (train_jets, val_jets, test_jets), \
+            (train_tracks, val_tracks, test_tracks), \
+            (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
+            (train_times, val_times, test_times) = data_processor.split_data(
+                cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences, hgtd_track_sequences
+            )
+            train_baselines = val_baselines = test_baselines = None
         elif is_multi_input:
             # Multi-input data splitting
             (train_cells, val_cells, test_cells), \
@@ -450,7 +638,32 @@ def main():
             train_baselines = val_baselines = test_baselines = None
         
         # Normalize features (includes time calibration if enabled)
-        if is_multi_input:
+        if is_hgtd_only:
+            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            norm_params = data_processor.normalize_features(
+                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
+                train_vertex, val_vertex, test_vertex,
+                train_times, val_times, test_times
+            )
+            train_cells_norm = val_cells_norm = test_cells_norm = None
+            train_jets_norm = val_jets_norm = test_jets_norm = None
+            train_tracks_norm = val_tracks_norm = test_tracks_norm = None
+        elif is_hgtd_multi_input:
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            (train_jets_norm, val_jets_norm, test_jets_norm), \
+            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
+            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_jets, val_jets, test_jets,
+                train_tracks, val_tracks, test_tracks,
+                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
+                train_times, val_times, test_times
+            )
+        elif is_multi_input:
             (train_cells_norm, val_cells_norm, test_cells_norm), \
             (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
             (train_jets_norm, val_jets_norm, test_jets_norm), \
@@ -462,6 +675,7 @@ def main():
                 train_tracks, val_tracks, test_tracks,
                 train_times, val_times, test_times
             )
+            train_hgtd_tracks_norm = val_hgtd_tracks_norm = test_hgtd_tracks_norm = None
         else:
             (train_cells_norm, val_cells_norm, test_cells_norm), \
             (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
@@ -472,9 +686,22 @@ def main():
             )
             train_jets_norm = val_jets_norm = test_jets_norm = None
             train_tracks_norm = val_tracks_norm = test_tracks_norm = None
+            train_hgtd_tracks_norm = val_hgtd_tracks_norm = test_hgtd_tracks_norm = None
         
         # Create datasets and model based on configuration type
-        if is_multi_input:
+        if is_hgtd_only:
+            train_data = (train_hgtd_tracks_norm, train_vertex_norm, train_times)
+            val_data = (val_hgtd_tracks_norm, val_vertex_norm, val_times)
+            train_dataset, val_dataset, model, keras_model = create_hgtd_only_datasets_and_model(
+                config, data_processor, train_data, val_data
+            )
+        elif is_hgtd_multi_input:
+            train_data = (train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_hgtd_tracks_norm, train_times)
+            val_data = (val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_hgtd_tracks_norm, val_times)
+            train_dataset, val_dataset, model, keras_model = create_hgtd_multi_input_datasets_and_model(
+                config, data_processor, train_data, val_data
+            )
+        elif is_multi_input:
             train_data = (train_cells_norm, train_vertex_norm, train_jets_norm, train_tracks_norm, train_times)
             val_data = (val_cells_norm, val_vertex_norm, val_jets_norm, val_tracks_norm, val_times)
             train_dataset, val_dataset, model, keras_model = create_multi_input_datasets_and_model(
@@ -526,7 +753,17 @@ def main():
             print(f"Training history saved to: {config.model_dir}")
             
             # Print feature information
-            if is_multi_input:
+            if is_hgtd_only:
+                print(f"\nHGTD-only features:")
+                print(f"  HGTD track features: {config.hgtd_track_features}")
+                print(f"  Vertex features: (x, y, z) positions" if config.use_spatial_features else "(no spatial features)")
+            elif is_hgtd_multi_input:
+                print(f"\nHGTD multi-input features:")
+                print(f"  Cell features: {config.cell_features}")
+                print(f"  Jet features: {config.jet_features}")
+                print(f"  LAr track features: {config.track_features}")
+                print(f"  HGTD track features: {config.hgtd_track_features}")
+            elif is_multi_input:
                 print(f"\nMulti-input features:")
                 print(f"  Cell features: {config.cell_features}")
                 print(f"  Jet features: {config.jet_features}")
@@ -536,15 +773,20 @@ def main():
             if config.use_cell_jet_matching:
                 print(f"Cell-jet matching filter applied during training")
             
-            # Print mask information
-            if config.use_attention_mask:
-                print(f"✓ Attention mask enabled for improved performance")
-                print(f"✓ Smart padding applied (feature-specific values)")
-            else:
-                print(f"○ Traditional padding used (compatibility mode)")
-            
+            # Print mask information (skip for HGTD-only)
+            if not is_hgtd_only:
+                if config.use_attention_mask:
+                    print(f"✓ Attention mask enabled for improved performance")
+                    print(f"✓ Smart padding applied (feature-specific values)")
+                else:
+                    print(f"○ Traditional padding used (compatibility mode)")
+
             # Print model type information
-            if is_multi_input:
+            if is_hgtd_only:
+                print(f"✓ HGTD-Only DNN model using only HGTD tracks (no LAr data)")
+            elif is_hgtd_multi_input:
+                print(f"✓ HGTD Multi-Input DNN model with LAr cells, jets, LAr tracks, and HGTD tracks")
+            elif is_multi_input:
                 model_arch = getattr(config, 'model_architecture', '')
                 if model_arch == 'multi_input_dnn':
                     print(f"✓ Multi-Input DNN model with jets and tracks")

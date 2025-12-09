@@ -54,7 +54,13 @@ class DNNConfig(BaseConfig):
     track_dropout_rates: List[float] = None
     track_activation: str = 'relu'
     track_use_batch_norm: bool = False
-    
+
+    # HGTD track encoder parameters (for HGTD multi-input models)
+    hgtd_track_encoder_units: List[int] = None
+    hgtd_track_dropout_rates: List[float] = None
+    hgtd_track_activation: str = 'relu'
+    hgtd_track_use_batch_norm: bool = False
+
     # Calibration validation parameters
     calibration_validation: bool = False
     validation_detector_type: int = 1  # 1=barrel, 0=endcap
@@ -85,6 +91,12 @@ class DNNConfig(BaseConfig):
             self.track_encoder_units = [64, 32]
         if self.track_dropout_rates is None:
             self.track_dropout_rates = [0.1, 0.1]
+
+        # Initialize HGTD track encoder defaults
+        if self.hgtd_track_encoder_units is None:
+            self.hgtd_track_encoder_units = [64, 32]
+        if self.hgtd_track_dropout_rates is None:
+            self.hgtd_track_dropout_rates = [0.1, 0.1]
     
     def validate_config(self):
         """Validate DNN-specific configuration."""
@@ -117,7 +129,16 @@ class DNNConfig(BaseConfig):
                 "track_encoder_units and track_dropout_rates must have same length"
             assert all(0 <= rate < 1 for rate in self.track_dropout_rates), \
                 "All track dropout rates must be between 0 and 1"
-        
+
+        # HGTD track encoder validations (for HGTD multi-input models)
+        if hasattr(self, 'model_architecture') and 'hgtd_multi_input' in getattr(self, 'model_architecture', ''):
+            assert len(self.hgtd_track_encoder_units) > 0, "hgtd_track_encoder_units cannot be empty for HGTD multi-input models"
+            assert all(units > 0 for units in self.hgtd_track_encoder_units), "All HGTD track encoder units must be positive"
+            assert len(self.hgtd_track_encoder_units) == len(self.hgtd_track_dropout_rates), \
+                "hgtd_track_encoder_units and hgtd_track_dropout_rates must have same length"
+            assert all(0 <= rate < 1 for rate in self.hgtd_track_dropout_rates), \
+                "All HGTD track dropout rates must be between 0 and 1"
+
         # Attention parameters
         assert self.attention_hidden_units > 0, "attention_hidden_units must be positive"
         

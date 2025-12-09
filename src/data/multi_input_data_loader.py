@@ -43,14 +43,11 @@ class MultiInputDataLoader:
                     mask = mask & additional_mask
         
         filtered_cells = event_cells[mask]
-        
+
         # Apply time quality cut if enabled
         if self.config.use_time_quality_cut:
-            try:
-                filtered_cells = self.apply_time_quality_cut(filtered_cells)
-            except Exception:
-                pass  # Skip if calibration data unavailable
-        
+            filtered_cells = self.apply_time_quality_cut(filtered_cells)
+
         return filtered_cells
     
     def apply_time_quality_cut(self, event_cells: np.ndarray) -> np.ndarray:
@@ -107,7 +104,15 @@ class MultiInputDataLoader:
         
         for i, cell in enumerate(event_cells):
             try:
-                barrel, layer, energy = int(cell['Cell_Barrel']), int(cell['Cell_layer']), cell['Cell_e']
+                # Handle different field names in LAr vs HGTD datasets
+                if 'Cell_Barrel' in event_cells.dtype.names:
+                    barrel = int(cell['Cell_Barrel'])
+                else:
+                    # HGTD dataset uses Cell_isEM_Barrel instead
+                    barrel = 1 if cell['Cell_isEM_Barrel'] else 0
+
+                layer = int(cell['Cell_layer'])
+                energy = cell['Cell_e']
                 cell_time = cell['Cell_time_TOF_corrected']
                 
                 if layer not in [1, 2, 3]:
@@ -251,9 +256,10 @@ class MultiInputDataLoader:
     
     def _process_event_tracks(self, event_tracks: np.ndarray) -> List[List[float]]:
         """Process tracks for a single event."""
-        valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS_old_files'] == 1)
+        # Filter tracks: valid=true and Track_isGoodFromHS=1
+        valid_mask = (event_tracks['valid'] == True) & (event_tracks['Track_isGoodFromHS'] == 1)
         valid_tracks = event_tracks[valid_mask]
-        
+
         # Apply track eta cut if enabled
         if hasattr(self.config, 'use_track_eta_cut') and self.config.use_track_eta_cut:
             eta_cut_value = getattr(self.config, 'track_eta_cut_value', 2.5)  # Default value

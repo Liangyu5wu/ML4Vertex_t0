@@ -260,51 +260,64 @@ class Trainer:
         input_keys = list(sample_batch[0].keys())
         
         # Detect dataset format
-        if 'cell_inputs' in input_keys:
+        if 'hgtd_track_inputs' in input_keys:
+            # HGTD-only dataset format
+            primary_key = 'hgtd_track_inputs'
+            vertex_key = 'vertex_inputs'
+            is_multi_input = False
+            is_hgtd_only = True
+            print("Detected HGTD-only dataset format")
+        elif 'cell_inputs' in input_keys:
             # Multi-input dataset format
-            cell_key = 'cell_inputs'
+            primary_key = 'cell_inputs'
             vertex_key = 'vertex_inputs'
             is_multi_input = True
+            is_hgtd_only = False
             print("Detected multi-input dataset format")
         else:
             # Regular dataset format
-            cell_key = 'cell_sequence'
+            primary_key = 'cell_sequence'
             vertex_key = 'vertex_features'
             is_multi_input = False
+            is_hgtd_only = False
             print("Detected regular dataset format")
-        
+
         # Count batches and samples
         train_batches = 0
         train_samples = 0
         for batch in train_dataset:
             train_batches += 1
-            train_samples += batch[0][cell_key].shape[0]
-        
+            train_samples += batch[0][primary_key].shape[0]
+
         val_batches = 0
         val_samples = 0
         for batch in val_dataset:
             val_batches += 1
-            val_samples += batch[0][cell_key].shape[0]
-        
+            val_samples += batch[0][primary_key].shape[0]
+
         # Get shapes from sample batch
-        cell_shape = sample_batch[0][cell_key].shape
+        primary_shape = sample_batch[0][primary_key].shape
         vertex_shape = sample_batch[0][vertex_key].shape
         target_shape = sample_batch[1].shape
-        
+
         stats = {
             'train_batches': train_batches,
             'train_samples': train_samples,
             'val_batches': val_batches,
             'val_samples': val_samples,
-            'cell_sequence_shape': cell_shape,
+            'primary_input_shape': primary_shape,
             'vertex_features_shape': vertex_shape,
             'target_shape': target_shape,
-            'is_multi_input': is_multi_input
+            'is_multi_input': is_multi_input,
+            'is_hgtd_only': is_hgtd_only
         }
-        
+
         print(f"Training dataset: {train_batches} batches, {train_samples} samples")
         print(f"Validation dataset: {val_batches} batches, {val_samples} samples")
-        print(f"Cell sequence shape: {cell_shape}")
+        if is_hgtd_only:
+            print(f"HGTD track sequence shape: {primary_shape}")
+        else:
+            print(f"Cell sequence shape: {primary_shape}")
         print(f"Vertex features shape: {vertex_shape}")
         
         if is_multi_input:

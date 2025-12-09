@@ -41,6 +41,12 @@ python scripts/train.py --config-file config/configs/experiment_dnn_with_jets_tr
 # Train Multi-Input Transformer model
 python scripts/train.py --config-file config/configs/experiment_transformer_with_jets_tracks.yaml
 
+# Train HGTD Multi-Input DNN model
+python scripts/train.py --config-file config/configs/experiment_hgtd_dnn_with_jets_tracks.yaml
+
+# Train HGTD-Only DNN model (no LAr data)
+python scripts/train.py --config-file config/configs/experiment_hgtd_only.yaml
+
 # Train with parameter overrides
 python scripts/train.py --config-file config/configs/experiment_dnn.yaml --epochs 50 --learning-rate 5e-4
 ```
@@ -56,6 +62,14 @@ python scripts/evaluate.py --model-dir ../models/baseline_guided_dnn_with_tracks
 # Evaluate multi-input models
 python scripts/evaluate.py --model-dir ../models/multi_input_dnn_with_jets_tracks --load-data
 python scripts/evaluate.py --model-dir ../models/multi_input_transformer_with_jets_tracks --load-data
+
+# Evaluate HGTD models
+python scripts/evaluate.py --model-dir ../models/hgtd_multi_input_dnn_with_jets_tracks --load-data
+python scripts/evaluate.py --model-dir ../models/hgtd_only_dnn --load-data
+
+# Override evaluation parameters (e.g., fitting method) without retraining
+python scripts/evaluate.py --model-dir ../models/hgtd_only_dnn --load-data \
+    --config-file config/configs/experiment_hgtd_only.yaml
 ```
 
 ### Parameter Sweeps
@@ -96,6 +110,8 @@ sbatch jobs/model_nersc.sh
 sbatch jobs/model_baseline_guided_track_nersc.sh
 sbatch jobs/model_multi_input_dnn_nersc.sh
 sbatch jobs/model_multi_input_transformer_nersc.sh
+sbatch jobs/model_hgtd_multi_input_dnn_nersc.sh
+sbatch jobs/model_hgtd_only_dnn_nersc.sh
 ```
 
 ### Testing
@@ -114,7 +130,7 @@ There is no dedicated test suite. Verification is done through:
 - **YAML Configs**: `config/configs/` - Experiment-specific settings
 
 ### Model Architecture & Input Structure
-Five main model types with different input requirements:
+Six main model types with different input requirements:
 
 #### Model Input Summary
 
@@ -125,8 +141,10 @@ Five main model types with different input requirements:
 | **Baseline-Guided DNN** | 3 | `cell_sequence`, `vertex_features`, `baseline_prediction` | (N,F), (V,), (1,) |
 | **Multi-Input DNN** | 5 | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` | (N,F), (V,), (J,4), (T,5), (N,) |
 | **Multi-Input Transformer** | 5 | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `mask_inputs` | (N,F), (V,), (J,4), (T,5), (N,) |
+| **HGTD Multi-Input DNN** | 6 | `cell_inputs`, `vertex_inputs`, `jet_inputs`, `track_inputs`, `hgtd_track_inputs`, `mask_inputs` | (N,F), (V,), (J,4), (T,5), (H,7), (N,) |
+| **HGTD-Only DNN** | 2 | `hgtd_track_inputs`, `vertex_inputs` | (H,7), (V,) |
 
-**Legend**: N=max_cells(60), F=cell_features(7), V=vertex_features(varies), J=max_jets(7), T=max_tracks(30)
+**Legend**: N=max_cells(60), F=cell_features(7), V=vertex_features(varies), J=max_jets(7), T=max_tracks(30), H=max_hgtd_tracks(30)
 
 #### Transformer Model (`src/models/transformer_model.py`)
 **Inputs**: `cell_sequence` (N×F), `vertex_features` (V), `attention_mask` (N)
@@ -194,11 +212,51 @@ Attention Mask → Transformer Masking
 - **Scalable Design**: Handles variable numbers of jets/tracks through padding and masking
 - **Configuration**: Use `model_architecture: "multi_input_transformer"` in config files
 
+#### HGTD Multi-Input DNN Model (`src/models/hgtd_multi_input_dnn_model.py`)
+**Inputs**: `cell_inputs` (N×F), `vertex_inputs` (V), `jet_inputs` (J×4), `track_inputs` (T×5), `hgtd_track_inputs` (H×7), `mask_inputs` (N)
+```
+Cells → Cell-level MLP → Masked Attention Pooling
+Jets → Configurable MLP → Global Average Pooling
+LAr Tracks → Configurable MLP → Global Average Pooling     } → Concat → Event-level MLP → Vertex Time
+HGTD Tracks → Configurable MLP → Global Average Pooling
+Vertex Features → Dense Processing
+Attention Mask → Masking Support
+```
+- **Six-Input Architecture**: LAr cell sequences + Vertex features + Jets + LAr tracks + HGTD tracks + Attention mask
+- **HGTD Track Features**: pt, eta, phi, d0, z0, time, timeRes (7 features from HGTD timing detector)
+- **HGTD Track Filtering**: Selects tracks with `valid==True` & `Track_hasValidTime==1`, sorted by pt
+- **Independent Encoders**: Separate configurable encoders for LAr cells, jets, LAr tracks, and HGTD tracks
+- **Event-Level Fusion**: All processed features concatenated before event-level prediction
+- **Data Directory**: Uses `../Vertex_timing_HGTD_w_LAr/` with 50 HDF5 files
+- **Configurable Architecture**: HGTD track encoder units, dropout rates, activation, and batch norm all configurable
+- **Smart Padding**: HGTD track padding values (time: 0.0, timeRes: -999.0) transformed to normalized space
+- **Configuration**: Use `model_architecture: "hgtd_multi_input_dnn"` in config files
+
+#### HGTD-Only DNN Model (`src/models/hgtd_only_dnn_model.py`)
+**Inputs**: `hgtd_track_inputs` (H×7), `vertex_inputs` (V)
+```
+HGTD Tracks → Track Encoder MLP → Global Average Pooling ┐
+Vertex Features → Dense Processing ─────────────────────┤→ Concat → Event MLP → Vertex Time
+```
+- **Two-Input Architecture**: HGTD tracks + Vertex features only (NO LAr data)
+- **Simplified Design**: Uses only HGTD timing detector information without calorimeter cells, jets, or LAr tracks
+- **HGTD Track Features**: pt, eta, phi, d0, z0, time, timeRes (7 features from HGTD timing detector)
+- **HGTD Track Filtering**: Selects tracks with `valid==True` & `Track_hasValidTime==1`, sorted by pt, top 30 tracks
+- **Configurable Encoder**: HGTD track encoder units, dropout rates, activation, and batch norm all configurable
+- **Data Directory**: Uses `../Vertex_timing_HGTD_w_LAr/` with 50 HDF5 files (same data as HGTD multi-input)
+- **Smart Padding**: HGTD track padding values transformed to normalized space (time: 0.0, timeRes: -999.0)
+- **Independent Pipeline**: Completely separate from LAr-based workflows, no cell/jet/track preprocessing
+- **Configuration**: Use `model_architecture: "hgtd_only_dnn"` in config files
+
 ### Data Pipeline
 - **Data Loading**: `src/data/data_loader.py` - HDF5 file processing with cell filtering
 - **Multi-Input Loading**: `src/data/multi_input_data_loader.py` - Jets and tracks data processing (returns variable-length sequences)
+- **HGTD Multi-Input Loading**: `src/data/hgtd_multi_input_data_loader.py` - LAr cells, jets, LAr tracks, and HGTD tracks data processing
+- **HGTD-Only Loading**: `src/data/hgtd_only_data_loader.py` - HGTD tracks only (no LAr data)
 - **Data Processing**: `src/data/data_processor.py` - Feature normalization, train/val/test splits
 - **Multi-Input Processing**: `src/data/multi_input_data_processor.py` - Jets/tracks normalization and dataset creation
+- **HGTD Multi-Input Processing**: `src/data/hgtd_multi_input_data_processor.py` - HGTD tracks normalization and dataset creation
+- **HGTD-Only Processing**: `src/data/hgtd_only_data_processor.py` - HGTD tracks normalization and dataset creation (no LAr)
 - **Normalization Strategy**: Normalize before padding (statistics computed only from real data)
 - **Smart Padding**: Feature-specific padding values transformed to normalized space
 
@@ -315,10 +373,12 @@ Parameter sweeps use optimized data caching:
 ### Model Selection
 Choose model type via `model_architecture` parameter:
 - `"transformer"` - Use transformer_config.py
-- `"two_stage_dnn"` - Use dnn_config.py  
+- `"two_stage_dnn"` - Use dnn_config.py
 - `"baseline_guided_dnn"` - Use dnn_config.py (baseline-guided variant)
 - `"multi_input_dnn"` - Use dnn_config.py (multi-input DNN variant)
 - `"multi_input_transformer"` - Use transformer_config.py (multi-input Transformer variant)
+- `"hgtd_multi_input_dnn"` - Use dnn_config.py (HGTD multi-input DNN variant)
+- `"hgtd_only_dnn"` - Use dnn_config.py (HGTD-only DNN variant, no LAr data)
 
 ### Loss Functions
 - **MSE**: `loss_function: "mse"` (default)
@@ -331,6 +391,8 @@ Use descriptive model names that reflect configuration:
 - `baseline_guided_dnn_with_tracks` - Baseline-guided model with track features
 - `multi_input_dnn_with_jets_tracks` - Multi-input DNN with jets and tracks
 - `multi_input_transformer_with_jets_tracks` - Multi-input Transformer with jets and tracks
+- `hgtd_multi_input_dnn_with_jets_tracks` - HGTD multi-input DNN with LAr cells, jets, LAr tracks, and HGTD tracks
+- `hgtd_only_dnn` - HGTD-only DNN using only HGTD tracks (no LAr data)
 - `baseline_test` - Quick testing configuration
 
 ## File Structure Notes
@@ -385,6 +447,17 @@ Standalone analysis tool in `baseline_analysis/`:
 - Use appropriate time limits based on experiment size
 - Monitor GPU memory usage with TensorFlow
 - Check logs in `../logs/` directory
+
+### Evaluation Parameter Override
+- **Purpose**: Update evaluation-specific parameters without retraining models
+- **Use case**: Change error distribution fitting method (single vs double Gaussian) for existing models
+- **Usage**: `python scripts/evaluate.py --model-dir <model> --load-data --config-file <config.yaml>`
+- **Overridable parameters**:
+  - `error_fit_method`: "single_gaussian" or "double_gaussian"
+  - `error_fit_range`: Fit range in ps (single Gaussian only)
+  - `pileup_sigma`: Background Gaussian width (double Gaussian only)
+  - `fix_pileup_sigma`: Whether to fix background width (double Gaussian only)
+- **Note**: Only evaluation parameters are overridden; training parameters are not affected
 
 ### Baseline Analysis
 - Use `baseline_analysis.py` for understanding reconstruction failures
