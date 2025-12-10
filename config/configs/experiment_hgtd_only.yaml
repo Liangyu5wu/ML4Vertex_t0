@@ -14,18 +14,32 @@ num_files: 50
 max_hgtd_tracks: 30
 min_hgtd_tracks: 1
 
-# NO LAr parameters needed
-# No max_cells, no max_jets, no max_tracks
+# LAr cell parameters - needed for event filtering to match other models
+# NOTE: Cells are NOT used as model input, but we filter events based on
+# cell quality to ensure the same event pool as multi-input models
+max_cells: 120
+min_cells: 1
+cell_selection_feature: "Cell_e"
 
 # Feature selection parameters - only vertex spatial features
 use_spatial_features: true         # Use vertex x, y, z position
 use_track_features: false          # NO LAr track features
 use_jet_features: false            # NO LAr jet features
 
-# Cell filtering parameters - DISABLE all LAr cell filtering
-require_valid_cells: false         # No LAr cells
+# Cell filtering parameters - ENABLE to match other models' event pool
+require_valid_cells: true          # Filter events based on LAr cell quality
 use_cell_track_matching: false     # No LAr cell-track matching
 use_cell_jet_matching: false       # No LAr cell-jet matching
+additional_cell_filters: {}        # No additional filters
+
+# Time quality cut parameters - DISABLE for HGTD-only model
+use_time_quality_cut: false
+vertex_time_sigma: 175.0           # HS vertex time uncertainty [ps]
+time_quality_n_sigma: 3.0
+
+# Calibration parameters
+use_detector_params: false
+calibration_data_file: "sigma_only_test_calibration.txt"
 
 # Data split parameters
 test_size: 0.2
@@ -61,16 +75,30 @@ hgtd_track_use_batch_norm: true
 # Event-level processing parameters
 event_encoder_units: [64, 32, 16]
 event_dropout_rates: [0.2, 0.1, 0.1]
-use_batch_norm: true
+use_batch_norm: false
 
 # Training parameters
-batch_size: 128
+batch_size: 256
 epochs: 200
-learning_rate: 0.001
+learning_rate: 0.01
 lr_reduction_factor: 0.5
 early_stopping_patience: 20
 lr_patience: 8
 min_lr: 0.0000001
+
+# Cell feature definitions - needed for filtering even though not used as input
+all_cell_features:
+  - "Cell_eta"
+  - "Cell_phi"
+  - "Cell_Barrel"
+  - "Cell_layer"
+  - "Cell_time_TOF_corrected"
+  - "Cell_e"
+  - "Cell_significance"
+
+skip_normalization:
+  - "Cell_Barrel"
+  - "Cell_layer"
 
 # Error distribution Gaussian fitting parameters
 error_fit_method: "double_gaussian"  # Options: "single_gaussian" or "double_gaussian"

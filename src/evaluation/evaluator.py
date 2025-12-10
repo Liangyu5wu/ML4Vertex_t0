@@ -5,7 +5,7 @@ import tensorflow as tf
 from typing import Dict, Any, Tuple, List, Optional
 
 from config.base_config import BaseConfig
-from src.models.transformer_model import TransformerModel
+from src.models.transformer import TransformerModel
 from src.data.data_processor import DataProcessor
 
 

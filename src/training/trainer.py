@@ -7,8 +7,8 @@ from tensorflow.keras import callbacks
 from typing import Dict, Any, Tuple, Optional, Union
 
 from config.base_config import BaseConfig
-from src.models.transformer_model import TransformerModel
-from src.models.dnn_model import DNNModel
+from src.models.transformer import TransformerModel
+from src.models.dnn import DNNModel
 
 
 class Trainer:

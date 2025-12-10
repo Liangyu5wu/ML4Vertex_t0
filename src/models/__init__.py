@@ -1,8 +1,52 @@
-"""Model architecture modules."""
+"""Model architecture modules.
 
-from .transformer_layers import PositionalEncoding, MultiHeadSelfAttention, TransformerBlock
-from .transformer_model import TransformerModel
-from .dnn_model import DNNModel, MaskedAttentionPooling
+Organized structure:
+- common/: Shared components (base classes, layers, utilities)
+- dnn/: DNN model implementations
+- transformer/: Transformer model implementations
+"""
 
-__all__ = ['PositionalEncoding', 'MultiHeadSelfAttention', 'TransformerBlock', 'TransformerModel',
-           'DNNModel', 'MaskedAttentionPooling']
+# Import from reorganized structure
+from .common import (
+    BaseVertexModel,
+    MaskedAttentionPooling,
+    MaskedGlobalAveragePooling1D,
+    FeatureEncoder,
+    PositionalEncoding,
+    MultiHeadSelfAttention,
+    TransformerBlock
+)
+
+from .dnn import (
+    DNNModel,
+    BaselineGuidedDNN,
+    MultiInputDNNModel,
+    HGTDMultiInputDNNModel,
+    HGTDOnlyDNNModel
+)
+
+from .transformer import (
+    TransformerModel,
+    MultiInputTransformerModel
+)
+
+__all__ = [
+    # Common components
+    'BaseVertexModel',
+    'MaskedAttentionPooling',
+    'MaskedGlobalAveragePooling1D',
+    'FeatureEncoder',
+    'PositionalEncoding',
+    'MultiHeadSelfAttention',
+    'TransformerBlock',
+    # DNN models
+    'DNNModel',
+    'BaselineGuidedDNN',
+    'MultiInputDNNModel',
+    'HGTDMultiInputDNNModel',
+    'HGTDOnlyDNNModel',
+    # Transformer models
+    'TransformerModel',
+    'MultiInputTransformerModel'
+]
+

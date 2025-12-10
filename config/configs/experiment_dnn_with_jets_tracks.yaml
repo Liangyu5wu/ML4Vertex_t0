@@ -7,9 +7,9 @@ loss_function: "huber"
 huber_delta: 100.0
 
 # Data parameters
-data_dir: "../selected_h5_with_jets/"
-num_files: 43
-max_cells: 60
+data_dir: "../Vertex_timing_HGTD_w_LAr/"
+num_files: 50
+max_cells: 120
 min_cells: 1
 cell_selection_feature: "Cell_e"
 
@@ -69,10 +69,10 @@ attention_hidden_units: 32
 # Event-level processing parameters
 event_encoder_units: [128, 64, 32, 16]
 event_dropout_rates: [0.2, 0.1, 0.1, 0.1]
-use_batch_norm: true
+use_batch_norm: false
 
 # Training parameters
-batch_size: 128
+batch_size: 256
 epochs: 200
 learning_rate: 0.001
 lr_reduction_factor: 0.5

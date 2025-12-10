@@ -18,8 +18,8 @@ from config.transformer_config import TransformerConfig
 from config.dnn_config import DNNConfig
 from src.data.data_loader import DataLoader
 from src.data.data_processor import DataProcessor
-from src.models.transformer_model import TransformerModel
-from src.models.dnn_model import DNNModel
+from src.models.transformer import TransformerModel
+from src.models.dnn import DNNModel
 from src.training.trainer import Trainer
 
 
