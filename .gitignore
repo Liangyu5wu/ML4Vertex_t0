@@ -135,7 +135,6 @@ dmypy.json
 .LSOverride
 
 # Model outputs and data (external directories)
-models/
 results/
 logs/
 *.h5
