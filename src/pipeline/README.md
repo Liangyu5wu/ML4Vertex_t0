@@ -18,9 +18,9 @@ The event store drops invalid slots and stores one compressed column per
 field, giving **11–14x smaller files** with bit-identical values.
 
 ```bash
-python -m src.pipeline.ingest_h5 \
+python -m src.pipeline.ingest_root \
     --input-dir ../Vertex_timing_HGTD_w_LAr \
-    --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar \
+    --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar \
     --sample ttbar
 ```
 
@@ -37,8 +37,8 @@ through without touching the converter. Existing stores:
 
 | sample | path | events | size |
 |---|---|---|---|
-| ttbar | `.../compact/ttbar` | 46,100 | 502 MB (from 5.8 GB) |
-| vbf_hinv | `.../compact/vbf_hinv` | 10,800 | 96 MB (from 1.4 GB) |
+| ttbar | `.../store/ttbar` | 46,100 | 502 MB (from 5.8 GB) |
+| vbf_hinv | `.../store/vbf_hinv` | 10,800 | 96 MB (from 1.4 GB) |
 
 ## 2. Config reference
 
@@ -49,7 +49,7 @@ model_dir: /pscratch/.../models/my_model
 data:
   datasets:                      # one entry per sample; order is irrelevant
     - name: ttbar
-      path: /global/cfs/.../compact/ttbar
+      path: /global/cfs/.../store/ttbar
       weight: 1.0                # relative loss weight
       fraction: 1.0              # subsample this fraction of events
       max_events: null           # hard cap

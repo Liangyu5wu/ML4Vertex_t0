@@ -31,7 +31,7 @@ srun -A m2616_g -C gpu -q interactive -N 1 -n 1 -c 32 --gpus-per-node=1 -t 60 --
 ```
 
 ```bash
-python -m src.pipeline.ingest_h5 --input-dir <raw h5> --output-dir <store> --sample <name>
+python -m src.pipeline.ingest_root --input-dir <root dir> --output-dir <store> --sample <name>
 python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml [--datasets ttbar]
 python scripts/evaluate_blocks.py --model-dir <dir> --dataset <name>:<store> --split test
 ```
@@ -39,7 +39,7 @@ python scripts/evaluate_blocks.py --model-dir <dir> --dataset <name>:<store> --s
 Three configs, differing only in `inputs:` — `lar_only`, `hgtd_only`,
 `lar_hgtd`. Models and results go outside the repo, under
 `/pscratch/sd/l/liangyu/vertextiming/models/`; compact data stores live on CFS
-at `/global/cfs/cdirs/m2616/liangyu/vertextiming/compact/`.
+at `/global/cfs/cdirs/m2616/liangyu/vertextiming/store/`.
 
 ## Conventions
 

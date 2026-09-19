@@ -26,7 +26,7 @@ import numpy as np
 class FileSchema:
     """What a file contains: one entry per branch/field."""
     path: str
-    kind: str                                   # "root" | "raw_h5" | "compact"
+    kind: str                                   # "root" | "store"
     columns: Dict[str, str] = field(default_factory=dict)   # name -> type label
     n_events: int = 0
 
@@ -67,31 +67,21 @@ def collect_root(path: str, tree: Optional[str] = None) -> FileSchema:
 
 
 def collect_h5(path: str) -> FileSchema:
-    """Field inventory of a raw R2H5 file or an event store file."""
+    """Field inventory of an event-store file."""
     import h5py
 
     columns: Dict[str, str] = {}
     with h5py.File(path, "r") as f:
-        if "blocks" in f and "events" in f:                 # event store
-            kind = "compact"
-            n_events = int(f.attrs["n_events"])
-            for name in f["events"]:
-                columns[f"events/{name}"] = str(f["events"][name].dtype)
-            for block in f["blocks"]:
-                for name in f["blocks"][block]:
-                    if name == "offsets":
-                        continue
+        if "blocks" not in f or "events" not in f:
+            raise ValueError(f"{path}: not an event store (no events/ and blocks/)")
+        n_events = int(f.attrs["n_events"])
+        for name in f["events"]:
+            columns[f"events/{name}"] = str(f["events"][name].dtype)
+        for block in f["blocks"]:
+            for name in f["blocks"][block]:
+                if name != "offsets":
                     columns[f"{block}/{name}"] = str(f["blocks"][block][name].dtype)
-        else:                                               # raw R2H5 output
-            kind = "raw_h5"
-            n_events = 0
-            for key, obj in f.items():
-                if obj.dtype.names is None:
-                    continue
-                n_events = max(n_events, obj.shape[0])
-                for name in obj.dtype.names:
-                    columns[f"{key}/{name}"] = str(obj.dtype[name])
-    return FileSchema(path, kind, columns, n_events)
+    return FileSchema(path, "store", columns, n_events)
 
 
 def collect(path: str, tree: Optional[str] = None) -> FileSchema:
@@ -215,22 +205,12 @@ def _content_warnings(schema: FileSchema) -> List[str]:
 
     with h5py.File(schema.path, "r") as f:
         columns = {}
-        if schema.kind == "compact":
-            for name in f["events"]:
-                columns[f"events/{name}"] = f["events"][name][:]
-            for block in f["blocks"]:
-                for name in f["blocks"][block]:
-                    if name != "offsets":
-                        columns[f"{block}/{name}"] = f["blocks"][block][name][:]
-        else:
-            for key, obj in f.items():
-                if obj.dtype.names is None:
-                    continue
-                raw = obj[:2000]
-                valid = raw["valid"] if "valid" in raw.dtype.names else None
-                for name in raw.dtype.names:
-                    values = raw[name][valid] if valid is not None else raw[name]
-                    columns[f"{key}/{name}"] = np.asarray(values)
+        for name in f["events"]:
+            columns[f"events/{name}"] = f["events"][name][:]
+        for block in f["blocks"]:
+            for name in f["blocks"][block]:
+                if name != "offsets":
+                    columns[f"{block}/{name}"] = f["blocks"][block][name][:]
         return check_columns(columns)
 
 

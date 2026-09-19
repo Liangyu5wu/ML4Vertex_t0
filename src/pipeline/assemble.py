@@ -5,8 +5,8 @@ padded arrays and ``tf.data`` pipelines, for any combination of input blocks
 and any number of samples::
 
     datasets:
-      - {name: ttbar,    path: .../compact/ttbar,    weight: 1.0}
-      - {name: vbf_hinv, path: .../compact/vbf_hinv, weight: 1.0}
+      - {name: ttbar,    path: .../store/ttbar,    weight: 1.0}
+      - {name: vbf_hinv, path: .../store/vbf_hinv, weight: 1.0}
 
 Samples are split independently and then concatenated, so every split keeps a
 ``dataset_id`` column and the test set can be scored per sample.  Scalers are

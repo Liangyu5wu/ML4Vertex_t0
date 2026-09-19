@@ -13,7 +13,7 @@ ROOT  --R2H5-->  raw h5  --src/pipeline/compact.py-->  event store  -->  trainin
 
 R2H5 (separate repo) does the physics-level conversion. Everything from the
 raw h5 onwards lives here. Event stores are kept on CFS:
-`/global/cfs/cdirs/m2616/liangyu/vertextiming/compact/{ttbar,vbf_hinv}`.
+`/global/cfs/cdirs/m2616/liangyu/vertextiming/store/{ttbar,vbf_hinv}`.
 
 ## Architecture
 
@@ -42,9 +42,11 @@ source setup.sh                    # uv env; detects CPU / GPU / multi-GPU
 source setup.sh --sync             # after editing pyproject.toml
 source setup.sh --cpu              # force CPU
 
-# raw -> compact (once per sample)
-python -m src.pipeline.ingest_h5 --input-dir ../Vertex_timing_HGTD_w_LAr \
-    --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar --sample ttbar
+# ROOT -> event store (once per sample; re-runs skip files already up to date)
+python -m src.pipeline.ingest_root \
+    --input-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/root/ttbar \
+    --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar \
+    --sample ttbar --shards 8 --workers 8
 
 # train (datasets listed in the config; --datasets picks a subset)
 python scripts/train_blocks.py --config config/blocks/hgtd_multi_input.yaml
@@ -52,7 +54,7 @@ python scripts/train_blocks.py --config config/blocks/hgtd_multi_input.yaml --da
 
 # score an existing model on another sample, reusing its fitted scalers
 python scripts/evaluate_blocks.py --model-dir ../models/<name> \
-    --dataset vbf_hinv:/global/cfs/.../compact/vbf_hinv --split test
+    --dataset vbf_hinv:/global/cfs/.../store/vbf_hinv --split test
 ```
 
 On Perlmutter, run the same commands on an interactive node instead of the
