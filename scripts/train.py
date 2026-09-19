@@ -687,7 +687,16 @@ def main():
             train_jets_norm = val_jets_norm = test_jets_norm = None
             train_tracks_norm = val_tracks_norm = test_tracks_norm = None
             train_hgtd_tracks_norm = val_hgtd_tracks_norm = test_hgtd_tracks_norm = None
-        
+
+        # Persist fitted normalization parameters so evaluation on new datasets
+        # doesn't have to reload the training data to refit the scalers.
+        import pickle as _pickle
+        os.makedirs(config.model_dir, exist_ok=True)
+        _norm_path = os.path.join(config.model_dir, 'norm_params.pkl')
+        with open(_norm_path, 'wb') as _f:
+            _pickle.dump(norm_params, _f)
+        print(f"Normalization parameters saved to: {_norm_path}")
+
         # Create datasets and model based on configuration type
         if is_hgtd_only:
             train_data = (train_hgtd_tracks_norm, train_vertex_norm, train_times)

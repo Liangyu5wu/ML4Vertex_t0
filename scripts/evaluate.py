@@ -27,6 +27,7 @@ from src.models.dnn import MultiInputDNNModel
 from src.models.transformer import MultiInputTransformerModel
 from src.models.dnn import HGTDMultiInputDNNModel
 from src.models.dnn import HGTDOnlyDNNModel
+from src.data.norm_utils import load_saved_norm_params, apply_saved_norm
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.visualizer import Visualizer
 from src.training.trainer import Trainer
@@ -40,8 +41,6 @@ def parse_args():
                        help='Directory containing saved model and config')
     parser.add_argument('--data-dir', type=str, default=None,
                        help='Directory containing HDF5 data files (overrides config)')
-    parser.add_argument('--load-data', action='store_true',
-                       help='Load and process data (otherwise assumes data exists)')
     parser.add_argument('--create-plots', action='store_true', default=True,
                        help='Create evaluation plots')
     parser.add_argument('--verbose', type=int, default=1,
@@ -272,171 +271,219 @@ def print_model_info(model, is_dnn_model, is_multi_input=False, is_hgtd_only=Fal
     return actual_is_multi_input, actual_is_hgtd_only, actual_is_hgtd_multi_input
 
 
-def load_or_reuse_data(config, data_dir_override=None, load_data=False, is_baseline_guided=False, is_multi_input=False, is_hgtd_only=False, is_hgtd_multi_input=False):
-    """Load data or try to reuse existing processed data."""
+def load_data(config, data_dir_override=None, is_baseline_guided=False, is_multi_input=False, is_hgtd_only=False, is_hgtd_multi_input=False, saved_norm=None):
+    """Load and process data from HDF5 files.
+
+    If ``saved_norm`` is provided (a dict from training's ``norm_params.pkl``),
+    apply those pre-fitted scalers to the test split instead of refitting.
+    """
     if data_dir_override:
         config.data_dir = data_dir_override
 
-    if load_data:
-        print("Loading and processing data...")
+    print("Loading and processing data...")
 
-        # Load raw data
-        if is_hgtd_only:
-            data_loader = HGTDOnlyDataLoader(config)
-            hgtd_track_sequences, vertex_features, vertex_times, sequence_lengths = \
-                data_loader.load_data_from_files()
-            cell_sequences = baseline_predictions = jet_sequences = track_sequences = None
-        elif is_hgtd_multi_input:
-            data_loader = HGTDMultiInputDataLoader(config)
-            cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, hgtd_track_sequences = \
-                data_loader.load_data_from_files()
-            baseline_predictions = None
-        elif is_multi_input:
-            data_loader = MultiInputDataLoader(config)
-            cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
-                data_loader.load_data_from_files()
-            baseline_predictions = None
-            hgtd_track_sequences = None
-        else:
-            data_loader = DataLoader(config)
-            if is_baseline_guided:
-                cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
-                    data_loader.load_data_with_baselines_from_files()
-                jet_sequences = track_sequences = None
-            else:
-                cell_sequences, vertex_features, vertex_times, sequence_lengths = \
-                    data_loader.load_data_from_files()
-                baseline_predictions = None
-                jet_sequences = track_sequences = None
-        
-        # Process data
-        if is_hgtd_only:
-            from src.data.hgtd_only_data_processor import HGTDOnlyDataProcessor
-            data_processor = HGTDOnlyDataProcessor(config)
-
-            # Split HGTD-only data
-            (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
-            (train_vertex, val_vertex, test_vertex), \
-            (train_times, val_times, test_times) = data_processor.split_data(
-                hgtd_track_sequences, vertex_features, vertex_times
-            )
-
-            # Normalize HGTD-only features
-            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
-            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
-            norm_params = data_processor.normalize_features(
-                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
-                train_vertex, val_vertex, test_vertex,
-                train_times, val_times, test_times
-            )
-
-            return (test_hgtd_tracks_norm, test_vertex_norm, test_times, data_processor)
-        elif is_hgtd_multi_input:
-            from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
-            data_processor = HGTDMultiInputDataProcessor(config)
-
-            # Split HGTD multi-input data
-            (train_cells, val_cells, test_cells), \
-            (train_vertex, val_vertex, test_vertex), \
-            (train_jets, val_jets, test_jets), \
-            (train_tracks, val_tracks, test_tracks), \
-            (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
-            (train_times, val_times, test_times) = data_processor.split_data(
-                cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences, hgtd_track_sequences
-            )
-
-            # Normalize HGTD multi-input features
-            (train_cells_norm, val_cells_norm, test_cells_norm), \
-            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
-            (train_jets_norm, val_jets_norm, test_jets_norm), \
-            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
-            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
-            norm_params = data_processor.normalize_features(
-                train_cells, val_cells, test_cells,
-                train_vertex, val_vertex, test_vertex,
-                train_jets, val_jets, test_jets,
-                train_tracks, val_tracks, test_tracks,
-                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
-                train_times, val_times, test_times
-            )
-
-            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm)
-        elif is_multi_input:
-            from src.data.multi_input_data_processor import MultiInputDataProcessor
-            data_processor = MultiInputDataProcessor(config)
-            
-            # Split multi-input data
-            (train_cells, val_cells, test_cells), \
-            (train_vertex, val_vertex, test_vertex), \
-            (train_jets, val_jets, test_jets), \
-            (train_tracks, val_tracks, test_tracks), \
-            (train_times, val_times, test_times) = data_processor.split_data(
-                cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences
-            )
-            
-            # Normalize multi-input features
-            (train_cells_norm, val_cells_norm, test_cells_norm), \
-            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
-            (train_jets_norm, val_jets_norm, test_jets_norm), \
-            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
-            norm_params = data_processor.normalize_features(
-                train_cells, val_cells, test_cells,
-                train_vertex, val_vertex, test_vertex,
-                train_jets, val_jets, test_jets,
-                train_tracks, val_tracks, test_tracks,
-                train_times, val_times, test_times
-            )
-            
-            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm)
-        else:
-            data_processor = DataProcessor(config)
-            
-            # Split data (using same random state as training for consistency)
-            # Generate the same indices that split_data uses
-            from sklearn.model_selection import train_test_split
-            indices = np.arange(len(vertex_times))
-            train_indices, temp_indices = train_test_split(
-                indices, test_size=config.test_size, random_state=config.random_state
-            )
-            val_indices, test_indices = train_test_split(
-                temp_indices, test_size=config.val_split, random_state=config.random_state
-            )
-            
-            # Split all data using the same indices
-            (train_cells, val_cells, test_cells), \
-            (train_vertex, val_vertex, test_vertex), \
-            (train_times, val_times, test_times) = data_processor.split_data(
-                cell_sequences, vertex_features, vertex_times
-            )
-            
-            # Split baseline predictions using the same indices if needed
-            if is_baseline_guided:
-                train_baselines = baseline_predictions[train_indices]
-                val_baselines = baseline_predictions[val_indices]
-                test_baselines = baseline_predictions[test_indices]
-            else:
-                train_baselines = val_baselines = test_baselines = None
-            
-            # Normalize features
-            (train_cells_norm, val_cells_norm, test_cells_norm), \
-            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
-            norm_params = data_processor.normalize_features(
-                train_cells, val_cells, test_cells,
-                train_vertex, val_vertex, test_vertex,
-                train_times, val_times, test_times
-            )
-        
-        if is_baseline_guided:
-            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines)
-        else:
-            return (test_cells_norm, test_vertex_norm, test_times, data_processor)
-    
+    # Load raw data
+    if is_hgtd_only:
+        data_loader = HGTDOnlyDataLoader(config)
+        hgtd_track_sequences, vertex_features, vertex_times, sequence_lengths = \
+            data_loader.load_data_from_files()
+        cell_sequences = baseline_predictions = jet_sequences = track_sequences = None
+    elif is_hgtd_multi_input:
+        data_loader = HGTDMultiInputDataLoader(config)
+        cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, hgtd_track_sequences = \
+            data_loader.load_data_from_files()
+        baseline_predictions = None
+    elif is_multi_input:
+        data_loader = MultiInputDataLoader(config)
+        cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences = \
+            data_loader.load_data_from_files()
+        baseline_predictions = None
+        hgtd_track_sequences = None
     else:
-        # This is a placeholder - in a real implementation, you might save/load
-        # processed data to avoid reprocessing
-        print("Warning: --load-data not specified. You must provide processed data.")
-        print("For now, will load and process data anyway...")
-        return load_or_reuse_data(config, data_dir_override, load_data=True, is_baseline_guided=is_baseline_guided, is_multi_input=is_multi_input, is_hgtd_only=is_hgtd_only, is_hgtd_multi_input=is_hgtd_multi_input)
+        data_loader = DataLoader(config)
+        if is_baseline_guided:
+            cell_sequences, vertex_features, vertex_times, sequence_lengths, baseline_predictions = \
+                data_loader.load_data_with_baselines_from_files()
+            jet_sequences = track_sequences = None
+        else:
+            cell_sequences, vertex_features, vertex_times, sequence_lengths = \
+                data_loader.load_data_from_files()
+            baseline_predictions = None
+            jet_sequences = track_sequences = None
+
+    # Process data
+    if is_hgtd_only:
+        from src.data.hgtd_only_data_processor import HGTDOnlyDataProcessor
+        data_processor = HGTDOnlyDataProcessor(config)
+
+        # Split HGTD-only data
+        (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
+        (train_vertex, val_vertex, test_vertex), \
+        (train_times, val_times, test_times) = data_processor.split_data(
+            hgtd_track_sequences, vertex_features, vertex_times
+        )
+
+        if saved_norm is not None:
+            print("Using saved norm_params (transform-only, no refit)")
+            applied = apply_saved_norm(
+                data_processor, saved_norm,
+                vertex=test_vertex, hgtd_tracks=test_hgtd_tracks,
+            )
+            test_hgtd_tracks_norm = applied['hgtd_tracks']
+            test_vertex_norm = applied['vertex']
+        else:
+            # Normalize HGTD-only features (fit on train, transform all)
+            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            norm_params = data_processor.normalize_features(
+                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
+                train_vertex, val_vertex, test_vertex,
+                train_times, val_times, test_times
+            )
+
+        # Extract event metadata from data_loader
+        event_metadata = data_loader._event_metadata if hasattr(data_loader, '_event_metadata') else None
+        return (test_hgtd_tracks_norm, test_vertex_norm, test_times, data_processor, event_metadata)
+    elif is_hgtd_multi_input:
+        from src.data.hgtd_multi_input_data_processor import HGTDMultiInputDataProcessor
+        data_processor = HGTDMultiInputDataProcessor(config)
+
+        # Split HGTD multi-input data
+        (train_cells, val_cells, test_cells), \
+        (train_vertex, val_vertex, test_vertex), \
+        (train_jets, val_jets, test_jets), \
+        (train_tracks, val_tracks, test_tracks), \
+        (train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks), \
+        (train_times, val_times, test_times) = data_processor.split_data(
+            cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences, hgtd_track_sequences
+        )
+
+        if saved_norm is not None:
+            print("Using saved norm_params (transform-only, no refit)")
+            applied = apply_saved_norm(
+                data_processor, saved_norm,
+                cells=test_cells, vertex=test_vertex,
+                jets=test_jets, tracks=test_tracks, hgtd_tracks=test_hgtd_tracks,
+            )
+            test_cells_norm = applied['cells']
+            test_vertex_norm = applied['vertex']
+            test_jets_norm = applied['jets']
+            test_tracks_norm = applied['tracks']
+            test_hgtd_tracks_norm = applied['hgtd_tracks']
+        else:
+            # Normalize HGTD multi-input features (fit on train, transform all)
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            (train_jets_norm, val_jets_norm, test_jets_norm), \
+            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
+            (train_hgtd_tracks_norm, val_hgtd_tracks_norm, test_hgtd_tracks_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_jets, val_jets, test_jets,
+                train_tracks, val_tracks, test_tracks,
+                train_hgtd_tracks, val_hgtd_tracks, test_hgtd_tracks,
+                train_times, val_times, test_times
+            )
+
+        # Extract event metadata from data_loader
+        event_metadata = data_loader._event_metadata if hasattr(data_loader, '_event_metadata') else None
+        return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm, event_metadata)
+    elif is_multi_input:
+        from src.data.multi_input_data_processor import MultiInputDataProcessor
+        data_processor = MultiInputDataProcessor(config)
+
+        # Split multi-input data
+        (train_cells, val_cells, test_cells), \
+        (train_vertex, val_vertex, test_vertex), \
+        (train_jets, val_jets, test_jets), \
+        (train_tracks, val_tracks, test_tracks), \
+        (train_times, val_times, test_times) = data_processor.split_data(
+            cell_sequences, vertex_features, vertex_times, jet_sequences, track_sequences
+        )
+
+        if saved_norm is not None:
+            print("Using saved norm_params (transform-only, no refit)")
+            applied = apply_saved_norm(
+                data_processor, saved_norm,
+                cells=test_cells, vertex=test_vertex,
+                jets=test_jets, tracks=test_tracks,
+            )
+            test_cells_norm = applied['cells']
+            test_vertex_norm = applied['vertex']
+            test_jets_norm = applied['jets']
+            test_tracks_norm = applied['tracks']
+        else:
+            # Normalize multi-input features (fit on train, transform all)
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            (train_jets_norm, val_jets_norm, test_jets_norm), \
+            (train_tracks_norm, val_tracks_norm, test_tracks_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_jets, val_jets, test_jets,
+                train_tracks, val_tracks, test_tracks,
+                train_times, val_times, test_times
+            )
+
+        # Extract event metadata from data_loader
+        event_metadata = data_loader._event_metadata if hasattr(data_loader, '_event_metadata') else None
+        return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, event_metadata)
+    else:
+        data_processor = DataProcessor(config)
+
+        # Split data (using same random state as training for consistency)
+        # Generate the same indices that split_data uses
+        from sklearn.model_selection import train_test_split
+        indices = np.arange(len(vertex_times))
+        train_indices, temp_indices = train_test_split(
+            indices, test_size=config.test_size, random_state=config.random_state
+        )
+        val_indices, test_indices = train_test_split(
+            temp_indices, test_size=config.val_split, random_state=config.random_state
+        )
+
+        # Split all data using the same indices
+        (train_cells, val_cells, test_cells), \
+        (train_vertex, val_vertex, test_vertex), \
+        (train_times, val_times, test_times) = data_processor.split_data(
+            cell_sequences, vertex_features, vertex_times
+        )
+
+        # Split baseline predictions using the same indices if needed
+        if is_baseline_guided:
+            train_baselines = baseline_predictions[train_indices]
+            val_baselines = baseline_predictions[val_indices]
+            test_baselines = baseline_predictions[test_indices]
+        else:
+            train_baselines = val_baselines = test_baselines = None
+
+        if saved_norm is not None:
+            print("Using saved norm_params (transform-only, no refit)")
+            applied = apply_saved_norm(
+                data_processor, saved_norm,
+                cells=test_cells, vertex=test_vertex,
+            )
+            test_cells_norm = applied['cells']
+            test_vertex_norm = applied['vertex']
+        else:
+            # Normalize features (fit on train, transform all)
+            (train_cells_norm, val_cells_norm, test_cells_norm), \
+            (train_vertex_norm, val_vertex_norm, test_vertex_norm), \
+            norm_params = data_processor.normalize_features(
+                train_cells, val_cells, test_cells,
+                train_vertex, val_vertex, test_vertex,
+                train_times, val_times, test_times
+            )
+
+        # Extract event metadata from data_loader
+        event_metadata = data_loader._event_metadata if hasattr(data_loader, '_event_metadata') else None
+
+        if is_baseline_guided:
+            return (test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines, event_metadata)
+        else:
+            return (test_cells_norm, test_vertex_norm, test_times, data_processor, event_metadata)
 
 
 def create_test_dataset_automatically(evaluator, model, test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines=None, test_jets_norm=None, test_tracks_norm=None, test_hgtd_tracks_norm=None, is_hgtd_only=False):
@@ -504,19 +551,25 @@ def main():
         # Update config with model directory for saving results
         config.models_base_dir = os.path.dirname(args.model_dir)
         config.model_name = os.path.basename(args.model_dir)
-        
+
+        # Auto-detect saved normalization params
+        saved_norm = load_saved_norm_params(args.model_dir)
+        if saved_norm is not None:
+            print(f"Found saved normalization params at {args.model_dir}/norm_params.pkl "
+                  f"-- will skip refit.")
+
         # Load or process data
         print("\n2. Loading evaluation data...")
         if is_hgtd_only:
-            test_hgtd_tracks_norm, test_vertex_norm, test_times, data_processor = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input)
+            test_hgtd_tracks_norm, test_vertex_norm, test_times, data_processor, event_metadata = \
+                load_data(config, args.data_dir, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input, saved_norm)
             test_cells_norm = None
             test_jets_norm = None
             test_tracks_norm = None
             test_baselines = None
         elif is_hgtd_multi_input:
-            test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input)
+            test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, test_hgtd_tracks_norm, event_metadata = \
+                load_data(config, args.data_dir, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input, saved_norm)
 
             # Calculate baseline method predictions for plotting comparison
             print("Calculating baseline method predictions for plotting comparison...")
@@ -553,8 +606,8 @@ def main():
                 print("Error distribution plot will not include baseline method comparison")
                 test_baselines = None
         elif is_multi_input:
-            test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
+            test_cells_norm, test_vertex_norm, test_times, data_processor, test_jets_norm, test_tracks_norm, event_metadata = \
+                load_data(config, args.data_dir, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input, saved_norm)
             test_hgtd_tracks_norm = None
 
             # Calculate baseline method predictions for plotting comparison
@@ -592,12 +645,12 @@ def main():
                 print("Error distribution plot will not include baseline method comparison")
                 test_baselines = None
         elif is_baseline_guided:
-            test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
+            test_cells_norm, test_vertex_norm, test_times, data_processor, test_baselines, event_metadata = \
+                load_data(config, args.data_dir, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input, saved_norm)
             test_jets_norm = test_tracks_norm = test_hgtd_tracks_norm = None
         else:
-            test_cells_norm, test_vertex_norm, test_times, data_processor = \
-                load_or_reuse_data(config, args.data_dir, args.load_data, is_baseline_guided, is_multi_input, is_hgtd_multi_input)
+            test_cells_norm, test_vertex_norm, test_times, data_processor, event_metadata = \
+                load_data(config, args.data_dir, is_baseline_guided, is_multi_input, is_hgtd_only, is_hgtd_multi_input, saved_norm)
             test_baselines = None
             test_jets_norm = test_tracks_norm = test_hgtd_tracks_norm = None
         
@@ -670,8 +723,25 @@ def main():
         # Print sample predictions
         evaluator.print_sample_predictions(test_times, y_pred, n_samples=20)
         
-        # Save predictions
-        evaluator.save_predictions(test_times, y_pred)
+        # Save predictions with event metadata
+        event_numbers = event_metadata['event_numbers'] if event_metadata else None
+        file_indices = event_metadata['file_indices'] if event_metadata else None
+
+        # Get test indices to extract corresponding metadata
+        if event_metadata is not None:
+            from sklearn.model_selection import train_test_split
+            total_events = len(event_metadata['event_numbers'])
+            indices = np.arange(total_events)
+            train_indices, temp_indices = train_test_split(
+                indices, test_size=config.test_size, random_state=config.random_state
+            )
+            val_indices, test_indices = train_test_split(
+                temp_indices, test_size=config.val_split, random_state=config.random_state
+            )
+            event_numbers = event_metadata['event_numbers'][test_indices]
+            file_indices = event_metadata['file_indices'][test_indices]
+
+        evaluator.save_predictions(test_times, y_pred, event_numbers=event_numbers, file_indices=file_indices)
         
         # Create visualizations
         if args.create_plots:

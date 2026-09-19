@@ -68,6 +68,8 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
         all_track_sequences = []
         all_hgtd_track_sequences = []
         sequence_lengths = []
+        all_event_numbers = []
+        all_file_indices = []
 
         # Diagnostic counters
         total_events = 0
@@ -75,7 +77,7 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
         events_after_cell_processing = 0
         events_loaded = 0
 
-        for file_path in file_paths:
+        for file_idx, file_path in enumerate(file_paths):
             if not os.path.exists(file_path):
                 continue
 
@@ -138,6 +140,12 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                     all_track_sequences.append(track_sequence)
                     all_hgtd_track_sequences.append(hgtd_track_sequence)
                     sequence_lengths.append(len(cell_sequence))
+
+                    # Extract event metadata
+                    event_number = vertex_data[i]['eventNumber'] if 'eventNumber' in vertex_data.dtype.names else i
+                    all_event_numbers.append(event_number)
+                    all_file_indices.append(file_idx)
+
                     events_loaded += 1
 
         # Print diagnostic information
@@ -157,6 +165,12 @@ class HGTDMultiInputDataLoader(MultiInputDataLoader):
                 print(f"   → Config: use_time_quality_cut={self.config.use_time_quality_cut}, min_cells={self.config.min_cells}")
             elif events_after_cell_processing == 0:
                 print("   → All events filtered out during cell processing")
+
+        # Store metadata for later use in evaluation
+        self._event_metadata = {
+            'event_numbers': np.array(all_event_numbers),
+            'file_indices': np.array(all_file_indices)
+        }
 
         return (all_cell_sequences, np.array(all_vertex_features),
                 np.array(all_vertex_times), sequence_lengths,

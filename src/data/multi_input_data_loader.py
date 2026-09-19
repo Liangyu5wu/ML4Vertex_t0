@@ -12,6 +12,7 @@ class MultiInputDataLoader:
     
     def __init__(self, config: BaseConfig):
         self.config = config
+        self._event_metadata = None
         
     def get_file_paths(self) -> List[str]:
         return [
@@ -58,86 +59,69 @@ class MultiInputDataLoader:
         return self._apply_time_quality_cut_unified(event_cells, apply_calibration=self.config.use_detector_params)
     
     def _apply_time_quality_cut_unified(self, event_cells: np.ndarray, apply_calibration: bool = True) -> np.ndarray:
-        """Unified time quality cut implementation."""
+        """Vectorized unified time quality cut implementation."""
+        if len(event_cells) == 0:
+            return event_cells
+
         try:
             calibration_data = self.config.load_calibration_data()
-            use_full_uncertainty = True
         except Exception:
-            # Fallback to vertex uncertainty only if calibration data unavailable
             print("Warning: Cannot load calibration data. Using vertex uncertainty only.")
-            use_full_uncertainty = False
-        
-        if not use_full_uncertainty:
-            # Simple fallback: vertex uncertainty only
-            mask = np.ones(len(event_cells), dtype=bool)
             cut_threshold = self.config.time_quality_n_sigma * self.config.vertex_time_sigma
-            for i, cell in enumerate(event_cells):
-                try:
-                    cell_time = cell['Cell_time_TOF_corrected']
-                    if abs(cell_time) > cut_threshold:
-                        mask[i] = False
-                except (KeyError, ValueError):
-                    mask[i] = False
-            return event_cells[mask]
-        
-        # Full uncertainty calculation
-        sigma_lookup = {
-            (1, 1): calibration_data['EMB1_sigma'], (1, 2): calibration_data['EMB2_sigma'], (1, 3): calibration_data['EMB3_sigma'],
-            (0, 1): calibration_data['EME1_sigma'], (0, 2): calibration_data['EME2_sigma'], (0, 3): calibration_data['EME3_sigma'],
-        }
-        
-        if apply_calibration:
-            param_lookup = {
-                (1, 1): calibration_data['EMB1_params'], (1, 2): calibration_data['EMB2_params'], (1, 3): calibration_data['EMB3_params'],
-                (0, 1): calibration_data['EME1_params'], (0, 2): calibration_data['EME2_params'], (0, 3): calibration_data['EME3_params'],
-            }
-        
-        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
-        
-        def get_energy_bin_index(energy: float) -> int:
-            if energy < 1.0: return 0
-            for i in range(len(energy_bins) - 1):
-                if energy_bins[i] <= energy < energy_bins[i + 1]: return i
-            return len(energy_bins) - 2
-        
-        mask = np.ones(len(event_cells), dtype=bool)
-        
-        for i, cell in enumerate(event_cells):
             try:
-                # Handle different field names in LAr vs HGTD datasets
-                if 'Cell_Barrel' in event_cells.dtype.names:
-                    barrel = int(cell['Cell_Barrel'])
-                else:
-                    # HGTD dataset uses Cell_isEM_Barrel instead
-                    barrel = 1 if cell['Cell_isEM_Barrel'] else 0
+                cell_times = event_cells['Cell_time_TOF_corrected']
+                time_mask = np.abs(cell_times) <= cut_threshold
+                return event_cells[time_mask]
+            except (KeyError, ValueError):
+                return event_cells[:0]
 
-                layer = int(cell['Cell_layer'])
-                energy = cell['Cell_e']
-                cell_time = cell['Cell_time_TOF_corrected']
-                
-                if layer not in [1, 2, 3]:
-                    mask[i] = False
-                    continue
-                
-                energy_bin_idx = max(0, min(get_energy_bin_index(energy), len(sigma_lookup.get((barrel, layer), [1000.0] * 7)) - 1))
-                sigma_cell = sigma_lookup.get((barrel, layer), [1000.0] * 7)[energy_bin_idx]
-                
-                # Apply detector calibration if enabled
-                if apply_calibration:
-                    calibration_value = param_lookup.get((barrel, layer), [0.0] * 7)[energy_bin_idx]
-                    cell_time = cell_time - calibration_value
-                
-                # Apply cut with full uncertainty
-                sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_cell**2)
-                cut_threshold = self.config.time_quality_n_sigma * sigma_total
-                
-                if abs(cell_time) > cut_threshold:
-                    mask[i] = False
-                    
-            except (KeyError, ValueError, IndexError):
-                mask[i] = False
-        
-        return event_cells[mask]
+        try:
+            # Handle different field names in LAr vs HGTD datasets
+            if 'Cell_Barrel' in event_cells.dtype.names:
+                barrels = event_cells['Cell_Barrel'].astype(int)
+            else:
+                # HGTD dataset uses Cell_isEM_Barrel instead
+                barrels = np.where(event_cells['Cell_isEM_Barrel'], 1, 0).astype(int)
+
+            layers = event_cells['Cell_layer'].astype(int)
+            energies = event_cells['Cell_e']
+            cell_times = event_cells['Cell_time_TOF_corrected'].copy()
+        except (KeyError, ValueError):
+            return event_cells[:0]
+
+        layer_mask = np.isin(layers, [1, 2, 3])
+
+        # Vectorized energy bin lookup
+        energy_bins = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, np.inf])
+        energy_bin_indices = np.searchsorted(energy_bins[:-1], energies, side='right') - 1
+        energy_bin_indices = np.clip(energy_bin_indices, 0, 6)
+
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'], (1, 2): calibration_data['EMB2_sigma'],
+            (1, 3): calibration_data['EMB3_sigma'], (0, 1): calibration_data['EME1_sigma'],
+            (0, 2): calibration_data['EME2_sigma'], (0, 3): calibration_data['EME3_sigma'],
+        }
+
+        sigma_values = np.full(len(event_cells), 1000.0)
+        calibration_values = np.zeros(len(event_cells))
+
+        for (barrel, layer), sigma_arr in sigma_lookup.items():
+            detector_mask = (barrels == barrel) & (layers == layer)
+            sigma_values[detector_mask] = np.take(sigma_arr, energy_bin_indices[detector_mask], mode='clip')
+
+            if apply_calibration:
+                param_key = 'EM{}{}_params'.format('B' if barrel == 1 else 'E', layer)
+                param_arr = calibration_data.get(param_key, [0.0] * 7)
+                calibration_values[detector_mask] = np.take(param_arr, energy_bin_indices[detector_mask], mode='clip')
+
+        if apply_calibration:
+            cell_times -= calibration_values
+
+        sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_values**2)
+        cut_thresholds = self.config.time_quality_n_sigma * sigma_total
+        time_mask = np.abs(cell_times) <= cut_thresholds
+
+        return event_cells[layer_mask & time_mask]
     
     def load_data_from_files(self, file_paths: Optional[List[str]] = None) -> Tuple:
         """Load multi-input data with jets and tracks."""
@@ -150,8 +134,10 @@ class MultiInputDataLoader:
         all_jet_sequences = []
         all_track_sequences = []
         sequence_lengths = []
-        
-        for file_path in file_paths:
+        all_event_numbers = []
+        all_file_indices = []
+
+        for file_idx, file_path in enumerate(file_paths):
             if not os.path.exists(file_path):
                 continue
                 
@@ -197,8 +183,19 @@ class MultiInputDataLoader:
                     all_jet_sequences.append(jet_sequence)
                     all_track_sequences.append(track_sequence)
                     sequence_lengths.append(len(cell_sequence))
-        
-        return (all_cell_sequences, np.array(all_vertex_features), 
+
+                    # Extract event metadata
+                    event_number = vertex_data[i]['eventNumber'] if 'eventNumber' in vertex_data.dtype.names else i
+                    all_event_numbers.append(event_number)
+                    all_file_indices.append(file_idx)
+
+        # Store metadata for later use in evaluation
+        self._event_metadata = {
+            'event_numbers': np.array(all_event_numbers),
+            'file_indices': np.array(all_file_indices)
+        }
+
+        return (all_cell_sequences, np.array(all_vertex_features),
                 np.array(all_vertex_times), sequence_lengths,
                 all_jet_sequences, all_track_sequences)
     

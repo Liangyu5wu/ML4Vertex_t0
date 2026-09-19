@@ -13,11 +13,12 @@ class DataLoader:
     def __init__(self, config: BaseConfig):
         """
         Initialize data loader.
-        
+
         Args:
             config: Configuration object containing data parameters
         """
         self.config = config
+        self._event_metadata = None
         
     def get_file_paths(self) -> List[str]:
         """Get list of HDF5 file paths."""
@@ -34,78 +35,68 @@ class DataLoader:
         return self._apply_time_quality_cut_unified(event_cells, apply_calibration=self.config.use_detector_params)
     
     def _apply_time_quality_cut_unified(self, event_cells: np.ndarray, apply_calibration: bool = True) -> np.ndarray:
-        """Unified time quality cut implementation."""
+        """Vectorized time quality cut implementation."""
+        if len(event_cells) == 0:
+            return event_cells
+
         try:
             calibration_data = self.config.load_calibration_data()
             use_full_uncertainty = True
         except Exception:
-            # Fallback to vertex uncertainty only if calibration data unavailable
             print("Warning: Cannot load calibration data. Using vertex uncertainty only.")
             use_full_uncertainty = False
-        
+
         if not use_full_uncertainty:
-            # Simple fallback: vertex uncertainty only
-            mask = np.ones(len(event_cells), dtype=bool)
-            cut_threshold = self.config.time_quality_n_sigma * self.config.vertex_time_sigma
-            for i, cell in enumerate(event_cells):
-                try:
-                    cell_time = cell['Cell_time_TOF_corrected']
-                    if abs(cell_time) > cut_threshold:
-                        mask[i] = False
-                except (KeyError, ValueError):
-                    mask[i] = False
-            return event_cells[mask]
-        
-        # Full uncertainty calculation
-        sigma_lookup = {
-            (1, 1): calibration_data['EMB1_sigma'], (1, 2): calibration_data['EMB2_sigma'], (1, 3): calibration_data['EMB3_sigma'],
-            (0, 1): calibration_data['EME1_sigma'], (0, 2): calibration_data['EME2_sigma'], (0, 3): calibration_data['EME3_sigma'],
-        }
-        
-        if apply_calibration:
-            param_lookup = {
-                (1, 1): calibration_data['EMB1_params'], (1, 2): calibration_data['EMB2_params'], (1, 3): calibration_data['EMB3_params'],
-                (0, 1): calibration_data['EME1_params'], (0, 2): calibration_data['EME2_params'], (0, 3): calibration_data['EME3_params'],
-            }
-        
-        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
-        
-        def get_energy_bin_index(energy: float) -> int:
-            if energy < 1.0: return 0
-            for i in range(len(energy_bins) - 1):
-                if energy_bins[i] <= energy < energy_bins[i + 1]: return i
-            return len(energy_bins) - 2
-        
-        mask = np.ones(len(event_cells), dtype=bool)
-        
-        for i, cell in enumerate(event_cells):
             try:
-                barrel, layer, energy = int(cell['Cell_Barrel']), int(cell['Cell_layer']), cell['Cell_e']
-                cell_time = cell['Cell_time_TOF_corrected']
-                
-                if layer not in [1, 2, 3]:
-                    mask[i] = False
-                    continue
-                
-                energy_bin_idx = max(0, min(get_energy_bin_index(energy), len(sigma_lookup.get((barrel, layer), [1000.0] * 7)) - 1))
-                sigma_cell = sigma_lookup.get((barrel, layer), [1000.0] * 7)[energy_bin_idx]
-                
-                # Apply detector calibration if enabled
-                if apply_calibration:
-                    calibration_value = param_lookup.get((barrel, layer), [0.0] * 7)[energy_bin_idx]
-                    cell_time = cell_time - calibration_value
-                
-                # Apply cut with full uncertainty
-                sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_cell**2)
-                cut_threshold = self.config.time_quality_n_sigma * sigma_total
-                
-                if abs(cell_time) > cut_threshold:
-                    mask[i] = False
-                    
-            except (KeyError, ValueError, IndexError):
-                mask[i] = False
-        
-        return event_cells[mask]
+                cell_times = event_cells['Cell_time_TOF_corrected']
+                cut_threshold = self.config.time_quality_n_sigma * self.config.vertex_time_sigma
+                mask = np.abs(cell_times) <= cut_threshold
+                return event_cells[mask]
+            except (KeyError, ValueError):
+                return event_cells[:0]
+
+        # Vectorized full uncertainty calculation
+        try:
+            barrels = event_cells['Cell_Barrel'].astype(int)
+            layers = event_cells['Cell_layer'].astype(int)
+            energies = event_cells['Cell_e']
+            cell_times = event_cells['Cell_time_TOF_corrected'].copy()
+        except (KeyError, ValueError):
+            return event_cells[:0]
+
+        layer_mask = np.isin(layers, [1, 2, 3])
+
+        # Vectorized energy bin lookup
+        energy_bins = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, np.inf])
+        energy_bin_indices = np.searchsorted(energy_bins[:-1], energies, side='right') - 1
+        energy_bin_indices = np.clip(energy_bin_indices, 0, 6)
+
+        sigma_lookup = {
+            (1, 1): calibration_data['EMB1_sigma'], (1, 2): calibration_data['EMB2_sigma'],
+            (1, 3): calibration_data['EMB3_sigma'], (0, 1): calibration_data['EME1_sigma'],
+            (0, 2): calibration_data['EME2_sigma'], (0, 3): calibration_data['EME3_sigma'],
+        }
+
+        sigma_values = np.full(len(event_cells), 1000.0)
+        calibration_values = np.zeros(len(event_cells))
+
+        for (barrel, layer), sigma_arr in sigma_lookup.items():
+            detector_mask = (barrels == barrel) & (layers == layer)
+            sigma_values[detector_mask] = np.take(sigma_arr, energy_bin_indices[detector_mask], mode='clip')
+
+            if apply_calibration:
+                param_key = f'EM{"B" if barrel == 1 else "E"}{layer}_params'
+                param_arr = calibration_data.get(param_key, [0.0] * 7)
+                calibration_values[detector_mask] = np.take(param_arr, energy_bin_indices[detector_mask], mode='clip')
+
+        if apply_calibration:
+            cell_times -= calibration_values
+
+        sigma_total = np.sqrt(self.config.vertex_time_sigma**2 + sigma_values**2)
+        cut_thresholds = self.config.time_quality_n_sigma * sigma_total
+        time_mask = np.abs(cell_times) <= cut_thresholds
+
+        return event_cells[layer_mask & time_mask]
     
     def apply_cell_filtering(self, event_cells: np.ndarray) -> np.ndarray:
         """
@@ -169,204 +160,133 @@ class DataLoader:
     
     def calculate_baseline_t0_error(self, event_cells: np.ndarray, true_vertex_time: float) -> float:
         """
-        Calculate baseline (non-ML) t0 error for event-level filtering.
-        
+        Vectorized baseline t0 error calculation for event-level filtering.
+
         Args:
             event_cells: Array of cells for a single event (after basic filtering)
             true_vertex_time: True vertex time for this event
-            
+
         Returns:
             Absolute error in ps between baseline t0 and true vertex time
         """
         if len(event_cells) == 0:
-            return float('inf')  # Invalid event
-        
+            return float('inf')
+
         try:
-            # Load calibration data for sigma and parameter values
             calibration_data = self.config.load_calibration_data()
         except Exception:
-            return 0.0  # Skip filtering if calibration data unavailable
-        
-        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
-        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
-        
-        def get_energy_bin_index(energy: float) -> int:
-            """Get energy bin index for calibration parameter lookup."""
-            if energy < 1.0:
-                return 0
-            for i in range(len(energy_bins) - 1):
-                if energy_bins[i] <= energy < energy_bins[i + 1]:
-                    return i
-            return len(energy_bins) - 2
-        
-        # Parameter and sigma lookup tables
-        param_lookup = {
-            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
-            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
-            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
-            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
-            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
-            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
+            return 0.0
+
+        try:
+            barrels = event_cells['Cell_Barrel'].astype(int)
+            layers = event_cells['Cell_layer'].astype(int)
+            energies = event_cells['Cell_e']
+            times_tof = event_cells['Cell_time_TOF_corrected']
+        except (KeyError, ValueError):
+            return float('inf')
+
+        layer_mask = np.isin(layers, [1, 2, 3])
+        if not np.any(layer_mask):
+            return float('inf')
+
+        barrels = barrels[layer_mask]
+        layers = layers[layer_mask]
+        energies = energies[layer_mask]
+        times_tof = times_tof[layer_mask]
+
+        energy_bins = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, np.inf])
+        energy_bin_indices = np.searchsorted(energy_bins[:-1], energies, side='right') - 1
+        energy_bin_indices = np.clip(energy_bin_indices, 0, 6)
+
+        sigma_values = np.full(len(barrels), 1000.0)
+        calibration_values = np.zeros(len(barrels))
+
+        param_keys = {
+            (1, 1): ('EMB1_params', 'EMB1_sigma'), (1, 2): ('EMB2_params', 'EMB2_sigma'),
+            (1, 3): ('EMB3_params', 'EMB3_sigma'), (0, 1): ('EME1_params', 'EME1_sigma'),
+            (0, 2): ('EME2_params', 'EME2_sigma'), (0, 3): ('EME3_params', 'EME3_sigma'),
         }
-        
-        sigma_lookup = {
-            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
-            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
-            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
-            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
-            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
-            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
-        }
-        
-        weighted_sum = 0.0
-        weight_sum = 0.0
-        
-        for cell in event_cells:
-            try:
-                # Extract cell properties
-                barrel = int(cell['Cell_Barrel'])
-                layer = int(cell['Cell_layer'])
-                energy = cell['Cell_e']
-                time_tof = cell['Cell_time_TOF_corrected']
-                
-                # Skip cells with invalid layer
-                if layer not in [1, 2, 3]:
-                    continue
-                
-                # Get calibration parameters and sigma
-                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
-                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
-                
-                energy_bin_idx = get_energy_bin_index(energy)
-                
-                # Add bounds checking
-                if energy_bin_idx >= len(detector_params):
-                    energy_bin_idx = len(detector_params) - 1
-                elif energy_bin_idx < 0:
-                    energy_bin_idx = 0
-                
-                calibration_value = detector_params[energy_bin_idx]
-                sigma = sigma_params[energy_bin_idx]
-                
-                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
-                calibrated_time = time_tof - calibration_value
-                
-                # Weight = 1/sigma^2
-                weight = 1.0 / (sigma * sigma)
-                
-                weighted_sum += weight * calibrated_time
-                weight_sum += weight
-                
-            except (KeyError, ValueError, IndexError):
-                # Skip cells with missing or invalid data
-                continue
-        
+
+        for (barrel, layer), (param_key, sigma_key) in param_keys.items():
+            detector_mask = (barrels == barrel) & (layers == layer)
+            if np.any(detector_mask):
+                sigma_arr = calibration_data.get(sigma_key, [1000.0] * 7)
+                param_arr = calibration_data.get(param_key, [0.0] * 7)
+                sigma_values[detector_mask] = np.take(sigma_arr, energy_bin_indices[detector_mask], mode='clip')
+                calibration_values[detector_mask] = np.take(param_arr, energy_bin_indices[detector_mask], mode='clip')
+
+        calibrated_times = times_tof - calibration_values
+        weights = 1.0 / (sigma_values * sigma_values)
+
+        weight_sum = np.sum(weights)
         if weight_sum > 0:
-            baseline_t0 = weighted_sum / weight_sum
-            # Calculate absolute error (all data already in ps)
-            error_ps = abs(baseline_t0 - true_vertex_time)
-            return error_ps
-        else:
-            return float('inf')  # Invalid calculation
+            baseline_t0 = np.sum(weights * calibrated_times) / weight_sum
+            return abs(baseline_t0 - true_vertex_time)
+        return float('inf')
     
     def calculate_baseline_t0_prediction(self, event_cells: np.ndarray) -> float:
         """
-        Calculate baseline (non-ML) t0 prediction for residual learning.
-        
+        Vectorized baseline t0 prediction for residual learning.
+
         Args:
             event_cells: Array of cells for a single event (after basic filtering)
-            
+
         Returns:
             Baseline t0 prediction in ps (or 0.0 if calculation fails)
         """
         if len(event_cells) == 0:
-            return 0.0  # Return 0 for empty events
-        
+            return 0.0
+
         try:
-            # Load calibration data for sigma and parameter values
             calibration_data = self.config.load_calibration_data()
         except Exception:
-            return 0.0  # Return 0 if calibration data unavailable
-        
-        # Energy bins for calibration: [1-1.5, 1.5-2, 2-3, 3-4, 4-5, 5-10, >10]
-        energy_bins = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, float('inf')]
-        
-        def get_energy_bin_index(energy: float) -> int:
-            """Get energy bin index for calibration parameter lookup."""
-            if energy < 1.0:
-                return 0
-            for i in range(len(energy_bins) - 1):
-                if energy_bins[i] <= energy < energy_bins[i + 1]:
-                    return i
-            return len(energy_bins) - 2
-        
-        # Parameter and sigma lookup tables
-        param_lookup = {
-            (1, 1): calibration_data['EMB1_params'],  # Barrel, Layer 1
-            (1, 2): calibration_data['EMB2_params'],  # Barrel, Layer 2
-            (1, 3): calibration_data['EMB3_params'],  # Barrel, Layer 3
-            (0, 1): calibration_data['EME1_params'],  # Endcap, Layer 1
-            (0, 2): calibration_data['EME2_params'],  # Endcap, Layer 2
-            (0, 3): calibration_data['EME3_params'],  # Endcap, Layer 3
+            return 0.0
+
+        try:
+            barrels = event_cells['Cell_Barrel'].astype(int)
+            layers = event_cells['Cell_layer'].astype(int)
+            energies = event_cells['Cell_e']
+            times_tof = event_cells['Cell_time_TOF_corrected']
+        except (KeyError, ValueError):
+            return 0.0
+
+        layer_mask = np.isin(layers, [1, 2, 3])
+        if not np.any(layer_mask):
+            return 0.0
+
+        barrels = barrels[layer_mask]
+        layers = layers[layer_mask]
+        energies = energies[layer_mask]
+        times_tof = times_tof[layer_mask]
+
+        energy_bins = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, np.inf])
+        energy_bin_indices = np.searchsorted(energy_bins[:-1], energies, side='right') - 1
+        energy_bin_indices = np.clip(energy_bin_indices, 0, 6)
+
+        sigma_values = np.full(len(barrels), 1000.0)
+        calibration_values = np.zeros(len(barrels))
+
+        param_keys = {
+            (1, 1): ('EMB1_params', 'EMB1_sigma'), (1, 2): ('EMB2_params', 'EMB2_sigma'),
+            (1, 3): ('EMB3_params', 'EMB3_sigma'), (0, 1): ('EME1_params', 'EME1_sigma'),
+            (0, 2): ('EME2_params', 'EME2_sigma'), (0, 3): ('EME3_params', 'EME3_sigma'),
         }
-        
-        sigma_lookup = {
-            (1, 1): calibration_data['EMB1_sigma'],  # Barrel, Layer 1
-            (1, 2): calibration_data['EMB2_sigma'],  # Barrel, Layer 2
-            (1, 3): calibration_data['EMB3_sigma'],  # Barrel, Layer 3
-            (0, 1): calibration_data['EME1_sigma'],  # Endcap, Layer 1
-            (0, 2): calibration_data['EME2_sigma'],  # Endcap, Layer 2
-            (0, 3): calibration_data['EME3_sigma'],  # Endcap, Layer 3
-        }
-        
-        weighted_sum = 0.0
-        weight_sum = 0.0
-        
-        for cell in event_cells:
-            try:
-                # Extract cell properties
-                barrel = int(cell['Cell_Barrel'])
-                layer = int(cell['Cell_layer'])
-                energy = cell['Cell_e']
-                time_tof = cell['Cell_time_TOF_corrected']
-                
-                # Skip cells with invalid layer
-                if layer not in [1, 2, 3]:
-                    continue
-                
-                # Get calibration parameters and sigma
-                detector_params = param_lookup.get((barrel, layer), [0.0] * 7)
-                sigma_params = sigma_lookup.get((barrel, layer), [1000.0] * 7)
-                
-                energy_bin_idx = get_energy_bin_index(energy)
-                
-                # Add bounds checking
-                if energy_bin_idx >= len(detector_params):
-                    energy_bin_idx = len(detector_params) - 1
-                elif energy_bin_idx < 0:
-                    energy_bin_idx = 0
-                
-                calibration_value = detector_params[energy_bin_idx]
-                sigma = sigma_params[energy_bin_idx]
-                
-                # Apply calibration: corrected_time = tof_corrected_time - calibration_value
-                calibrated_time = time_tof - calibration_value
-                
-                # Weight = 1/sigma^2
-                weight = 1.0 / (sigma * sigma)
-                
-                weighted_sum += weight * calibrated_time
-                weight_sum += weight
-                
-            except (KeyError, ValueError, IndexError):
-                # Skip cells with missing or invalid data
-                continue
-        
+
+        for (barrel, layer), (param_key, sigma_key) in param_keys.items():
+            detector_mask = (barrels == barrel) & (layers == layer)
+            if np.any(detector_mask):
+                sigma_arr = calibration_data.get(sigma_key, [1000.0] * 7)
+                param_arr = calibration_data.get(param_key, [0.0] * 7)
+                sigma_values[detector_mask] = np.take(sigma_arr, energy_bin_indices[detector_mask], mode='clip')
+                calibration_values[detector_mask] = np.take(param_arr, energy_bin_indices[detector_mask], mode='clip')
+
+        calibrated_times = times_tof - calibration_values
+        weights = 1.0 / (sigma_values * sigma_values)
+
+        weight_sum = np.sum(weights)
         if weight_sum > 0:
-            baseline_t0 = weighted_sum / weight_sum
-            return baseline_t0
-        else:
-            return 0.0  # Return 0 for invalid calculation
+            return np.sum(weights * calibrated_times) / weight_sum
+        return 0.0
     
     def apply_baseline_method_filter(
         self, 
@@ -481,6 +401,8 @@ class DataLoader:
         all_jet_sequences = [] if hasattr(self.config, 'use_event_jets') and self.config.use_event_jets else None
         all_track_sequences = [] if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks else None
         sequence_lengths = []
+        all_event_numbers = []
+        all_file_indices = []
         
         # Print configuration
         print(f"Data loading configuration:")
@@ -492,34 +414,42 @@ class DataLoader:
         if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks:
             print(f"  Max tracks per event: {self.config.max_tracks}, Min tracks: {self.config.min_tracks}")
         
-        for file_path in file_paths:
+        for file_idx, file_path in enumerate(file_paths):
             if not os.path.exists(file_path):
                 print(f"Warning: File {file_path} not found, skipping...")
                 continue
-                
+
             print(f"Processing {file_path}...")
             try:
-                result = self._process_file_with_jets_tracks(file_path)
+                result = self._process_file_with_jets_tracks(file_path, file_idx)
                 if all_jet_sequences is not None and all_track_sequences is not None:
-                    cell_seq, vertex_feat, vertex_time, seq_len, jet_seq, track_seq = result
+                    cell_seq, vertex_feat, vertex_time, seq_len, jet_seq, track_seq, event_nums, file_idxs = result
                     all_jet_sequences.extend(jet_seq)
                     all_track_sequences.extend(track_seq)
                 else:
-                    cell_seq, vertex_feat, vertex_time, seq_len, _, _ = result
-                    
+                    cell_seq, vertex_feat, vertex_time, seq_len, _, _, event_nums, file_idxs = result
+
                 all_cell_sequences.extend(cell_seq)
                 all_vertex_features.extend(vertex_feat)
                 all_vertex_times.extend(vertex_time)
                 sequence_lengths.extend(seq_len)
-                    
+                all_event_numbers.extend(event_nums)
+                all_file_indices.extend(file_idxs)
+
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
                 continue
-        
+
         sequence_lengths = np.array(sequence_lengths)
         print(f"Processed {len(all_vertex_times)} valid events")
-        
-        return (all_cell_sequences, np.array(all_vertex_features), 
+
+        # Store metadata for later use in evaluation
+        self._event_metadata = {
+            'event_numbers': np.array(all_event_numbers),
+            'file_indices': np.array(all_file_indices)
+        }
+
+        return (all_cell_sequences, np.array(all_vertex_features),
                 np.array(all_vertex_times), sequence_lengths,
                 all_jet_sequences, all_track_sequences)
     
@@ -687,7 +617,7 @@ class DataLoader:
         
         return cell_sequences, vertex_features, vertex_times, sequence_lengths, file_stats
     
-    def _process_file_with_jets_tracks(self, file_path: str) -> Tuple[List, List, List, List, List, List]:
+    def _process_file_with_jets_tracks(self, file_path: str, file_idx: int = 0) -> Tuple[List, List, List, List, List, List, List, List]:
         """Process a single HDF5 file with jets and tracks support."""
         cell_sequences = []
         vertex_features = []
@@ -695,57 +625,64 @@ class DataLoader:
         sequence_lengths = []
         jet_sequences = []
         track_sequences = []
-        
+        event_numbers = []
+        file_indices = []
+
         with h5py.File(file_path, 'r') as f:
             vertex_data = f['HSvertex'][:]
             cells_data = f['cells'][:]
-            
+
             # Load jets and tracks data if enabled
             jets_data = f.get('jets', None) if hasattr(self.config, 'use_event_jets') and self.config.use_event_jets else None
             tracks_data = f.get('tracks', None) if hasattr(self.config, 'use_event_tracks') and self.config.use_event_tracks else None
-            
+
             for i in range(len(vertex_data)):
                 # Extract vertex features (not using spatial features for new models)
                 vertex_reco = [0.0, 0.0, 0.0]
-                
+
                 # Process cells for this event
                 event_cells = cells_data[i]
                 valid_cells = self.apply_cell_filtering(event_cells)
-                
+
                 # Skip events with too few cells
                 if len(valid_cells) < self.config.min_cells:
                     continue
-                
+
                 # Apply baseline method filter if enabled
                 vertex_time = vertex_data[i]['HSvertex_time']
                 if not self.apply_baseline_method_filter(valid_cells, vertex_time):
                     continue
-                
+
                 # Process cells
                 sequence = self._process_event_cells(valid_cells)
                 if sequence is None:
                     continue
-                
+
                 # Process jets if enabled
                 jet_sequence = []
                 if jets_data is not None:
                     event_jets = jets_data[i]
                     jet_sequence = self._process_event_jets(event_jets)
-                
+
                 # Process tracks if enabled
                 track_sequence = []
                 if tracks_data is not None:
                     event_tracks = tracks_data[i]
                     track_sequence = self._process_event_tracks(event_tracks)
-                
+
                 cell_sequences.append(sequence)
                 vertex_features.append(vertex_reco)
                 vertex_times.append(vertex_time)
                 sequence_lengths.append(len(sequence))
                 jet_sequences.append(jet_sequence)
                 track_sequences.append(track_sequence)
-        
-        return cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences
+
+                # Extract event metadata
+                event_number = vertex_data[i]['eventNumber'] if 'eventNumber' in vertex_data.dtype.names else i
+                event_numbers.append(event_number)
+                file_indices.append(file_idx)
+
+        return cell_sequences, vertex_features, vertex_times, sequence_lengths, jet_sequences, track_sequences, event_numbers, file_indices
     
     def _process_event_jets(self, event_jets: np.ndarray) -> List[List[float]]:
         """Process jets for a single event."""

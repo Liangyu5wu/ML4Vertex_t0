@@ -312,30 +312,42 @@ class Evaluator:
             print(f"{i:<8} {true_val:<15.6f} {pred_val:<15.6f} {error:<15.6f} {abs_error:<15.6f}")
     
     def save_predictions(
-        self, 
-        y_true: np.ndarray, 
-        y_pred: np.ndarray, 
-        filepath: Optional[str] = None
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        filepath: Optional[str] = None,
+        event_numbers: Optional[np.ndarray] = None,
+        file_indices: Optional[np.ndarray] = None
     ):
         """
-        Save predictions to file.
-        
+        Save predictions to file with optional event metadata.
+
         Args:
             y_true: True values
             y_pred: Predicted values
             filepath: Path to save predictions. If None, saves to model directory.
+            event_numbers: Event numbers for tracing back to ROOT files
+            file_indices: File indices for tracing back to source HDF5 files
         """
         if filepath is None:
             filepath = f"{self.config.model_dir}/predictions.npz"
-        
-        np.savez(
-            filepath,
-            y_true=y_true,
-            y_pred=y_pred,
-            errors=y_pred - y_true
-        )
-        
+
+        save_dict = {
+            'y_true': y_true,
+            'y_pred': y_pred,
+            'errors': y_pred - y_true
+        }
+
+        if event_numbers is not None:
+            save_dict['event_numbers'] = event_numbers
+        if file_indices is not None:
+            save_dict['file_indices'] = file_indices
+
+        np.savez(filepath, **save_dict)
+
         print(f"Predictions saved to: {filepath}")
+        if event_numbers is not None:
+            print(f"  Includes event metadata for {len(event_numbers)} events")
     
     def load_predictions(self, filepath: str) -> Tuple[np.ndarray, np.ndarray]:
         """

@@ -14,6 +14,39 @@ class HGTDOnlyDataLoader(DataLoader):
     def __init__(self, config: BaseConfig):
         super().__init__(config)
 
+    def apply_cell_filtering(self, event_cells: np.ndarray) -> np.ndarray:
+        """
+        Apply minimal cell filtering for HGTD-only models.
+
+        Since HGTD-only models don't use cells as input, we only apply basic
+        filtering to ensure consistent event pool with other models, but we
+        do NOT apply time quality cuts (which would filter out too many events).
+
+        Args:
+            event_cells: Array of cells for a single event
+
+        Returns:
+            Filtered array of cells (used only for event selection, not as model input)
+        """
+        # Start with all cells
+        mask = np.ones(len(event_cells), dtype=bool)
+
+        # Apply valid cell filter
+        if self.config.require_valid_cells:
+            valid_mask = event_cells['valid'] == True
+            mask = mask & valid_mask
+
+        # Apply layer filtering - only keep cells with layers 1, 2, 3
+        if 'Cell_layer' in event_cells.dtype.names:
+            layer_mask = np.isin(event_cells['Cell_layer'], [1, 2, 3])
+            mask = mask & layer_mask
+
+        # NOTE: We do NOT apply time_quality_cut here even if enabled in config
+        # because HGTD-only models don't use cell timing information.
+        # This prevents filtering out all events due to strict time quality requirements.
+
+        return event_cells[mask]
+
     def _process_event_hgtd_tracks(self, event_hgtd_tracks: np.ndarray) -> List[List[float]]:
         """Process HGTD tracks for a single event."""
         # Filter: valid == True and Track_hasValidTime == 1
@@ -67,13 +100,15 @@ class HGTDOnlyDataLoader(DataLoader):
         all_vertex_features = []
         all_vertex_times = []
         sequence_lengths = []
+        all_event_numbers = []
+        all_file_indices = []
 
         # Diagnostic counters
         total_events = 0
         events_after_cell_filtering = 0
         events_loaded = 0
 
-        for file_path in file_paths:
+        for file_idx, file_path in enumerate(file_paths):
             if not os.path.exists(file_path):
                 continue
 
@@ -121,6 +156,12 @@ class HGTDOnlyDataLoader(DataLoader):
                     all_vertex_features.append(vertex_reco)
                     all_vertex_times.append(vertex_time)
                     sequence_lengths.append(len(hgtd_track_sequence))
+
+                    # Extract event metadata
+                    event_number = vertex_data[i]['eventNumber'] if 'eventNumber' in vertex_data.dtype.names else i
+                    all_event_numbers.append(event_number)
+                    all_file_indices.append(file_idx)
+
                     events_loaded += 1
 
         # Print diagnostic information
@@ -139,6 +180,12 @@ class HGTDOnlyDataLoader(DataLoader):
                 if events_after_cell_filtering == 0:
                     print("   → All events filtered out by cell filtering (time quality cut or min_cells)")
                     print(f"   → Config: use_time_quality_cut={getattr(self.config, 'use_time_quality_cut', False)}, min_cells={getattr(self.config, 'min_cells', 1)}")
+
+        # Store metadata for later use in evaluation
+        self._event_metadata = {
+            'event_numbers': np.array(all_event_numbers),
+            'file_indices': np.array(all_file_indices)
+        }
 
         return (all_hgtd_track_sequences, np.array(all_vertex_features),
                 np.array(all_vertex_times), sequence_lengths)
