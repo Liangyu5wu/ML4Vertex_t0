@@ -29,26 +29,13 @@ def _fmt(n: float) -> str:
 
 def describe(path: str, tree_name: str = None, entries: int = 1000,
              pattern: str = None, show_values: bool = False) -> None:
-    import uproot
     import awkward as ak
 
-    f = uproot.open(path)
-    # ATLAS files are TTrees today and may be RNTuples tomorrow; both expose
-    # the same keys()/array() interface in uproot.
-    wanted = ("TTree", "ROOT::RNTuple")
-    trees = {k.split(";")[0]: f[k] for k, cls in f.classnames().items()
-             if cls in wanted}
-    if not trees:
-        print(f"{path}: no TTree/RNTuple found; contents = {f.classnames()}")
-        return
+    from .schema import open_tree
 
+    tree = open_tree(path, tree_name)
     print(f"file   : {path}")
-    print("trees  : " + ", ".join(f"{k} ({v.num_entries:,} entries)"
-                                  for k, v in trees.items()))
-
-    name = tree_name or max(trees, key=lambda k: trees[k].num_entries)
-    tree = trees[name]
-    print(f"\nreading '{name}': {tree.num_entries:,} entries, "
+    print(f"\nreading '{tree.name}': {tree.num_entries:,} entries, "
           f"{len(tree.keys()):,} branches, first {entries:,} entries sampled\n")
 
     keys = list(tree.keys())

@@ -114,3 +114,33 @@ def baseline_t0(store: EventStore, max_events: Optional[int] = None,
         print(f"baseline t0 on {n_events} events: {ok.sum()} reconstructed "
               f"({100 * ok.mean():.1f}%), {n_matched[ok].mean():.1f} matched cells/event")
     return t0, truth, n_matched
+
+
+def main():
+    import argparse
+
+    from .summary import format_summary, summarize
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--store", required=True, help="event store to run on")
+    p.add_argument("--files", nargs="*", default=None, help="subset of store files")
+    p.add_argument("--max-events", type=int, default=None)
+    p.add_argument("--delta-r", type=float, default=0.1,
+                   help="cell-track matching cone")
+    p.add_argument("--calibration", default="HStrackmatching_calibration.txt")
+    p.add_argument("--output", default=None, help="save the predictions to this .npz")
+    args = p.parse_args()
+
+    store = EventStore(args.store, files=args.files)
+    pred, truth, n = baseline_t0(store, max_events=args.max_events,
+                                 delta_r=args.delta_r, calibration=args.calibration)
+    ok = np.isfinite(pred)
+    print(format_summary("baseline", summarize(truth[ok], pred[ok])))
+    if args.output:
+        np.savez(args.output, y_true=truth, y_pred=pred, errors=pred - truth,
+                 n_matched_cells=n)
+        print(f"wrote {args.output}")
+
+
+if __name__ == "__main__":
+    main()

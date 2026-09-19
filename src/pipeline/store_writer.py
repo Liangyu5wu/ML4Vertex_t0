@@ -85,7 +85,11 @@ def write_compact(dst_path: str, events: Dict[str, np.ndarray],
     warnings: List[str] = []
     summary: Dict[str, dict] = {}
 
-    with h5py.File(dst_path, "w") as fout:
+    # Write to a temporary name and rename at the end: a store file only
+    # appears once it is complete, so an interrupted run leaves the previous
+    # one intact rather than a truncated file that still opens.
+    tmp_path = f"{dst_path}.{os.getpid()}.part"
+    with h5py.File(tmp_path, "w") as fout:
         ev_group = fout.create_group("events")
         for name, values in events.items():
             col = downcast(np.ascontiguousarray(values))
@@ -133,6 +137,7 @@ def write_compact(dst_path: str, events: Dict[str, np.ndarray],
         for key, value in (attrs or {}).items():
             fout.attrs[key] = value
 
+    os.replace(tmp_path, dst_path)
     return warnings, summary
 
 

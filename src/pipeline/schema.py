@@ -39,21 +39,30 @@ class FileSchema:
 # Collecting
 # --------------------------------------------------------------------------
 
-def collect_root(path: str, tree: Optional[str] = None) -> FileSchema:
-    """Branch inventory of a ROOT file (TTree or RNTuple)."""
+# ATLAS files are TTrees today and may be RNTuples tomorrow; uproot exposes
+# the same keys()/array() interface for both.
+TREE_CLASSES = ("TTree", "ROOT::RNTuple")
+
+
+def open_tree(path: str, tree: Optional[str] = None):
+    """Open a ROOT file and return the named tree, or the largest one."""
     import uproot
 
     f = uproot.open(path)
     trees = {k.split(";")[0]: f[k] for k, cls in f.classnames().items()
-             if cls in ("TTree", "ROOT::RNTuple")}
+             if cls in TREE_CLASSES}
     if not trees:
-        raise ValueError(f"{path}: no TTree/RNTuple found")
-    name = tree or max(trees, key=lambda k: trees[k].num_entries)
-    t = trees[name]
-    columns = {}
-    for key in t.keys():
-        branch = t[key]
-        columns[key] = str(getattr(branch, "typename", "?"))
+        raise ValueError(f"{path}: no TTree/RNTuple found; "
+                         f"contents = {f.classnames()}")
+    if tree is not None and tree not in trees:
+        raise KeyError(f"{path}: no tree {tree!r}; it has {sorted(trees)}")
+    return trees[tree or max(trees, key=lambda k: trees[k].num_entries)]
+
+
+def collect_root(path: str, tree: Optional[str] = None) -> FileSchema:
+    """Branch inventory of a ROOT file (TTree or RNTuple)."""
+    t = open_tree(path, tree)
+    columns = {key: str(getattr(t[key], "typename", "?")) for key in t.keys()}
     return FileSchema(path, "root", columns, int(t.num_entries))
 
 
@@ -117,32 +126,6 @@ def compare(schemas: Sequence[FileSchema]) -> List[str]:
                                 f"{reference.columns[name]} in "
                                 f"{os.path.basename(reference.path)}")
     return problems
-
-
-def require(schema: FileSchema, required: Iterable[str],
-            aliases: Optional[Dict[str, Sequence[str]]] = None) -> Dict[str, str]:
-    """Resolve required names against the file, raising with what is available.
-
-    ``aliases`` maps a logical name to the candidate branch names to try, so a
-    production that renamed a branch is handled explicitly instead of silently
-    producing a column of zeros.
-    """
-    aliases = aliases or {}
-    resolved, missing = {}, []
-    for name in required:
-        for candidate in aliases.get(name, [name]):
-            if candidate in schema.columns:
-                resolved[name] = candidate
-                break
-        else:
-            missing.append(name)
-    if missing:
-        raise KeyError(
-            f"{os.path.basename(schema.path)} is missing required input(s) "
-            f"{missing}. Tried {[aliases.get(m, [m]) for m in missing]}. "
-            f"The file provides {sorted(schema.columns)[:20]}"
-            + (" ..." if len(schema.columns) > 20 else ""))
-    return resolved
 
 
 # --------------------------------------------------------------------------
@@ -218,13 +201,8 @@ def _content_warnings(schema: FileSchema) -> List[str]:
     import h5py
 
     if schema.kind == "root":
-        import uproot
         import awkward as ak
-        f = uproot.open(schema.path)
-        name = max((k.split(";")[0] for k, c in f.classnames().items()
-                    if c in ("TTree", "ROOT::RNTuple")),
-                   key=lambda k: f[k].num_entries)
-        tree = f[name]
+        tree = open_tree(schema.path)
         out = []
         for key in tree.keys():
             try:

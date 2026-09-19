@@ -81,12 +81,6 @@ def _pool(x, how: str, cfg: dict, name: str, mask=None):
     raise ValueError(f"{name}: unknown pooling {how!r}; choose from {POOLINGS}")
 
 
-def needs_mask(encoder: dict) -> bool:
-    """True when the block's pooling or encoder consumes an attention mask."""
-    return encoder.get("pooling", "average") in MASKED_POOLINGS or \
-        encoder.get("type", "mlp") == "transformer"
-
-
 def build_model(model_spec: dict) -> keras.Model:
     """Build and compile a model from a plain-dict spec.
 

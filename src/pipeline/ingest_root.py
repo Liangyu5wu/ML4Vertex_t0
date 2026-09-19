@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -32,7 +34,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from .schema import collect_root, compare
+from .schema import collect_root, compare, open_tree
 from .store_writer import Block, write_compact, write_manifest
 
 C_MM_PER_NS = 299.792458
@@ -116,6 +118,24 @@ TRUTH_VERTEX_FIELDS = {
 TRACK_Z0_WINDOW_MM = 3.0
 TRACK_SELECTION = ("on the reco HS vertex | valid HGTD time | "
                    f"|z0 - z_HS| < {TRACK_Z0_WINDOW_MM} mm")
+
+
+def settings_fingerprint(extrapolations: bool, tree_name: str) -> str:
+    """Hash of everything that changes what an ingest writes.
+
+    Recorded in every store file, so re-running after a field list or a track
+    selection changes rewrites the store instead of silently reusing it.
+    """
+    payload = {
+        "event": EVENT_FIELDS, "cells": CELL_FIELDS, "regions": CELL_REGION_FLAGS,
+        "tracks": TRACK_FIELDS, "jets": JET_FIELDS, "jet_matches": JET_MATCH_COUNTS,
+        "jet_collections": JET_COLLECTIONS, "reco_vtx": RECO_VERTEX_FIELDS,
+        "truth_vtx": TRUTH_VERTEX_FIELDS,
+        "extrapolation": TRACK_EXTRAPOLATION if extrapolations else None,
+        "track_selection": TRACK_SELECTION, "tree": tree_name,
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True,
+                                   default=str).encode()).hexdigest()[:16]
 
 
 @dataclass
@@ -220,9 +240,8 @@ def read_file(src: str, tree_name: str = "ntuple", extrapolations: bool = True
               ) -> FileArrays:
     """Reduce one ROOT file to store form: named columns, ragged blocks."""
     import awkward as ak
-    import uproot
 
-    tree = uproot.open(src)[tree_name]
+    tree = open_tree(src, tree_name)
     available = set(tree.keys())
     out = FileArrays(n_events=int(tree.num_entries))
 
@@ -366,7 +385,8 @@ def ingest_shard(sources: Sequence[str], dst: str, tree_name: str = "ntuple",
     warnings, block_info = write_compact(
         dst, data.events, data.blocks,
         attrs={"source_files": ", ".join(os.path.basename(s) for s in sources),
-               "tree": tree_name, "ingest": "src.pipeline.ingest_root"},
+               "tree": tree_name, "ingest": "src.pipeline.ingest_root",
+               "settings": settings_fingerprint(extrapolations, tree_name)},
         block_attrs=data.block_attrs, compression=compression, complevel=complevel)
 
     src_mb = sum(os.path.getsize(s) for s in sources) / 1e6
@@ -425,15 +445,21 @@ def ingest_directory(input_dir: str, output_dir: str, sample: str,
           f"{len(schemas[0].columns)} branches (consistent) "
           f"-> {len(groups)} store file(s), {workers} worker(s)")
 
+    fingerprint = settings_fingerprint(extrapolations, tree_name)
     todo, files_meta = [], []
     for i, group in enumerate(groups):
         dst = os.path.join(output_dir, f"{sample}_{i:03d}.h5")
         if os.path.exists(dst) and not overwrite:
             with h5py.File(dst, "r") as f:
+                existing = f.attrs.get("settings")
+                n_events = int(f.attrs["n_events"])
+            if existing == fingerprint:
                 files_meta.append({"file": os.path.basename(dst),
-                                   "n_events": int(f.attrs["n_events"])})
-            print(f"  {os.path.basename(dst)} exists, skipping")
-            continue
+                                   "n_events": n_events})
+                print(f"  {os.path.basename(dst)} is up to date, skipping")
+                continue
+            print(f"  {os.path.basename(dst)} was written with different ingest "
+                  f"settings ({existing} != {fingerprint}), rewriting")
         todo.append((group, dst, tree_name, extrapolations, compression, complevel))
 
     all_warnings: set = set()
@@ -465,7 +491,8 @@ def ingest_directory(input_dir: str, output_dir: str, sample: str,
                               source=os.path.abspath(input_dir),
                               extra={"ingest": "ingest_root", "tree": tree_name,
                                      "field_mapping": mapping,
-                                     "track_selection": TRACK_SELECTION})
+                                     "track_selection": TRACK_SELECTION,
+                                     "settings": fingerprint})
     src_gb = sum(m.get("src_mb", 0.0) for m in files_meta) / 1000
     dst_gb = sum(m.get("dst_mb", 0.0) for m in files_meta) / 1000
     n_events = sum(m["n_events"] for m in files_meta)
