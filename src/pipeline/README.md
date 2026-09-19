@@ -1,44 +1,43 @@
 # Block pipeline
 
-Config-driven data path and model assembly, replacing the four loader/processor
-pairs and the per-architecture branches in `scripts/train.py`.
-
-Adding an input (or a sample) is a YAML change, not a code change.
+Config reference for the data path. Adding an input, a sample or a cut is a
+YAML change, not a code change.
 
 ```
-raw R2H5 h5  --compact.py-->  event store  --blocks.py-->  selected ragged
+ROOT ntuple  --ingest_root.py-->  event store  --blocks.py-->  selected ragged
     --assemble.py-->  padded tensors + tf.data  --block_model.py-->  Keras model
 ```
 
 ## 1. Event store
 
-Raw files keep every collection as a dense `(n_events, n_slots)` float64
-structured array: cells use 144 of 1000 slots, tracks 35 of 200, jets 1.8 of 50.
-The event store drops invalid slots and stores one compressed column per
-field, giving **11–14x smaller files** with bit-identical values.
+One compressed column per field in a ragged (CSR) layout, so a model that
+reads HGTD tracks alone never pays for the calorimeter cells.
 
 ```bash
 python -m src.pipeline.ingest_root \
-    --input-dir ../Vertex_timing_HGTD_w_LAr \
+    --input-dir  /global/cfs/cdirs/m2616/liangyu/vertextiming/root/ttbar \
     --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar \
-    --sample ttbar
+    --sample ttbar --shards 8 --workers 8
 ```
 
 Layout inside each file:
 
 ```
-/events/<field>          (n_events,)      HSvertex_time, eventNumber, ...
+/events/<field>          (n_events,)      truth_vtx_time, reco_vtx_z, mu, ...
 /blocks/<block>/offsets  (n_events+1,)    CSR offsets
 /blocks/<block>/<field>  (n_items,)       one column per field
 ```
 
-The schema is read from the source file, so new R2H5 branches are carried
-through without touching the converter. Existing stores:
+Blocks: `cells`, `tracks`, `jets_emtopo`, `jets_pflow`, `reco_vertices`,
+`truth_vertices`.
 
-| sample | path | events | size |
-|---|---|---|---|
-| ttbar | `.../store/ttbar` | 46,100 | 502 MB (from 5.8 GB) |
-| vbf_hinv | `.../store/vbf_hinv` | 10,800 | 96 MB (from 1.4 GB) |
+Field names are ours, not the ntuple's; the mapping and the ingest settings
+fingerprint are recorded in `manifest.json`. Existing stores:
+
+| sample | events | size |
+|---|---|---|
+| ttbar | 199,700 | 15 GB (from 83 GB of ROOT) |
+| vbf_hinv | 112,400 | 7.6 GB (from 55 GB) |
 
 ## 2. Config reference
 
@@ -56,26 +55,26 @@ data:
       files: null                # null = every file in the manifest
   balance: true                  # equalise each sample's loss contribution
   sample_onehot: false           # append a one-hot sample tag to event features
-  target: HSvertex_time
-  event_features: [HSvertex_reco_x, HSvertex_reco_y, HSvertex_reco_z]   # [] drops the branch
+  target: truth_vtx_time
+  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]   # [] drops the branch
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
+  cache_dir: /pscratch/.../prepared_cache                # null disables caching
 
   inputs:                        # any subset of the presets below
     cells:
       preset: lar_cells
-      features: [eta, phi, barrel, layer, time, e, significance]   # optional subset
+      features: [eta, phi, region, layer, time, e, significance]  # optional subset
       max_items: 60
       min_items: 1               # events with fewer objects are dropped
       sort_by: [e, significance] # list = tie-break keys, most significant first
       descending: true
-      select:
-        - {field: layer, in: [1, 2, 3]}
-        - {field: e, min: 1.0}
+      select: [...]              # replaces the preset's cuts
+      select_extra:              # adds to them
         - time_quality: {n_sigma: 3.0, vertex_sigma: 175.0,
                          calibration: sigma_only_test_calibration.txt,
                          apply_calibration: false}
       padding: {time: 0.0}       # per-feature, in physical units
-      skip_normalization: [barrel, layer]
+      skip_normalization: [region, layer]
       pad_in: literal            # literal | normalized (see below)
       encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention,
                 attention_units: 32}
@@ -91,28 +90,35 @@ evaluation:
 
 ### Presets
 
-| preset | store block | features | default selection |
-|---|---|---|---|
-| `lar_cells` | `cells` | eta, phi, barrel, layer, time, e, significance | layer in {1,2,3} |
-| `antikt4_jets` | `jets` | pt, eta, phi, width | `selected == 1` |
-| `hs_tracks` | `tracks` | pt, eta, phi, d0, z0 | `is_good_from_hs == 1` |
-| `hgtd_tracks` | `hgtd_tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1` |
+| preset | block | features | default selection | max |
+|---|---|---|---|---|
+| `lar_cells` | `cells` | eta, phi, region, layer, time, e, significance | region in {EMB, EME}, layer in {1,2,3}, \|significance\| > 4, e > 1 GeV | 60 by (e, significance) |
+| `jets_emtopo` | `jets_emtopo` | pt, eta, phi, width | matched to >= 1 truth HS jet | 7 by pt |
+| `jets_pflow` | `jets_pflow` | same | same | 7 by pt |
+| `hs_tracks` | `tracks` | pt, eta, phi, d0, z0 | `on_hs_vertex == 1` | 30 by pt |
+| `hgtd_tracks` | `tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1`, 2.4 < \|eta\| < 4.0 | 30 by pt |
 
-Logical names resolve against the fields the store actually has (`barrel` finds
-either `Cell_Barrel` or `Cell_isEM_Barrel`). A name that resolves to nothing
-raises — it is never silently filled with zeros.
+`region` is 0 EM barrel, 1 EM endcap, 2 FCal, 3 HEC, 4 Tile. `time` is the
+time-of-flight-corrected cell time. Each preset also loads a few auxiliary
+fields (positions, quality flags, `dz_hs`, truth-match counts) that cuts can
+use without them becoming model inputs.
 
-Selection operators: `eq`, `ne`, `min`, `max`, `in`, `abs_max`, `abs_min`, plus
-the special `time_quality` cut. Every selection is applied to all events at
-once, not per event in a Python loop.
+Names resolve against the fields the store actually has, through the alias
+lists in `blocks.py`. A name that resolves to nothing raises — it is never
+silently filled with zeros.
+
+Selection operators: `eq`, `ne`, `min`, `max`, `in`, `abs_max`, `abs_min`,
+plus the special `time_quality` cut. All of a block's rules are combined into
+one mask and applied in a single pass over the whole sample.
 
 ### Pooling
 
 `attention`, `masked_average`, `average`, `max`, `sum`, `flatten`. The masked
-variants and `type: transformer` encoders automatically turn on the block's
-attention mask. `average` on a padded block pools the padding too — that is the
-legacy behaviour for jets and tracks, kept for comparability, and switching to
-`masked_average` is a one-line experiment.
+variants and `type: transformer` encoders turn the block's attention mask on
+automatically. Plain `average` pools the padded slots too, which for a block
+that is mostly padding (4 real jets in 7 slots) means the padding dominates —
+the presets use `masked_average` everywhere except the cell block, which uses
+attention pooling.
 
 ### Padding space
 

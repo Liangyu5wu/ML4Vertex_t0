@@ -2,77 +2,70 @@
 
 Guidance for Claude Code when working in this repository.
 
-## What this is
-
-Vertex time (t0) regression for ATLAS, from LAr calorimeter cell timing and
-HGTD track timing. See `README.md` for the architecture and
-`src/pipeline/README.md` for the config reference.
+Vertex time (t0) regression for ATLAS from LAr calorimeter and HGTD timing.
+`README.md` has the data chain, layout and commands; `src/pipeline/README.md`
+is the config reference. Read those first — this file is only what is not
+obvious from them.
 
 ## Environment
 
-`source setup.sh` — that is the whole setup. It creates/activates the uv venv,
+`source setup.sh` is the whole setup: it creates or activates the uv venv,
 adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
 
-- Everything is locked in `pyproject.toml` + `uv.lock` (Python 3.12,
-  TensorFlow 2.20, Keras 3.15). Change dependencies there, then
+- Dependencies live in `pyproject.toml` + `uv.lock`; after editing them run
   `source setup.sh --sync`.
-- **Never `module load tensorflow`** — the module's CUDA libraries land on
-  `LD_LIBRARY_PATH` and can shadow the wheels. `setup.sh` warns if one is loaded.
-- Never `pip install --user`; `PYTHONNOUSERSITE=1` is set to keep `~/.local`
-  out of the environment.
-
-## Running
-
-Use an interactive node rather than sbatch:
-
-```bash
-srun -A m2616_g -C gpu -q interactive -N 1 -n 1 -c 32 --gpus-per-node=1 -t 60 --pty bash
-# --gpus-per-node=4 -c 128 for the MirroredStrategy path
-```
-
-```bash
-python -m src.pipeline.ingest_root --input-dir <root dir> --output-dir <store> --sample <name>
-python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml [--datasets ttbar]
-python scripts/evaluate_blocks.py --model-dir <dir> --dataset <name>:<store> --split test
-```
-
-Three configs, differing only in `inputs:` — `lar_only`, `hgtd_only`,
-`lar_hgtd`. Models and results go outside the repo, under
-`/pscratch/sd/l/liangyu/vertextiming/models/`; compact data stores live on CFS
-at `/global/cfs/cdirs/m2616/liangyu/vertextiming/store/`.
+- **Never `module load tensorflow`** — the module's CUDA libraries stay on
+  `LD_LIBRARY_PATH` and can shadow the ones the wheels ship. `setup.sh` warns.
+- Never `pip install --user`; `PYTHONNOUSERSITE=1` keeps `~/.local` out.
+- CPU work goes to `-A m4956 -C cpu`; GPU work to `-A m2616_g -C gpu`
+  (`m2616`'s CPU hours are exhausted).
 
 ## Conventions
 
-- A new input type or sample is a **config** change, not a code change. If it
-  cannot be expressed in YAML, extend `src/pipeline/blocks.py` presets rather
-  than adding a parallel code path.
-- Per-event Python loops over the data are not acceptable; everything is
-  vectorised over the flat ragged arrays.
-- A feature name that does not resolve against the store must raise, never
-  silently become zero.
-- All figures go through `src/evaluation/plots.py` so style and palette stay
-  consistent. Read the `dataviz` skill before adding a new plot type.
+- A new input or sample is a **config** change. If it cannot be expressed in
+  YAML, extend the presets in `src/pipeline/blocks.py` rather than adding a
+  parallel code path.
+- No per-event Python loops over data: everything is vectorised over the flat
+  ragged arrays.
+- A field name that does not resolve against the store must raise, never
+  silently become zero. Productions rename branches; that is what the alias
+  tuples are for.
+- Anything expensive that depends only on settings gets a fingerprint and is
+  reused — the event store and the tensor cache both work this way. Extend
+  that pattern rather than adding a workflow engine.
+- All figures go through `src/evaluation/plots.py`. Read the `dataviz` skill
+  before adding a plot type.
 - Models are saved as weights + `model_spec.json` and rebuilt on load; do not
   reintroduce whole-model serialization.
+- Store files are written to a temporary name and renamed, so an interrupted
+  run never leaves a half-written store that still opens.
 
 ## Known data issues
 
-- **HGTD track truncation.** R2H5 stores at most 200 HGTD tracks per event in
-  container order (not pt-sorted); 15.7% of ttbar and 8.8% of VBF events hit
-  that cap, so "top 30 by pt" is a top-30 of an arbitrary subset. Raise the cap
-  or sort before writing when the samples are regenerated.
-- **Forward cells.** 7.3% of cells in EM layers 1-3 have neither
-  `Cell_isEM_Barrel` nor `Cell_isEM_EndCap` set — they sit at |eta| up to 4.8
-  with high energy (FCal). They are currently treated as endcap, including in
-  the time-quality cut, whose calibration table has no FCal entries.
-- **Quantised cell energy.** ~10% of cells share an energy exactly with another
-  cell in the same event, so any top-N selection needs an explicit tie-break.
-- The repository lives on scratch, which purges unused files — this has already
-  corrupted the git object store once. Keep the branch pushed.
+Found while validating the ingest; the first two are handled in code, the rest
+are open.
 
-## Repository state
+- `RecoVtx_isPU` is filled as a running sum across events in both productions
+  (the producer never clears the vector), so it is excluded. The
+  per-collection count check in `ingest_root` would reject it anyway.
+- `BCID` is always 0 and `distFrontBunchTrain` is a constant uninitialised
+  value; both are excluded rather than kept as dead columns.
+- **Cell energies are quantised**: ~10% of cells share an energy exactly with
+  another cell in the same event, so any top-N selection needs an explicit
+  tie-break (the cell preset sorts on `(e, significance)`).
+- **No calibration outside the EM calorimeter.** `calibration_data/*.txt` has
+  sigma only for EMB1-3 and EME1-3. FCal, HEC and Tile cells (18% of the
+  store, |eta| up to 4.8) fall back to a 1000 ps resolution, which effectively
+  exempts them from the time-quality cut. The default cell selection excludes
+  them; whether VBF's forward topology wants them included is open.
+- The two samples come from different producers: the VBF ntuple has 241
+  branches and ttbar 172, differing in track hit-count details (aliased) and
+  VBF-only jet substructure. The 164 common branches cover everything used.
 
-The legacy pipeline (four loader/processor pairs, per-architecture model
-classes, `scripts/train.py`) was removed in this branch's history; the block
-pipeline is the only code path. `baseline_analysis/` is a standalone tool that
-still references the older LAr dataset and has not been migrated.
+## Repository
+
+The block pipeline is the only code path; the previous loader/processor
+classes and per-architecture models were removed in this branch's history
+(`git log --diff-filter=D --name-only` to find them). The repository lives on
+scratch, which purges unused files and has already corrupted the git object
+store once — keep the branch pushed.
