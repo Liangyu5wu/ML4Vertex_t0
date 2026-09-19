@@ -145,3 +145,6 @@ logs/
 # Temporary files
 *.tmp
 *.bak
+
+# Jupyter
+.ipynb_checkpoints/
