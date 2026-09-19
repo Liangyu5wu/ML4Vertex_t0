@@ -1,17 +1,13 @@
-"""Evaluation modules.
+"""Metrics and plots.
 
-Imported lazily: pulling in metrics must not require the plotting stack, which
-drags in matplotlib/seaborn and is not always present on a compute node.
+``plots`` is imported lazily so that computing metrics does not pull in
+matplotlib.
 """
+
+from .summary import format_summary, summarize
 
 
 def __getattr__(name):
-    if name == "Evaluator":
-        from .evaluator import Evaluator
-        return Evaluator
-    if name == "Visualizer":
-        from .visualizer import Visualizer
-        return Visualizer
     if name == "plots":
         import importlib
         # importlib, not `from . import plots`: the latter re-enters __getattr__.
@@ -19,4 +15,4 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["Evaluator", "Visualizer", "plots"]
+__all__ = ["summarize", "format_summary", "plots"]

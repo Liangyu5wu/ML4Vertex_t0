@@ -1,52 +1,5 @@
-"""Model architecture modules.
+"""Model construction: one builder, driven by the input-block specs."""
 
-Organized structure:
-- common/: Shared components (base classes, layers, utilities)
-- dnn/: DNN model implementations
-- transformer/: Transformer model implementations
-"""
+from .block_model import build_model, load_model, model_spec_from_assembly, save_model
 
-# Import from reorganized structure
-from .common import (
-    BaseVertexModel,
-    MaskedAttentionPooling,
-    MaskedGlobalAveragePooling1D,
-    FeatureEncoder,
-    PositionalEncoding,
-    MultiHeadSelfAttention,
-    TransformerBlock
-)
-
-from .dnn import (
-    DNNModel,
-    BaselineGuidedDNN,
-    MultiInputDNNModel,
-    HGTDMultiInputDNNModel,
-    HGTDOnlyDNNModel
-)
-
-from .transformer import (
-    TransformerModel,
-    MultiInputTransformerModel
-)
-
-__all__ = [
-    # Common components
-    'BaseVertexModel',
-    'MaskedAttentionPooling',
-    'MaskedGlobalAveragePooling1D',
-    'FeatureEncoder',
-    'PositionalEncoding',
-    'MultiHeadSelfAttention',
-    'TransformerBlock',
-    # DNN models
-    'DNNModel',
-    'BaselineGuidedDNN',
-    'MultiInputDNNModel',
-    'HGTDMultiInputDNNModel',
-    'HGTDOnlyDNNModel',
-    # Transformer models
-    'TransformerModel',
-    'MultiInputTransformerModel'
-]
-
+__all__ = ["build_model", "load_model", "model_spec_from_assembly", "save_model"]
