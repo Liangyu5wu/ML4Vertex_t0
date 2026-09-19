@@ -66,10 +66,22 @@ def fit_core_resolution(errors: np.ndarray, method: str = "double_gaussian",
     return out
 
 
+def split_prediction(y_pred: np.ndarray):
+    """(mean, sigma) from a model output; sigma is None unless it predicts one."""
+    y_pred = np.asarray(y_pred)
+    if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+        return y_pred[:, 0], np.exp(0.5 * y_pred[:, 1])
+    return y_pred.reshape(-1), None
+
+
 def summarize(y_true: np.ndarray, y_pred: np.ndarray,
-              core_window: float = 120.0,
+              core_window: float = 120.0, sigma: Optional[np.ndarray] = None,
               fit: Optional[dict] = None) -> Dict[str, float]:
-    """RMSE/MAE plus the core fraction, core width and (optionally) a Gaussian fit."""
+    """RMSE/MAE plus the core fraction, core width and (optionally) a Gaussian fit.
+
+    With ``sigma`` the summary also reports whether the predicted uncertainty
+    is honest: the pull (error / sigma) should have unit width if it is.
+    """
     errors = np.asarray(y_pred, dtype=np.float64) - np.asarray(y_true, dtype=np.float64)
     core = errors[np.abs(errors) < core_window]
     out = {
@@ -80,6 +92,14 @@ def summarize(y_true: np.ndarray, y_pred: np.ndarray,
         "core_fraction": float(len(core) / len(errors)) if len(errors) else 0.0,
         "core_std": float(core.std()) if len(core) else float("nan"),
     }
+    if sigma is not None:
+        sigma = np.asarray(sigma, dtype=np.float64)
+        pull = errors / np.maximum(sigma, 1e-9)
+        out["sigma_median"] = float(np.median(sigma))
+        out["pull_std"] = float(np.std(pull[np.abs(pull) < 5]))
+        # the events the model says it knows best
+        good = sigma < np.quantile(sigma, 0.5)
+        out["best_half_core_std"] = float(errors[good][np.abs(errors[good]) < core_window].std())
     if fit:
         try:
             out["fit"] = fit_core_resolution(errors, **fit)
@@ -92,6 +112,10 @@ def format_summary(name: str, stats: Dict[str, float]) -> str:
     line = (f"{name:>14s}  n={stats['n_events']:6d}  RMSE={stats['rmse']:7.2f}  "
             f"MAE={stats['mae']:7.2f}  bias={stats['bias']:+6.2f}  "
             f"core({stats['core_fraction'] * 100:.0f}%)_std={stats['core_std']:6.2f}")
+    if "sigma_median" in stats:
+        line += (f"  pred_sigma={stats['sigma_median']:6.1f}"
+                 f"  pull={stats['pull_std']:4.2f}"
+                 f"  best50%_std={stats['best_half_core_std']:5.1f}")
     fit = stats.get("fit")
     if isinstance(fit, dict) and "sigma" in fit:
         line += f"  fit_sigma={fit['sigma']:6.2f}"

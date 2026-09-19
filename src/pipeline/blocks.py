@@ -65,10 +65,13 @@ class BlockSpec:
     descending: bool = True
     max_items: int = 30
     min_items: int = 0
-    # "normalized": configured pad value is pushed through the fitted scaler.
-    # "literal":    configured pad value is written as-is into normalized data
-    #               (legacy cell behaviour; harmless when a mask is used).
-    pad_in: str = "normalized"
+    # Where the pad value lives.  "literal" writes it straight into normalized
+    # data, so the default pad of 0.0 makes a padded slot look like an average
+    # object: invisible to the pooling mask and harmless to any normalization
+    # layer that sees the padded slots.  "normalized" pushes a value in
+    # physical units through the fitted scaler instead, which is only useful
+    # if a block deliberately wants its padding to be an outlier.
+    pad_in: str = "literal"
     encoder: dict = field(default_factory=dict)
     emit_mask: bool = False
 
@@ -135,22 +138,26 @@ def _cells_preset() -> BlockSpec:
 
 
 def _jet_preset(source: str) -> BlockSpec:
-    """Jets, selected by matching to a truth hard-scatter jet."""
+    """Jets, ordered by pt.
+
+    There is no hard-scatter selection here on purpose: the only handle that
+    identifies a jet as coming from the hard scatter is truth matching, which
+    is not available in data. The truth-match counts stay loaded as auxiliary
+    fields for labelling studies and must never become inputs or cuts.
+    """
     return BlockSpec(
         name=source,
         source=source,
         features=[
-            Feature("pt", ("pt",), pad=-1.0),
-            Feature("eta", ("eta",), pad=-999.0),
-            Feature("phi", ("phi",), pad=-999.0),
-            Feature("width", ("width",), pad=-1.0),
+            Feature("pt", ("pt",)), Feature("eta", ("eta",)),
+            Feature("phi", ("phi",)), Feature("width", ("width",)),
         ],
         aux=[Feature("m", ("m",)), Feature("n_constituents", ("n_constituents",)),
              Feature("n_truth_hs_jets", ("n_truth_hs_jets",)),
              Feature("n_truth_itpu_jets", ("n_truth_itpu_jets",))],
-        selections=[{"field": "n_truth_hs_jets", "min": 1}],
+        selections=[],
         sort_by="pt",
-        max_items=7,
+        max_items=10,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
                  "batch_norm": True, "pooling": "masked_average"},
     )
@@ -162,11 +169,9 @@ def _tracks_preset() -> BlockSpec:
         name="tracks",
         source="tracks",
         features=[
-            Feature("pt", ("pt",), pad=-1.0),
-            Feature("eta", ("eta",), pad=-999.0),
-            Feature("phi", ("phi",), pad=-999.0),
-            Feature("d0", ("d0",), pad=-999.0),
-            Feature("z0", ("z0",), pad=-999.0),
+            Feature("pt", ("pt",)), Feature("eta", ("eta",)),
+            Feature("phi", ("phi",)), Feature("d0", ("d0",)),
+            Feature("z0", ("z0",)),
         ],
         aux=[Feature("on_hs_vertex", ("on_hs_vertex",)),
              Feature("dz_hs", ("dz_hs",)),
@@ -182,18 +187,22 @@ def _tracks_preset() -> BlockSpec:
 
 
 def _hgtd_tracks_preset() -> BlockSpec:
-    """The same track collection, restricted to HGTD acceptance and timing."""
+    """The same track collection, restricted to HGTD acceptance and timing.
+
+    The z-compatibility cut is what makes the candidate set usable: without it
+    ~800 timed tracks per event compete for 30 slots and only 22% of the ones
+    actually from the hard scatter survive the pt ordering; with it the
+    candidates drop to ~29 and the recall is 94%. Both z0 and the vertex z
+    come from reconstruction, so the cut is available in data.
+    """
     return BlockSpec(
         name="hgtd_tracks",
         source="tracks",
         features=[
-            Feature("pt", ("pt",), pad=-1.0),
-            Feature("eta", ("eta",), pad=-999.0),
-            Feature("phi", ("phi",), pad=-999.0),
-            Feature("d0", ("d0",), pad=-999.0),
-            Feature("z0", ("z0",), pad=-999.0),
-            Feature("time", ("time",), pad=0.0),
-            Feature("time_res", ("time_res",), pad=-999.0),
+            Feature("pt", ("pt",)), Feature("eta", ("eta",)),
+            Feature("phi", ("phi",)), Feature("d0", ("d0",)),
+            Feature("z0", ("z0",)), Feature("time", ("time",)),
+            Feature("time_res", ("time_res",)),
         ],
         aux=[Feature("has_valid_time", ("has_valid_time",)),
              Feature("on_hs_vertex", ("on_hs_vertex",)),
@@ -202,11 +211,39 @@ def _hgtd_tracks_preset() -> BlockSpec:
             {"field": "has_valid_time", "eq": 1},
             {"field": "eta", "abs_min": 2.4},      # HGTD acceptance
             {"field": "eta", "abs_max": 4.0},
+            {"field": "dz_hs", "abs_max": 2.0},    # mm, from the reco HS vertex
         ],
         sort_by="pt",
         max_items=30,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
                  "batch_norm": True, "pooling": "masked_average"},
+    )
+
+
+def _vertices_preset() -> BlockSpec:
+    """Reconstructed vertices, most significant first.
+
+    The hard-scatter vertex is whichever has the largest sum pt^2, and that
+    choice is wrong in 5% of ttbar and 19% of VBF events -- which is where
+    most of the tail comes from. Giving the network the competing vertices
+    lets it recognise when the anchor it was handed is doubtful.
+    """
+    return BlockSpec(
+        name="vertices",
+        source="reco_vertices",
+        features=[
+            Feature("z", ("z",), pad=0.0),
+            Feature("sum_pt2", ("sum_pt2",), pad=0.0),
+            Feature("time", ("time",), pad=0.0),
+            Feature("time_res", ("time_res",), pad=-1.0),
+            Feature("is_hs", ("is_hs",), pad=0.0, normalize=False),
+            Feature("has_valid_time", ("has_valid_time",), pad=0.0, normalize=False),
+        ],
+        selections=[],
+        sort_by="sum_pt2",
+        max_items=10,
+        encoder={"units": [32, 16], "dropout": 0.1, "activation": "relu",
+                 "norm": "layer", "pooling": "masked_average"},
     )
 
 
@@ -216,6 +253,7 @@ PRESETS = {
     "jets_pflow": lambda: _jet_preset("jets_pflow"),
     "hs_tracks": _tracks_preset,
     "hgtd_tracks": _hgtd_tracks_preset,
+    "vertices": _vertices_preset,
 }
 
 
@@ -321,7 +359,7 @@ def _time_quality_mask(cols: Dict[str, np.ndarray], opts: dict) -> np.ndarray:
     ``apply_calibration`` the per-bin mean offset is subtracted from the time
     first.  Vectorised over every cell in the sample at once.
     """
-    calib = load_calibration(opts.get("calibration", "sigma_only_test_calibration.txt"))
+    calib = load_calibration(opts.get("calibration", "HStrackmatching_calibration.txt"))
     region = cols["region"].astype(np.int32)
     layer = cols["layer"].astype(np.int32)
     energy = cols["e"].astype(np.float64)

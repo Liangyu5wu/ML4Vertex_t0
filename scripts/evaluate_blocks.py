@@ -25,7 +25,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.evaluation.summary import format_summary, summarize
+from src.evaluation.summary import format_summary, split_prediction, summarize
 from src.models.block_model import load_model
 from src.pipeline.assemble import AssemblySpec, load_norm, prepare
 
@@ -80,25 +80,29 @@ def main():
         y_true = data.targets[args.split]
         prov = data.provenance[args.split]
 
-    y_pred = model.predict(inputs, batch_size=args.batch_size, verbose=0).flatten()
+    y_pred, sigma = split_prediction(
+        model.predict(inputs, batch_size=args.batch_size, verbose=0))
     fit_cfg = cfg.get("evaluation", {}).get("fit")
 
     names = data.dataset_names
     print("\n" + "=" * 74)
     print(f"{os.path.basename(os.path.normpath(model_dir))}  "
           f"split={args.split}  samples={names}")
-    metrics = {"all": summarize(y_true, y_pred, fit=fit_cfg)}
+    metrics = {"all": summarize(y_true, y_pred, sigma=sigma, fit=fit_cfg)}
     print(format_summary("all", metrics["all"]))
     if len(names) > 1:
         for i, name in enumerate(names):
             m = prov["dataset_id"] == i
-            metrics[name] = summarize(y_true[m], y_pred[m], fit=fit_cfg)
+            metrics[name] = summarize(y_true[m], y_pred[m],
+                                      sigma=None if sigma is None else sigma[m],
+                                      fit=fit_cfg)
             print(format_summary(name, metrics[name]))
     print("=" * 74)
 
     tag = args.tag or f"{'_'.join(names)}_{args.split}"
     np.savez(os.path.join(model_dir, f"predictions_{tag}.npz"),
              y_true=y_true, y_pred=y_pred, errors=y_pred - y_true,
+             **({} if sigma is None else {"sigma": sigma}),
              dataset_id=prov["dataset_id"], event_number=prov["event_number"],
              file_index=prov["file_index"], dataset_names=np.array(names))
     with open(os.path.join(model_dir, f"metrics_{tag}.json"), "w") as fh:

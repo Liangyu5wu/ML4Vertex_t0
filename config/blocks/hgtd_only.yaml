@@ -22,14 +22,19 @@ data:
       preset: hgtd_tracks
       max_items: 30
       min_items: 1
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
+      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
+
+    vertices:
+      preset: vertices
+      max_items: 10
+      encoder: {units: [32, 16], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 
 head:
   units: [128, 64, 32, 16]
   dropout: [0.2, 0.1, 0.1, 0.1]
   batch_norm: false
 
-loss: {type: huber, delta: 100.0}
+loss: {type: gaussian_nll, beta: 0.5, sigma_init: 100.0}
 optimizer: {type: adam, learning_rate: 0.001}
 
 training:

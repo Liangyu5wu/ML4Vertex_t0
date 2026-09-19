@@ -22,7 +22,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.evaluation.summary import format_summary, summarize
+from src.evaluation.summary import format_summary, split_prediction, summarize
 from src.models.block_model import build_model, model_spec_from_assembly, save_model
 from src.pipeline.assemble import (AssemblySpec, make_tf_dataset, prepare, save_norm)
 from src.runtime import get_strategy, resolve_batch_size
@@ -133,22 +133,25 @@ def main():
 
     # Score the test split as a whole and per sample.
     test_ds = make_tf_dataset(data, "test", batch_size, use_weights=False)
-    y_pred = model.predict(test_ds, verbose=0).flatten()
+    y_pred, sigma = split_prediction(model.predict(test_ds, verbose=0))
     y_true = data.targets["test"]
     fit_cfg = cfg.get("evaluation", {}).get("fit")
 
     print("\n" + "=" * 74)
-    metrics = {"all": summarize(y_true, y_pred, fit=fit_cfg)}
+    metrics = {"all": summarize(y_true, y_pred, sigma=sigma, fit=fit_cfg)}
     print(format_summary("all", metrics["all"]))
     if len(data.dataset_names) > 1:
         for name in data.dataset_names:
             m = data.dataset_mask("test", name)
-            metrics[name] = summarize(y_true[m], y_pred[m], fit=fit_cfg)
+            metrics[name] = summarize(y_true[m], y_pred[m],
+                                      sigma=None if sigma is None else sigma[m],
+                                      fit=fit_cfg)
             print(format_summary(name, metrics[name]))
     print("=" * 74)
 
     np.savez(os.path.join(model_dir, "predictions_test.npz"),
              y_true=y_true, y_pred=y_pred, errors=y_pred - y_true,
+             **({} if sigma is None else {"sigma": sigma}),
              dataset_id=data.provenance["test"]["dataset_id"],
              event_number=data.provenance["test"]["event_number"],
              file_index=data.provenance["test"]["file_index"],

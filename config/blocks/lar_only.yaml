@@ -26,26 +26,31 @@ data:
         - time_quality:
             n_sigma: 3.0
             vertex_sigma: 175.0          # HS vertex time resolution [ps]
-            calibration: sigma_only_test_calibration.txt
+            calibration: HStrackmatching_calibration.txt
             apply_calibration: false
       encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention, attention_units: 32}
 
     jets_emtopo:
       preset: jets_emtopo
-      max_items: 7
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
+      max_items: 10
+      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 
     tracks:
       preset: hs_tracks
       max_items: 30
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
+      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
+
+    vertices:
+      preset: vertices
+      max_items: 10
+      encoder: {units: [32, 16], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 
 head:
   units: [128, 64, 32, 16]
   dropout: [0.2, 0.1, 0.1, 0.1]
   batch_norm: false
 
-loss: {type: huber, delta: 100.0}
+loss: {type: gaussian_nll, beta: 0.5, sigma_init: 100.0}
 optimizer: {type: adam, learning_rate: 0.001}
 
 training:

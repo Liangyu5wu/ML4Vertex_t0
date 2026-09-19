@@ -92,3 +92,10 @@ Three configs, differing only in their `inputs:` block: `lar_only`,
 `hgtd_only`, `lar_hgtd`. A run writes the weights, `model_spec.json`,
 `norm_params.pkl`, the config, `history.csv`, `metrics.json`,
 `predictions_test.npz` and a plot set into its model directory.
+
+For an unattended long run, the same command under `sbatch`:
+
+```bash
+sbatch -A m2616_g -C gpu -q shared -N 1 -c 32 --gpus-per-task=1 -t 08:00:00 \
+    --wrap "cd $PWD && source setup.sh && python scripts/train_blocks.py --config <cfg>"
+```

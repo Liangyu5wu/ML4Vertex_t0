@@ -17,6 +17,7 @@ import os
 from typing import Dict, List, Optional
 
 import keras
+import numpy as np
 from keras import layers, ops
 
 from .layers import AttentionPooling, MaskedAveragePooling, TransformerBlock
@@ -37,14 +38,25 @@ def _as_list(value, n: int, what: str) -> List:
 
 
 def _mlp(x, cfg: dict, name: str):
+    """Dense stack. `norm` is "layer" (default), "batch" or "none".
+
+    Layer normalization is the default for a reason: batch normalization over
+    a padded set normalizes across the item axis too, so its statistics are
+    computed over the padded slots as well -- and a jet block is two thirds
+    padding. Layer norm acts on each object alone and is blind to padding.
+    """
     units = list(cfg.get("units", [64, 32]))
     dropouts = _as_list(cfg.get("dropout", 0.1), len(units), f"{name} dropout")
     activation = cfg.get("activation", "relu")
-    batch_norm = bool(cfg.get("batch_norm", False))
+    norm = cfg.get("norm", "batch" if cfg.get("batch_norm") else "layer")
     for i, (u, d) in enumerate(zip(units, dropouts)):
         x = layers.Dense(u, activation=activation, name=f"{name}_dense_{i}")(x)
-        if batch_norm:
+        if norm == "layer":
+            x = layers.LayerNormalization(name=f"{name}_ln_{i}")(x)
+        elif norm == "batch":
             x = layers.BatchNormalization(name=f"{name}_bn_{i}")(x)
+        elif norm not in (None, "none"):
+            raise ValueError(f"{name}: unknown norm {norm!r}")
         if d:
             x = layers.Dropout(d, name=f"{name}_dropout_{i}")(x)
     return x
@@ -137,19 +149,62 @@ def build_model(model_spec: dict) -> keras.Model:
     x = _mlp(x, {"units": head.get("units", [128, 64, 32, 16]),
                  "dropout": head.get("dropout", 0.1),
                  "activation": head.get("activation", "relu"),
-                 "batch_norm": head.get("batch_norm", False)}, "head")
-    output = layers.Dense(1, name="vertex_time")(x)
+                 "norm": head.get("norm", "none")}, "head")
+
+    loss_cfg = dict(model_spec.get("loss") or {})
+    heteroscedastic = loss_cfg.get("type") == "gaussian_nll"
+    if heteroscedastic:
+        # Two units: the mean and log(sigma^2).  The width starts at the scale
+        # of the target rather than at 1, because a model that begins by
+        # claiming picosecond precision on hundred-picosecond residuals spends
+        # its first epochs undoing that instead of learning.
+        sigma0 = float(loss_cfg.get("sigma_init", 100.0))
+        output = layers.Dense(
+            2, name="vertex_time",
+            bias_initializer=keras.initializers.Constant([0.0, 2 * np.log(sigma0)]))(x)
+    else:
+        output = layers.Dense(1, name="vertex_time")(x)
 
     model = keras.Model(inputs=inputs, outputs=output,
                         name=model_spec.get("name", "block_model"))
     model.compile(optimizer=_make_optimizer(model_spec.get("optimizer") or {}),
-                  loss=_make_loss(model_spec.get("loss") or {}),
-                  metrics=[keras.metrics.RootMeanSquaredError(name="rmse"),
+                  loss=_make_loss(loss_cfg),
+                  metrics=[_rmse_of_mean, _mae_of_mean] if heteroscedastic else
+                          [keras.metrics.RootMeanSquaredError(name="rmse"),
                            keras.metrics.MeanAbsoluteError(name="mae")],
                   # Sample weights steer the loss; reported metrics stay
                   # unweighted so they remain comparable across mixtures.
                   weighted_metrics=[])
     return model
+
+
+@keras.saving.register_keras_serializable(package="ml4vertex")
+def gaussian_nll(y_true, y_pred, beta: float = 0.5):
+    """Negative log-likelihood of a Gaussian whose width the model predicts.
+
+    ``y_pred`` is (mean, log variance). The beta-weighting of Seitzer et al.
+    multiplies each term by a detached sigma^(2*beta): at beta=0 this is the
+    plain likelihood, which early in training is minimised by declaring
+    everything uncertain; at beta=1 it reduces to mean squared error. The
+    default 0.5 trains without a warm-up phase.
+    """
+    mean, log_var = y_pred[..., :1], y_pred[..., 1:]
+    y_true = ops.reshape(y_true, ops.shape(mean))
+    nll = 0.5 * (ops.exp(-log_var) * ops.square(y_true - mean) + log_var)
+    if beta:
+        nll = nll * ops.stop_gradient(ops.exp(beta * log_var))
+    return ops.mean(nll, axis=-1)
+
+
+@keras.saving.register_keras_serializable(package="ml4vertex")
+def _rmse_of_mean(y_true, y_pred):
+    return ops.sqrt(ops.mean(ops.square(
+        ops.reshape(y_true, (-1,)) - y_pred[..., 0])))
+
+
+@keras.saving.register_keras_serializable(package="ml4vertex")
+def _mae_of_mean(y_true, y_pred):
+    return ops.mean(ops.abs(ops.reshape(y_true, (-1,)) - y_pred[..., 0]))
 
 
 def _make_loss(cfg: dict):
@@ -158,6 +213,9 @@ def _make_loss(cfg: dict):
         return kind
     if kind == "huber":
         return keras.losses.Huber(delta=float(cfg.get("delta", 100.0)))
+    if kind == "gaussian_nll":
+        beta = float(cfg.get("beta", 0.5))
+        return lambda y, p: gaussian_nll(y, p, beta=beta)
     raise ValueError(f"unsupported loss {kind!r}")
 
 
