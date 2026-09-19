@@ -58,7 +58,7 @@ def collect_root(path: str, tree: Optional[str] = None) -> FileSchema:
 
 
 def collect_h5(path: str) -> FileSchema:
-    """Field inventory of a raw R2H5 file or a event store file."""
+    """Field inventory of a raw R2H5 file or an event store file."""
     import h5py
 
     columns: Dict[str, str] = {}

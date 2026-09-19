@@ -149,7 +149,9 @@ def load_sample(source: DatasetSource, spec: AssemblySpec,
     event_ids = np.flatnonzero(keep)
     events = {
         "target": store.event_column(spec.target)[event_ids].astype(np.float32),
-        "event_number": store.event_column("eventNumber")[event_ids],
+        "event_number": store.event_column(
+            "event_number" if "event_number" in store.event_fields else "eventNumber"
+        )[event_ids],
         "file_index": store.file_index()[event_ids],
     }
     if spec.event_features:

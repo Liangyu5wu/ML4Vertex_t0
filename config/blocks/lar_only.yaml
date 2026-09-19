@@ -9,12 +9,12 @@ model_dir: /pscratch/sd/l/liangyu/vertextiming/models/lar_only
 
 data:
   datasets:
-    - {name: ttbar,    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar}
-    - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/vbf_hinv}
+    - {name: ttbar,    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar}
+    - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}
   balance: true            # equalise each sample's contribution to the loss
   sample_onehot: false     # tell the network which sample an event came from
-  target: HSvertex_time
-  event_features: [HSvertex_reco_x, HSvertex_reco_y, HSvertex_reco_z]
+  target: truth_vtx_time
+  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
 
   inputs:
@@ -22,8 +22,7 @@ data:
       preset: lar_cells
       max_items: 60
       min_items: 1
-      select:
-        - {field: layer, in: [1, 2, 3]}
+      select_extra:
         - time_quality:
             n_sigma: 3.0
             vertex_sigma: 175.0          # HS vertex time resolution [ps]
@@ -31,8 +30,8 @@ data:
             apply_calibration: false
       encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention, attention_units: 32}
 
-    jets:
-      preset: antikt4_jets
+    jets_emtopo:
+      preset: jets_emtopo
       max_items: 7
       encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
 

@@ -97,23 +97,33 @@ class BlockSpec:
 # --------------------------------------------------------------------------
 
 def _cells_preset() -> BlockSpec:
+    """LAr calorimeter cells.
+
+    The store keeps every cell the ntuple has (down to |significance| ~ 2);
+    the selection here is the one the earlier models were trained with, so a
+    config that changes nothing reproduces the previous input.
+    """
     return BlockSpec(
         name="cells",
         source="cells",
         features=[
-            Feature("eta", ("Cell_eta",), pad=0.0),
-            Feature("phi", ("Cell_phi",), pad=0.0),
-            # Older R2H5 output called this Cell_Barrel.
-            Feature("barrel", ("Cell_Barrel", "Cell_isEM_Barrel"), pad=-1.0, normalize=False),
-            Feature("layer", ("Cell_layer",), pad=0.0, normalize=False),
-            Feature("time", ("Cell_time_TOF_corrected",), pad=0.0),
-            Feature("e", ("Cell_e",), pad=0.0),
-            Feature("significance", ("Cell_significance",), pad=0.0),
+            Feature("eta", ("eta",), pad=0.0),
+            Feature("phi", ("phi",), pad=0.0),
+            Feature("region", ("region",), pad=-1.0, normalize=False),
+            Feature("layer", ("layer",), pad=0.0, normalize=False),
+            Feature("time", ("time_tof",), pad=0.0),
+            Feature("e", ("e",), pad=0.0),
+            Feature("significance", ("significance",), pad=0.0),
         ],
-        aux=[
-            Feature("x", ("Cell_x",)), Feature("y", ("Cell_y",)), Feature("z", ("Cell_z",)),
+        aux=[Feature("x", ("x",)), Feature("y", ("y",)), Feature("z", ("z",)),
+             Feature("time_raw", ("time",)), Feature("total_noise", ("total_noise",)),
+             Feature("quality", ("quality",)), Feature("sampling", ("sampling",))],
+        selections=[
+            {"field": "region", "in": [0, 1]},     # EM barrel and endcap
+            {"field": "layer", "in": [1, 2, 3]},
+            {"field": "significance", "abs_min": 4.0},
+            {"field": "e", "min": 1.0},            # GeV
         ],
-        selections=[{"field": "layer", "in": [1, 2, 3]}],
         sort_by=["e", "significance"],
         max_items=60,
         min_items=1,
@@ -124,18 +134,21 @@ def _cells_preset() -> BlockSpec:
     )
 
 
-def _jets_preset() -> BlockSpec:
+def _jet_preset(source: str) -> BlockSpec:
+    """Jets, selected by matching to a truth hard-scatter jet."""
     return BlockSpec(
-        name="jets",
-        source="jets",
+        name=source,
+        source=source,
         features=[
-            Feature("pt", ("AntiKt4EMTopoJets_pt",), pad=-1.0),
-            Feature("eta", ("AntiKt4EMTopoJets_eta",), pad=-999.0),
-            Feature("phi", ("AntiKt4EMTopoJets_phi",), pad=-999.0),
-            Feature("width", ("AntiKt4EMTopoJets_width",), pad=-1.0),
+            Feature("pt", ("pt",), pad=-1.0),
+            Feature("eta", ("eta",), pad=-999.0),
+            Feature("phi", ("phi",), pad=-999.0),
+            Feature("width", ("width",), pad=-1.0),
         ],
-        aux=[Feature("selected", ("AntiKt4EMTopoJets_selected",))],
-        selections=[{"field": "selected", "eq": 1}],
+        aux=[Feature("m", ("m",)), Feature("n_constituents", ("n_constituents",)),
+             Feature("n_truth_hs_jets", ("n_truth_hs_jets",)),
+             Feature("n_truth_itpu_jets", ("n_truth_itpu_jets",))],
+        selections=[{"field": "n_truth_hs_jets", "min": 1}],
         sort_by="pt",
         max_items=7,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
@@ -144,18 +157,23 @@ def _jets_preset() -> BlockSpec:
 
 
 def _tracks_preset() -> BlockSpec:
+    """Tracks assigned to the reconstructed hard-scatter vertex."""
     return BlockSpec(
         name="tracks",
         source="tracks",
         features=[
-            Feature("pt", ("Track_pt",), pad=-1.0),
-            Feature("eta", ("Track_eta",), pad=-999.0),
-            Feature("phi", ("Track_phi",), pad=-999.0),
-            Feature("d0", ("Track_d0",), pad=-999.0),
-            Feature("z0", ("Track_z0",), pad=-999.0),
+            Feature("pt", ("pt",), pad=-1.0),
+            Feature("eta", ("eta",), pad=-999.0),
+            Feature("phi", ("phi",), pad=-999.0),
+            Feature("d0", ("d0",), pad=-999.0),
+            Feature("z0", ("z0",), pad=-999.0),
         ],
-        aux=[Feature("is_good_from_hs", ("Track_isGoodFromHS",))],
-        selections=[{"field": "is_good_from_hs", "eq": 1}],
+        aux=[Feature("on_hs_vertex", ("on_hs_vertex",)),
+             Feature("dz_hs", ("dz_hs",)),
+             Feature("has_valid_time", ("has_valid_time",)),
+             Feature("reco_vtx_weight", ("reco_vtx_weight",)),
+             Feature("truth_prob", ("truth_prob",))],
+        selections=[{"field": "on_hs_vertex", "eq": 1}],
         sort_by="pt",
         max_items=30,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
@@ -164,22 +182,27 @@ def _tracks_preset() -> BlockSpec:
 
 
 def _hgtd_tracks_preset() -> BlockSpec:
+    """The same track collection, restricted to HGTD acceptance and timing."""
     return BlockSpec(
         name="hgtd_tracks",
-        source="hgtd_tracks",
+        source="tracks",
         features=[
-            Feature("pt", ("Track_pt",), pad=-1.0),
-            Feature("eta", ("Track_eta",), pad=-999.0),
-            Feature("phi", ("Track_phi",), pad=-999.0),
-            Feature("d0", ("Track_d0",), pad=-999.0),
-            Feature("z0", ("Track_z0",), pad=-999.0),
-            Feature("time", ("Track_time",), pad=0.0),
-            Feature("time_res", ("Track_timeRes",), pad=-999.0),
+            Feature("pt", ("pt",), pad=-1.0),
+            Feature("eta", ("eta",), pad=-999.0),
+            Feature("phi", ("phi",), pad=-999.0),
+            Feature("d0", ("d0",), pad=-999.0),
+            Feature("z0", ("z0",), pad=-999.0),
+            Feature("time", ("time",), pad=0.0),
+            Feature("time_res", ("time_res",), pad=-999.0),
         ],
-        aux=[Feature("has_valid_time", ("Track_hasValidTime",)),
-             Feature("is_good_from_hs", ("Track_isGoodFromHS",)),
-             Feature("has_vtx", ("TrackIsGoodHasVtx",))],
-        selections=[{"field": "has_valid_time", "eq": 1}],
+        aux=[Feature("has_valid_time", ("has_valid_time",)),
+             Feature("on_hs_vertex", ("on_hs_vertex",)),
+             Feature("dz_hs", ("dz_hs",))],
+        selections=[
+            {"field": "has_valid_time", "eq": 1},
+            {"field": "eta", "abs_min": 2.4},      # HGTD acceptance
+            {"field": "eta", "abs_max": 4.0},
+        ],
         sort_by="pt",
         max_items=30,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
@@ -189,7 +212,8 @@ def _hgtd_tracks_preset() -> BlockSpec:
 
 PRESETS = {
     "lar_cells": _cells_preset,
-    "antikt4_jets": _jets_preset,
+    "jets_emtopo": lambda: _jet_preset("jets_emtopo"),
+    "jets_pflow": lambda: _jet_preset("jets_pflow"),
     "hs_tracks": _tracks_preset,
     "hgtd_tracks": _hgtd_tracks_preset,
 }
@@ -266,8 +290,11 @@ def spec_from_config(name: str, cfg: dict) -> BlockSpec:
 # --------------------------------------------------------------------------
 
 _ENERGY_BINS = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0])
-_SIGMA_KEYS = {(1, 1): "EMB1_sigma", (1, 2): "EMB2_sigma", (1, 3): "EMB3_sigma",
-               (0, 1): "EME1_sigma", (0, 2): "EME2_sigma", (0, 3): "EME3_sigma"}
+# (region, layer) -> the calibration entry.  region 0 is the EM barrel and 1
+# the EM endcap; the table has no entries for FCal, HEC or Tile, so cells there
+# keep the fallback sigma and are effectively never cut.
+_SIGMA_KEYS = {(0, 1): "EMB1_sigma", (0, 2): "EMB2_sigma", (0, 3): "EMB3_sigma",
+               (1, 1): "EME1_sigma", (1, 2): "EME2_sigma", (1, 3): "EME3_sigma"}
 
 
 def load_calibration(filename: str) -> Dict[str, List[float]]:
@@ -295,7 +322,7 @@ def _time_quality_mask(cols: Dict[str, np.ndarray], opts: dict) -> np.ndarray:
     first.  Vectorised over every cell in the sample at once.
     """
     calib = load_calibration(opts.get("calibration", "sigma_only_test_calibration.txt"))
-    barrel = cols["barrel"].astype(np.int32)
+    region = cols["region"].astype(np.int32)
     layer = cols["layer"].astype(np.int32)
     energy = cols["e"].astype(np.float64)
     time = cols["time"].astype(np.float64).copy()
@@ -305,13 +332,13 @@ def _time_quality_mask(cols: Dict[str, np.ndarray], opts: dict) -> np.ndarray:
     offset = np.zeros(len(time))
     apply_calib = bool(opts.get("apply_calibration", False))
 
-    for (b, l), key in _SIGMA_KEYS.items():
-        sel = (barrel == b) & (layer == l)
+    for (r, l), key in _SIGMA_KEYS.items():
+        sel = (region == r) & (layer == l)
         if not sel.any():
             continue
         sigma[sel] = np.take(np.asarray(calib[key]), bin_idx[sel], mode="clip")
         if apply_calib:
-            param_key = f"EM{'B' if b == 1 else 'E'}{l}_params"
+            param_key = f"EM{'B' if r == 0 else 'E'}{l}_params"
             if param_key not in calib:
                 raise KeyError(f"{param_key} missing from calibration file "
                                f"(needed when apply_calibration is true)")
