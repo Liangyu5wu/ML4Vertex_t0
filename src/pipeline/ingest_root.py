@@ -5,16 +5,20 @@ out, no intermediate format. What it keeps is deliberately generous -- every
 calorimeter cell in the ntuple, both jet collections, every reconstructed and
 truth vertex -- because re-reading 130 GB of ROOT is expensive while tightening
 a selection in a block config is free. Only tracks are preselected, since
-keeping all ~2000 per event would triple the store for objects no model uses.
+keeping all ~2000 per event would triple the store for objects no model reads.
 
 Store field names are ours, not ROOT's, and the mapping is recorded in the
 manifest. Productions that rename a branch are handled by the alias lists
 below; a required field that resolves to nothing stops the ingest rather than
 quietly becoming a column of zeros.
 
+Several ROOT files are combined into one store file (``--shards``): the store
+is read whole for training, so a few large files beat dozens of small ones.
+
     python -m src.pipeline.ingest_root \
         --input-dir /global/cfs/.../root/ttbar \
-        --output-dir /global/cfs/.../store/ttbar --sample ttbar
+        --output-dir /global/cfs/.../store/ttbar --sample ttbar \
+        --shards 8 --workers 8
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ import argparse
 import glob
 import os
 import time
-from typing import Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -52,7 +57,7 @@ CELL_FIELDS = {
     "total_noise": "Cell_totalNoise", "quality": "Cell_quality",
     "provenance": "Cell_provenance",
 }
-# Collapsed into a single `region` column (see REGIONS).
+# Collapsed into a single `region` column.
 CELL_REGION_FLAGS = {
     "Cell_isEM_Barrel": 0, "Cell_isEM_EndCap": 1, "Cell_isFCAL": 2,
     "Cell_isHEC": 3, "Cell_isTile": 4,
@@ -69,14 +74,13 @@ TRACK_FIELDS = {
     "has_valid_time": "Track_hasValidTime", "quality": "Track_quality",
     "reco_vtx_idx": "Track_recoVtx_idx", "reco_vtx_weight": "Track_recoVtx_weight",
     "truth_vtx_idx": "Track_truthVtx_idx", "truth_prob": "Track_truthProb",
-}
-# Renamed between the ttbar and VBF productions.
-TRACK_ALIASES = {
+    # Renamed between the ttbar and VBF productions.
     "n_pixel_hits": ("Track_nPixelHits", "Track_numberOfPixelHits"),
     "n_strip_hits": ("Track_nStripHits", "Track_numberOfSCTHits"),
 }
 # Track position extrapolated to each calorimeter layer -- what cell-track
-# matching (and the baseline t0 algorithm) needs.
+# matching (and the baseline t0 algorithm) needs.  -999 where the track does
+# not reach that layer.
 TRACK_EXTRAPOLATION = {
     f"{layer.lower()}_{coord}": f"Track_{layer}_{coord}"
     for layer in ("EMB1", "EMB2", "EMB3", "EME1", "EME2", "EME3",
@@ -100,7 +104,7 @@ RECO_VERTEX_FIELDS = {
     "has_valid_time": "RecoVtx_hasValidTime",
     # RecoVtx_isPU is deliberately absent: in both productions its per-event
     # counts are the running sum of the vertex counts, i.e. the producer never
-    # clears the vector between events. _check_counts() below would reject it.
+    # clears the vector between events.  _check_counts() would reject it.
 }
 TRUTH_VERTEX_FIELDS = {
     "x": "TruthVtx_x", "y": "TruthVtx_y", "z": "TruthVtx_z",
@@ -108,11 +112,23 @@ TRUTH_VERTEX_FIELDS = {
 }
 
 # Tracks kept at ingest: everything the HS vertex fit claimed, everything HGTD
-# timed, and everything close to the HS vertex in z regardless of assignment.
+# timed, and everything close to the HS vertex in z whatever the fit decided.
 TRACK_Z0_WINDOW_MM = 3.0
+TRACK_SELECTION = ("on the reco HS vertex | valid HGTD time | "
+                   f"|z0 - z_HS| < {TRACK_Z0_WINDOW_MM} mm")
 
 
-# --- helpers ---------------------------------------------------------------
+@dataclass
+class FileArrays:
+    """One ROOT file reduced to store form, before anything is written."""
+    events: Dict[str, np.ndarray] = field(default_factory=dict)
+    blocks: Dict[str, Block] = field(default_factory=dict)
+    block_attrs: Dict[str, dict] = field(default_factory=dict)
+    mapping: Dict[str, str] = field(default_factory=dict)
+    n_events: int = 0
+
+
+# --- small helpers ---------------------------------------------------------
 
 def _flat(arr) -> np.ndarray:
     import awkward as ak
@@ -130,8 +146,31 @@ def _offsets(counts: np.ndarray) -> np.ndarray:
     return out
 
 
+def _resolve(available: Sequence[str], fields: Dict[str, object],
+             what: str) -> Dict[str, str]:
+    """store field -> branch, following alias tuples; raise on a missing one."""
+    resolved, missing = {}, []
+    for name, branch in fields.items():
+        for candidate in ((branch,) if isinstance(branch, str) else tuple(branch)):
+            if candidate in available:
+                resolved[name] = candidate
+                break
+        else:
+            missing.append(name)
+    if missing:
+        raise KeyError(f"{what}: no branch for {missing}; the file has "
+                       f"{len(available)} branches")
+    return resolved
+
+
+def _read(tree, mapping: Dict[str, str]) -> Dict[str, object]:
+    """Read a group of branches in one pass, keyed by store field name."""
+    arrays = tree.arrays(list(mapping.values()), library="ak")
+    return {name: arrays[branch] for name, branch in mapping.items()}
+
+
 def _check_counts(arrays: Dict[str, object], block: str) -> np.ndarray:
-    """Every branch in a collection must have the same objects per event.
+    """Every branch of a collection must agree on its objects per event.
 
     A branch that disagrees means the producer filled it differently -- most
     often a vector that is never cleared, which shows up as a running sum.
@@ -165,59 +204,39 @@ def _ragged(arrays: Dict[str, object], mask=None) -> Block:
 def _hs_scalar(values, is_hs) -> np.ndarray:
     """The value belonging to the (single) HS vertex, per event."""
     import awkward as ak
-    picked = ak.firsts(values[is_hs])
-    out = ak.to_numpy(ak.fill_none(picked, np.nan))
-    return np.asarray(out, dtype=np.float64)
+    return np.asarray(ak.to_numpy(ak.fill_none(ak.firsts(values[is_hs]), np.nan)),
+                      dtype=np.float64)
 
 
-def _resolve(available: Sequence[str], fields: Dict[str, object],
-             what: str, required: bool = True) -> Dict[str, str]:
-    """store field -> branch, following alias tuples; raise on a missing one."""
-    resolved, missing = {}, []
-    for name, branch in fields.items():
-        candidates = (branch,) if isinstance(branch, str) else tuple(branch)
-        for c in candidates:
-            if c in available:
-                resolved[name] = c
-                break
-        else:
-            missing.append((name, candidates))
-    if missing and required:
-        raise KeyError(
-            f"{what}: no branch for {[m[0] for m in missing]} "
-            f"(tried {[list(m[1]) for m in missing]}). "
-            f"The file has {len(available)} branches.")
-    return resolved
+def _broadcast(per_event: np.ndarray, counts: np.ndarray):
+    """Repeat an event-level value once per object in that event."""
+    import awkward as ak
+    return ak.unflatten(np.repeat(per_event, counts), counts)
 
 
-# --- one file --------------------------------------------------------------
+# --- reading one file ------------------------------------------------------
 
-def ingest_file(src: str, dst: str, tree_name: str = "ntuple",
-                extrapolations: bool = True, compression: Optional[str] = "gzip",
-                complevel: int = 4, verbose: bool = True) -> Dict:
-    """Convert one ROOT file into one event-store file."""
+def read_file(src: str, tree_name: str = "ntuple", extrapolations: bool = True
+              ) -> FileArrays:
+    """Reduce one ROOT file to store form: named columns, ragged blocks."""
     import awkward as ak
     import uproot
 
-    t0 = time.time()
     tree = uproot.open(src)[tree_name]
     available = set(tree.keys())
-    n_events = int(tree.num_entries)
-    mapping: Dict[str, str] = {}
+    out = FileArrays(n_events=int(tree.num_entries))
 
-    # ---- event-level scalars and the HS vertex -----------------------------
+    # ---- event scalars, and the hard-scatter vertex ------------------------
     ev_map = _resolve(available, EVENT_FIELDS, "event fields")
-    events = {name: tree[branch].array(library="np")
-              for name, branch in ev_map.items()}
-    mapping.update({f"events/{k}": v for k, v in ev_map.items()})
+    out.events = {name: tree[branch].array(library="np")
+                  for name, branch in ev_map.items()}
+    out.mapping.update({f"events/{k}": v for k, v in ev_map.items()})
 
     rv_map = _resolve(available, RECO_VERTEX_FIELDS, "reco vertices")
     tv_map = _resolve(available, TRUTH_VERTEX_FIELDS, "truth vertices")
-    reco_vtx = {k: tree[v].array() for k, v in rv_map.items()}
-    truth_vtx = {k: tree[v].array() for k, v in tv_map.items()}
+    reco_vtx, truth_vtx = _read(tree, rv_map), _read(tree, tv_map)
+    reco_is_hs, truth_is_hs = reco_vtx["is_hs"] == 1, truth_vtx["is_hs"] == 1
 
-    reco_is_hs = reco_vtx["is_hs"] == 1
-    truth_is_hs = truth_vtx["is_hs"] == 1
     n_reco_hs = ak.to_numpy(ak.sum(reco_is_hs, axis=1))
     n_truth_hs = ak.to_numpy(ak.sum(truth_is_hs, axis=1))
     if (n_reco_hs != 1).any() or (n_truth_hs != 1).any():
@@ -225,146 +244,155 @@ def ingest_file(src: str, dst: str, tree_name: str = "ntuple",
             f"{os.path.basename(src)}: {(n_reco_hs != 1).sum()} event(s) without "
             f"exactly one reco HS vertex and {(n_truth_hs != 1).sum()} without "
             f"exactly one truth HS vertex; the target and the time-of-flight "
-            f"correction are undefined for those")
+            f"correction are undefined there")
 
     for key in ("time", "x", "y", "z"):
-        events[f"truth_vtx_{key}"] = _hs_scalar(truth_vtx[key], truth_is_hs)
+        out.events[f"truth_vtx_{key}"] = _hs_scalar(truth_vtx[key], truth_is_hs)
     for key in ("time", "time_res", "x", "y", "z", "sum_pt2"):
-        events[f"reco_vtx_{key}"] = _hs_scalar(reco_vtx[key], reco_is_hs)
-    events["n_reco_vtx"] = _counts(reco_vtx["z"])
-    events["n_truth_vtx"] = _counts(truth_vtx["z"])
-
-    blocks: Dict[str, Block] = {}
-    block_attrs: Dict[str, dict] = {}
+        out.events[f"reco_vtx_{key}"] = _hs_scalar(reco_vtx[key], reco_is_hs)
+    out.events["n_reco_vtx"] = _counts(reco_vtx["z"])
+    out.events["n_truth_vtx"] = _counts(truth_vtx["z"])
 
     # ---- cells -------------------------------------------------------------
     cell_map = _resolve(available, CELL_FIELDS, "cells")
-    cells = {name: tree[branch].array() for name, branch in cell_map.items()}
-    mapping.update({f"cells/{k}": v for k, v in cell_map.items()})
+    cells = _read(tree, cell_map)
+    counts = _check_counts(cells, "cells")
+    out.mapping.update({f"cells/{k}": v for k, v in cell_map.items()})
 
-    # Time of flight from the reconstructed HS vertex, in ps: the extra path
-    # length relative to a particle coming from the detector origin.
-    counts = _counts(cells["e"])
-    vx, vy, vz = (np.repeat(events[f"reco_vtx_{k}"], counts) for k in "xyz")
+    # Time of flight relative to a particle from the detector origin, in ps.
     cx, cy, cz = (_flat(cells[k]) for k in "xyz")
+    vx, vy, vz = (np.repeat(out.events[f"reco_vtx_{k}"], counts) for k in "xyz")
     d_vtx = np.sqrt((cx - vx) ** 2 + (cy - vy) ** 2 + (cz - vz) ** 2)
     d_origin = np.sqrt(cx ** 2 + cy ** 2 + cz ** 2)
-    time_tof = _flat(cells["time"]) - (d_vtx - d_origin) / C_MM_PER_NS * 1000.0
 
-    region_flat = np.full(len(cx), -1, dtype=np.int8)
-    for branch, code in CELL_REGION_FLAGS.items():
-        if branch in available:
-            flags = _flat(tree[branch].array()).astype(bool)
-            region_flat[flags] = code
-            mapping[f"cells/region<-{branch}"] = str(code)
-    if verbose:
-        unknown = int((region_flat < 0).sum())
-        if unknown:
-            print(f"  note: {unknown} cell(s) match no region flag")
+    region_map = {b: c for b, c in CELL_REGION_FLAGS.items() if b in available}
+    region = np.full(len(cx), -1, dtype=np.int8)
+    for branch, code in region_map.items():
+        region[_flat(tree[branch].array()).astype(bool)] = code
+    out.mapping.update({f"cells/region<-{b}": str(c) for b, c in region_map.items()})
 
-    _check_counts(cells, "cells")
-    cell_columns, cell_offsets = _ragged(cells)
-    cell_columns["time_tof"] = time_tof.astype(np.float32)
-    cell_columns["region"] = region_flat
-    blocks["cells"] = (cell_columns, cell_offsets)
-    block_attrs["cells"] = {"selection": "everything in the ntuple",
-                            "regions": str(REGIONS)}
+    columns, offsets = _ragged(cells)
+    columns["time_tof"] = (_flat(cells["time"])
+                           - (d_vtx - d_origin) / C_MM_PER_NS * 1000.0).astype(np.float32)
+    columns["region"] = region
+    out.blocks["cells"] = (columns, offsets)
+    out.block_attrs["cells"] = {"selection": "everything in the ntuple",
+                                "regions": str(REGIONS)}
 
     # ---- tracks ------------------------------------------------------------
     track_fields = dict(TRACK_FIELDS)
-    track_fields.update(TRACK_ALIASES)
     if extrapolations:
         track_fields.update(TRACK_EXTRAPOLATION)
     tr_map = _resolve(available, track_fields, "tracks")
-    tracks = {name: tree[branch].array() for name, branch in tr_map.items()}
-    mapping.update({f"tracks/{k}": v for k, v in tr_map.items()})
+    tracks = _read(tree, tr_map)
+    n_tracks = _check_counts(tracks, "tracks")
+    out.mapping.update({f"tracks/{k}": v for k, v in tr_map.items()})
 
-    _check_counts(tracks, "tracks")
     hs_index = ak.to_numpy(ak.fill_none(
         ak.firsts(ak.local_index(reco_is_hs)[reco_is_hs]), -1))
-    n_tracks = _counts(tracks["pt"])
-    on_hs = tracks["reco_vtx_idx"] == ak.Array(
-        [[i] * k for i, k in zip(hs_index, n_tracks)])
-    timed = tracks["has_valid_time"] == 1
-    dz_hs = tracks["z0"] - ak.Array(
-        [[z] * k for z, k in zip(events["reco_vtx_z"], n_tracks)])
-    keep = on_hs | timed | (abs(dz_hs) < TRACK_Z0_WINDOW_MM)
+    on_hs = tracks["reco_vtx_idx"] == _broadcast(hs_index, n_tracks)
+    dz_hs = tracks["z0"] - _broadcast(out.events["reco_vtx_z"], n_tracks)
+    keep = on_hs | (tracks["has_valid_time"] == 1) | (abs(dz_hs) < TRACK_Z0_WINDOW_MM)
 
     # Derived columns so a block config can select tracks without having to
     # know which vertex index is the hard-scatter one.
     tracks["on_hs_vertex"] = ak.values_astype(on_hs, np.int8)
     tracks["dz_hs"] = dz_hs
-
-    blocks["tracks"] = _ragged(tracks, keep)
-    block_attrs["tracks"] = {
-        "selection": ("on the reco HS vertex | has a valid HGTD time | "
-                      f"|z0 - z_HS| < {TRACK_Z0_WINDOW_MM} mm"),
+    out.blocks["tracks"] = _ragged(tracks, keep)
+    out.block_attrs["tracks"] = {
+        "selection": TRACK_SELECTION,
         "n_before_selection": int(n_tracks.sum()),
-        "extrapolation": ("<layer>_eta/phi is -999 when the track does not "
-                          "reach that layer")}
-    if verbose:
-        kept = blocks["tracks"][1][-1]
-        print(f"  [tracks      ] {kept:9d} of {int(n_tracks.sum()):9d} "
-              f"({100 * kept / max(n_tracks.sum(), 1):.0f}%)  "
-              f"{kept / n_events:6.1f}/event")
-    del tracks
+        "extrapolation": "<layer>_eta/phi is -999 where the track does not reach"}
 
     # ---- jets --------------------------------------------------------------
     for block, prefix in JET_COLLECTIONS.items():
         fields = {k: prefix + v for k, v in JET_FIELDS.items()}
-        if not (set(fields.values()) <= available):
-            if verbose:
-                print(f"  note: {prefix}* not in this file, skipping {block}")
+        if not set(fields.values()) <= available:
             continue
         jet_map = _resolve(available, fields, block)
-        jets = {name: tree[branch].array() for name, branch in jet_map.items()}
-        mapping.update({f"{block}/{k}": v for k, v in jet_map.items()})
+        jets = _read(tree, jet_map)
+        out.mapping.update({f"{block}/{k}": v for k, v in jet_map.items()})
         for name, suffix in JET_MATCH_COUNTS.items():
-            branch = prefix + suffix
-            if branch in available:
-                jets[name] = ak.num(tree[branch].array(), axis=2)
-                mapping[f"{block}/{name}"] = f"len({branch})"
+            if prefix + suffix in available:
+                jets[name] = ak.num(tree[prefix + suffix].array(), axis=2)
+                out.mapping[f"{block}/{name}"] = f"len({prefix + suffix})"
         _check_counts(jets, block)
-        blocks[block] = _ragged(jets)
-        block_attrs[block] = {"selection": "everything in the ntuple"}
+        out.blocks[block] = _ragged(jets)
+        out.block_attrs[block] = {"selection": "everything in the ntuple"}
 
     # ---- vertices ----------------------------------------------------------
-    _check_counts(reco_vtx, "reco_vertices")
-    _check_counts(truth_vtx, "truth_vertices")
-    blocks["reco_vertices"] = _ragged(reco_vtx)
-    blocks["truth_vertices"] = _ragged(truth_vtx)
-    mapping.update({f"reco_vertices/{k}": v for k, v in rv_map.items()})
-    mapping.update({f"truth_vertices/{k}": v for k, v in tv_map.items()})
-    block_attrs["reco_vertices"] = {"selection": "all reconstructed vertices"}
-    block_attrs["truth_vertices"] = {"selection": "all truth vertices"}
+    for block, arrays, mapping in (("reco_vertices", reco_vtx, rv_map),
+                                   ("truth_vertices", truth_vtx, tv_map)):
+        _check_counts(arrays, block)
+        out.blocks[block] = _ragged(arrays)
+        out.block_attrs[block] = {"selection": "all vertices"}
+        out.mapping.update({f"{block}/{k}": v for k, v in mapping.items()})
 
+    return out
+
+
+# --- combining and writing -------------------------------------------------
+
+def merge(parts: Sequence[FileArrays]) -> FileArrays:
+    """Concatenate several files' arrays into one, fixing up the offsets."""
+    if len(parts) == 1:
+        return parts[0]
+    out = FileArrays(block_attrs=parts[0].block_attrs, mapping=parts[0].mapping,
+                     n_events=sum(p.n_events for p in parts))
+    out.events = {name: np.concatenate([p.events[name] for p in parts])
+                  for name in parts[0].events}
+    for block in parts[0].blocks:
+        columns = {field: np.concatenate([p.blocks[block][0][field] for p in parts])
+                   for field in parts[0].blocks[block][0]}
+        offsets, running = [np.zeros(1, dtype=np.int64)], 0
+        for p in parts:
+            part_offsets = p.blocks[block][1]
+            offsets.append(part_offsets[1:] + running)
+            running += int(part_offsets[-1])
+        out.blocks[block] = (columns, np.concatenate(offsets))
+    for block, attrs in parts[0].block_attrs.items():
+        total = sum(p.block_attrs[block].get("n_before_selection", 0) for p in parts)
+        if total:
+            out.block_attrs[block] = {**attrs, "n_before_selection": total}
+    return out
+
+
+def ingest_shard(sources: Sequence[str], dst: str, tree_name: str = "ntuple",
+                 extrapolations: bool = True, compression: Optional[str] = "gzip",
+                 complevel: int = 4) -> Dict:
+    """Read a group of ROOT files and write them as one store file."""
+    t0 = time.time()
+    data = merge([read_file(s, tree_name, extrapolations) for s in sources])
     warnings, block_info = write_compact(
-        dst, events, blocks,
-        attrs={"source_file": os.path.abspath(src), "tree": tree_name,
-               "ingest": "src.pipeline.ingest_root"},
-        block_attrs=block_attrs, compression=compression, complevel=complevel)
+        dst, data.events, data.blocks,
+        attrs={"source_files": ", ".join(os.path.basename(s) for s in sources),
+               "tree": tree_name, "ingest": "src.pipeline.ingest_root"},
+        block_attrs=data.block_attrs, compression=compression, complevel=complevel)
 
-    src_mb, dst_mb = os.path.getsize(src) / 1e6, os.path.getsize(dst) / 1e6
-    summary = {"source": os.path.abspath(src), "output": os.path.abspath(dst),
-               "n_events": n_events, "blocks": block_info, "warnings": warnings,
-               "mapping": mapping, "src_mb": src_mb, "dst_mb": dst_mb,
-               "seconds": time.time() - t0}
-    if verbose:
-        print(f"  {src_mb:8.1f} MB -> {dst_mb:7.1f} MB  "
-              f"({src_mb / max(dst_mb, 1e-9):.1f}x)  in {summary['seconds']:.0f}s")
-    return summary
+    src_mb = sum(os.path.getsize(s) for s in sources) / 1e6
+    dst_mb = os.path.getsize(dst) / 1e6
+    return {"output": os.path.abspath(dst), "n_events": data.n_events,
+            "n_sources": len(sources), "blocks": block_info, "warnings": warnings,
+            "mapping": data.mapping, "src_mb": src_mb, "dst_mb": dst_mb,
+            "seconds": time.time() - t0}
 
 
-# --- a directory -----------------------------------------------------------
+def _shard(sources: Sequence[str], n_shards: int) -> List[List[str]]:
+    """Split the inputs into contiguous groups of roughly equal total size."""
+    n_shards = max(1, min(n_shards, len(sources)))
+    sizes = np.array([os.path.getsize(s) for s in sources], dtype=np.float64)
+    edges = np.searchsorted(np.cumsum(sizes),
+                            np.linspace(0, sizes.sum(), n_shards + 1)[1:-1])
+    return [list(g) for g in np.split(np.array(sources, dtype=object), edges) if len(g)]
 
-def _ingest_one(args) -> Dict:
-    """Worker entry point: ingest a single file (picklable arguments only)."""
-    src, dst, tree_name, extrapolations, compression, complevel = args
-    s = ingest_file(src, dst, tree_name=tree_name, extrapolations=extrapolations,
-                    compression=compression, complevel=complevel, verbose=False)
-    print(f"  done {os.path.basename(src)}  {s['n_events']:6d} events  "
-          f"{s['src_mb'] / 1000:.1f} -> {s['dst_mb'] / 1000:.2f} GB  "
-          f"{s['seconds']:.0f}s", flush=True)
+
+def _run_shard(args) -> Dict:
+    """Worker entry point (picklable arguments only)."""
+    sources, dst, tree_name, extrapolations, compression, complevel = args
+    s = ingest_shard(sources, dst, tree_name, extrapolations, compression, complevel)
+    print(f"  {os.path.basename(dst):28s} {s['n_sources']:2d} file(s)  "
+          f"{s['n_events']:7,d} events  {s['src_mb'] / 1000:5.1f} -> "
+          f"{s['dst_mb'] / 1000:5.2f} GB  {s['seconds']:.0f}s", flush=True)
     return s
 
 
@@ -372,8 +400,9 @@ def ingest_directory(input_dir: str, output_dir: str, sample: str,
                      pattern: str = "*.root", limit: Optional[int] = None,
                      tree_name: str = "ntuple", extrapolations: bool = True,
                      compression: Optional[str] = "gzip", complevel: int = 4,
-                     overwrite: bool = False, workers: int = 1) -> Dict:
-    """Ingest every ROOT file in a directory and write the manifest."""
+                     shards: int = 8, workers: int = 1,
+                     overwrite: bool = False) -> Dict:
+    """Ingest a directory of ROOT files into a sharded store."""
     import h5py
 
     inputs = sorted(glob.glob(os.path.join(input_dir, pattern)))
@@ -382,49 +411,50 @@ def ingest_directory(input_dir: str, output_dir: str, sample: str,
     if not inputs:
         raise FileNotFoundError(f"no files matching {pattern} in {input_dir}")
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Ingesting {len(inputs)} ROOT file(s) from {input_dir}")
 
     schemas = [collect_root(p, tree_name) for p in inputs]
     differences = compare(schemas)
     if differences:
-        print("\nInput files do not share one schema:")
+        print("Input files do not share one schema:")
         for d in differences[:10]:
             print(f"  ! {d}")
         raise ValueError("inconsistent input schema; ingest the groups separately")
-    print(f"schema: {len(schemas[0].columns)} branches, consistent across all files; "
-          f"{sum(s.n_events for s in schemas):,} events")
+    groups = _shard(inputs, shards)
+    print(f"{sample}: {len(inputs)} ROOT file(s), "
+          f"{sum(s.n_events for s in schemas):,} events, "
+          f"{len(schemas[0].columns)} branches (consistent) "
+          f"-> {len(groups)} store file(s), {workers} worker(s)")
 
-    files_meta: List[dict] = []
-    all_warnings: set = set()
-    mapping: Dict[str, str] = {}
-    todo = []
-    for src in inputs:
-        dst = os.path.join(output_dir, os.path.basename(src).replace(".root", ".h5"))
+    todo, files_meta = [], []
+    for i, group in enumerate(groups):
+        dst = os.path.join(output_dir, f"{sample}_{i:03d}.h5")
         if os.path.exists(dst) and not overwrite:
             with h5py.File(dst, "r") as f:
                 files_meta.append({"file": os.path.basename(dst),
                                    "n_events": int(f.attrs["n_events"])})
-            print(f"  skip {os.path.basename(src)} -- output exists")
+            print(f"  {os.path.basename(dst)} exists, skipping")
             continue
-        todo.append((src, dst, tree_name, extrapolations, compression, complevel))
+        todo.append((group, dst, tree_name, extrapolations, compression, complevel))
 
+    all_warnings: set = set()
+    mapping: Dict[str, str] = {}
     if todo:
-        print(f"converting {len(todo)} file(s) with {workers} worker(s)")
         if workers > 1:
             from concurrent.futures import ProcessPoolExecutor
             with ProcessPoolExecutor(max_workers=workers) as pool:
-                results = list(pool.map(_ingest_one, todo))
+                results = list(pool.map(_run_shard, todo))
         else:
-            results = [_ingest_one(a) for a in todo]
+            results = [_run_shard(a) for a in todo]
         for s in results:
             all_warnings.update(s["warnings"])
             mapping = s["mapping"]
             files_meta.append({"file": os.path.basename(s["output"]),
                                "n_events": s["n_events"],
+                               "n_sources": s["n_sources"],
                                "src_mb": round(s["src_mb"], 1),
                                "dst_mb": round(s["dst_mb"], 1),
                                "seconds": round(s["seconds"], 1)})
-        files_meta.sort(key=lambda m: m["file"])
+    files_meta.sort(key=lambda m: m["file"])
 
     if all_warnings:
         print(f"\ncontent warnings ({len(all_warnings)}):")
@@ -435,21 +465,15 @@ def ingest_directory(input_dir: str, output_dir: str, sample: str,
                               source=os.path.abspath(input_dir),
                               extra={"ingest": "ingest_root", "tree": tree_name,
                                      "field_mapping": mapping,
-                                     "track_selection": block_selection_note()})
-    total_src = sum(m.get("src_mb", 0.0) for m in files_meta)
-    total_dst = sum(m.get("dst_mb", 0.0) for m in files_meta)
+                                     "track_selection": TRACK_SELECTION})
+    src_gb = sum(m.get("src_mb", 0.0) for m in files_meta) / 1000
+    dst_gb = sum(m.get("dst_mb", 0.0) for m in files_meta) / 1000
     n_events = sum(m["n_events"] for m in files_meta)
-    print(f"\n{sample}: {n_events:,} events in {len(files_meta)} file(s)")
-    if total_dst:
-        print(f"  {total_src / 1000:.1f} GB -> {total_dst / 1000:.1f} GB "
-              f"({total_src / total_dst:.1f}x)")
+    print(f"\n{sample}: {n_events:,} events in {len(files_meta)} store file(s)")
+    if dst_gb:
+        print(f"  {src_gb:.1f} GB -> {dst_gb:.1f} GB ({src_gb / dst_gb:.1f}x)")
     print(f"  manifest: {manifest}")
     return {"manifest": manifest, "n_events": n_events}
-
-
-def block_selection_note() -> str:
-    return ("tracks: on the reco HS vertex | valid HGTD time | "
-            f"|z0 - z_HS| < {TRACK_Z0_WINDOW_MM} mm; everything else unfiltered")
 
 
 def main():
@@ -460,21 +484,21 @@ def main():
     p.add_argument("--sample", required=True)
     p.add_argument("--pattern", default="*.root")
     p.add_argument("--tree", default="ntuple")
-    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--limit", type=int, default=None, help="use only the first N files")
+    p.add_argument("--shards", type=int, default=8, help="store files to write")
+    p.add_argument("--workers", type=int, default=1, help="shards built in parallel")
     p.add_argument("--no-extrapolations", action="store_true",
                    help="skip the per-layer track extrapolations (saves ~25%%)")
     p.add_argument("--compression", default="gzip", choices=["gzip", "lzf", "none"])
     p.add_argument("--complevel", type=int, default=4)
     p.add_argument("--overwrite", action="store_true")
-    p.add_argument("--workers", type=int, default=1,
-                   help="convert this many files in parallel")
     args = p.parse_args()
     ingest_directory(args.input_dir, args.output_dir, args.sample,
                      pattern=args.pattern, limit=args.limit, tree_name=args.tree,
                      extrapolations=not args.no_extrapolations,
                      compression=None if args.compression == "none" else args.compression,
-                     complevel=args.complevel, overwrite=args.overwrite,
-                     workers=args.workers)
+                     complevel=args.complevel, shards=args.shards,
+                     workers=args.workers, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":
