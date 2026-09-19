@@ -20,7 +20,7 @@ data:
   inputs:
     hgtd_tracks:
       preset: hgtd_tracks
-      max_items: 30
+      max_items: 55
       min_items: 1
       encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 

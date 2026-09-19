@@ -20,7 +20,7 @@ data:
   inputs:
     cells:
       preset: lar_cells
-      max_items: 60
+      max_items: 120
       min_items: 1
       select_extra:
         - time_quality:
@@ -32,17 +32,17 @@ data:
 
     jets_emtopo:
       preset: jets_emtopo
-      max_items: 10
+      max_items: 15
       encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 
     tracks:
       preset: hs_tracks
-      max_items: 30
+      max_items: 50
       encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 
     hgtd_tracks:
       preset: hgtd_tracks
-      max_items: 30
+      max_items: 55
       min_items: 1
       encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
 

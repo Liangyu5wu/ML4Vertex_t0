@@ -128,7 +128,10 @@ def _cells_preset() -> BlockSpec:
             {"field": "e", "min": 1.0},            # GeV
         ],
         sort_by=["e", "significance"],
-        max_items=60,
+        # 120 cells hold ~99% of the timing weight (the weight goes as
+        # 1/sigma(E)^2 and sigma falls steeply with energy), while the 60 this
+        # started at held 96% and truncated 81% of events.
+        max_items=120,
         min_items=1,
         pad_in="literal",
         emit_mask=True,
@@ -157,7 +160,7 @@ def _jet_preset(source: str) -> BlockSpec:
              Feature("n_truth_itpu_jets", ("n_truth_itpu_jets",))],
         selections=[],
         sort_by="pt",
-        max_items=10,
+        max_items=15,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
                  "batch_norm": True, "pooling": "masked_average"},
     )
@@ -180,7 +183,7 @@ def _tracks_preset() -> BlockSpec:
              Feature("truth_prob", ("truth_prob",))],
         selections=[{"field": "on_hs_vertex", "eq": 1}],
         sort_by="pt",
-        max_items=30,
+        max_items=50,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
                  "batch_norm": True, "pooling": "masked_average"},
     )
@@ -214,7 +217,10 @@ def _hgtd_tracks_preset() -> BlockSpec:
             {"field": "dz_hs", "abs_max": 2.0},    # mm, from the reco HS vertex
         ],
         sort_by="pt",
-        max_items=30,
+        # The caps sit at the 95th percentile of what is available: truncation
+        # should not be the thing deciding what the model may look at, when
+        # masking already lets it ignore whatever it finds useless.
+        max_items=55,
         encoder={"units": [64, 32], "dropout": 0.1, "activation": "relu",
                  "batch_norm": True, "pooling": "masked_average"},
     )
