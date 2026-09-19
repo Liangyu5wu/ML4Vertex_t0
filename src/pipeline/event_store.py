@@ -1,10 +1,10 @@
-"""Read access to the compact event store written by :mod:`src.pipeline.compact`.
+"""Read access to the compact event store written by :mod:`src.pipeline.ingest_h5`.
 
 A store is a directory of compact HDF5 files plus a ``manifest.json``.  Files
 are concatenated transparently, so callers see one flat event index and a
 single ragged array per block::
 
-    store = CompactStore("/.../compact/ttbar")
+    store = EventStore("/.../compact/ttbar")
     times = store.event_column("HSvertex_time")          # (n_events,)
     cells = store.block("cells", ["Cell_e", "Cell_eta"]) # ragged, lazy read
 
@@ -113,7 +113,7 @@ class RaggedBlock:
                 f"items={self.n_items}, fields={sorted(self.columns)})")
 
 
-class CompactStore:
+class EventStore:
     """A directory of compact files, presented as one dataset."""
 
     def __init__(self, path: str, files: Optional[Iterable[str]] = None,
@@ -122,7 +122,7 @@ class CompactStore:
         manifest_path = os.path.join(self.path, "manifest.json")
         if not os.path.exists(manifest_path):
             raise FileNotFoundError(
-                f"{manifest_path} not found -- run src.pipeline.compact on the raw files first")
+                f"{manifest_path} not found -- run src.pipeline.ingest_h5 on the raw files first")
         with open(manifest_path) as fh:
             self.manifest = json.load(fh)
 
@@ -197,7 +197,7 @@ class CompactStore:
         return RaggedBlock(block, columns, offsets)
 
     def __repr__(self) -> str:
-        return (f"CompactStore({self.sample!r}, events={self.n_events}, "
+        return (f"EventStore({self.sample!r}, events={self.n_events}, "
                 f"files={len(self.files)}, blocks={self.block_names})")
 
 

@@ -6,13 +6,13 @@ HGTD track timing.
 ## Data chain
 
 ```
-ROOT  --R2H5-->  raw h5  --src/pipeline/compact.py-->  compact store  -->  training
+ROOT  --R2H5-->  raw h5  --src/pipeline/compact.py-->  event store  -->  training
                 (dense,                               (ragged columns,
                  1 event = 1 row of 1000 cell slots)   ~12x smaller, lossless)
 ```
 
 R2H5 (separate repo) does the physics-level conversion. Everything from the
-raw h5 onwards lives here. Compact stores are kept on CFS:
+raw h5 onwards lives here. Event stores are kept on CFS:
 `/global/cfs/cdirs/m2616/liangyu/vertextiming/compact/{ttbar,vbf_hinv}`.
 
 ## Architecture
@@ -23,7 +23,7 @@ the network, so a new input or a new sample is a config change:
 
 | module | role |
 |---|---|
-| `src/pipeline/compact.py` | raw h5 → compact store (schema discovered from the file) |
+| `src/pipeline/compact.py` | raw h5 → event store (schema discovered from the file) |
 | `src/pipeline/store.py` | ragged read access, vectorised gathers |
 | `src/pipeline/blocks.py` | block specs, presets, selection/sorting |
 | `src/pipeline/assemble.py` | multi-sample split, normalization, padding, `tf.data` |
@@ -43,7 +43,7 @@ source setup.sh --sync             # after editing pyproject.toml
 source setup.sh --cpu              # force CPU
 
 # raw -> compact (once per sample)
-python -m src.pipeline.compact --input-dir ../Vertex_timing_HGTD_w_LAr \
+python -m src.pipeline.ingest_h5 --input-dir ../Vertex_timing_HGTD_w_LAr \
     --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar --sample ttbar
 
 # train (datasets listed in the config; --datasets picks a subset)

@@ -58,12 +58,12 @@ def collect_root(path: str, tree: Optional[str] = None) -> FileSchema:
 
 
 def collect_h5(path: str) -> FileSchema:
-    """Field inventory of a raw R2H5 file or a compact store file."""
+    """Field inventory of a raw R2H5 file or a event store file."""
     import h5py
 
     columns: Dict[str, str] = {}
     with h5py.File(path, "r") as f:
-        if "blocks" in f and "events" in f:                 # compact store
+        if "blocks" in f and "events" in f:                 # event store
             kind = "compact"
             n_events = int(f.attrs["n_events"])
             for name in f["events"]:

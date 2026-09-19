@@ -1,4 +1,4 @@
-"""Assemble one or more compact stores into model-ready tensors.
+"""Assemble one or more event stores into model-ready tensors.
 
 This is the single path from ``datasets:`` + ``inputs:`` in a YAML config to
 padded arrays and ``tf.data`` pipelines, for any combination of input blocks
@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .blocks import BlockSpec, load_block, spec_from_config
-from .store import CompactStore, RaggedBlock, pad_ragged
+from .event_store import EventStore, RaggedBlock, pad_ragged
 
 SPLITS = ("train", "val", "test")
 
@@ -122,7 +122,7 @@ class SampleData:
 def load_sample(source: DatasetSource, spec: AssemblySpec,
                 verbose: bool = True) -> SampleData:
     """Read one store, apply block selections, and drop events that fail min_items."""
-    store = CompactStore(source.path, files=source.files, sample=source.name)
+    store = EventStore(source.path, files=source.files, sample=source.name)
     blocks = {name: load_block(store, bspec) for name, bspec in spec.blocks.items()}
 
     keep = np.ones(store.n_events, dtype=bool)

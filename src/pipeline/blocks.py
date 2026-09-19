@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .store import CompactStore, RaggedBlock
+from .event_store import EventStore, RaggedBlock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,7 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 class Feature:
     """One column of a block.
 
-    ``sources`` lists candidate field names in the compact store, tried in
+    ``sources`` lists candidate field names in the event store, tried in
     order.  ``pad`` is the value used for padded slots, expressed in the
     original (physical) units.
     """
@@ -356,7 +356,7 @@ def _selection_mask(cols: Dict[str, np.ndarray], rule: dict) -> np.ndarray:
     return mask
 
 
-def load_block(store: CompactStore, spec: BlockSpec) -> RaggedBlock:
+def load_block(store: EventStore, spec: BlockSpec) -> RaggedBlock:
     """Read, select and sort one block; columns come back under logical names."""
     available = store.block_fields(spec.source)
     wanted = spec.all_features()

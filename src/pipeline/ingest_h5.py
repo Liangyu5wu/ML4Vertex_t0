@@ -1,12 +1,12 @@
-"""Convert dense R2H5 HDF5 output into the compact store.
+"""Convert dense R2H5 HDF5 output into the event store.
 
 R2H5 writes every collection as a dense ``(n_events, n_slots)`` structured
 array of float64: cells occupy 144 of 1000 slots, tracks 35 of 200 and jets
 1.8 of 50, so most of the file is padding at twice the precision needed. This
 reader drops the invalid slots and hands the ragged result to
-:mod:`src.pipeline.writer`, which is also what the ROOT reader writes through.
+:mod:`src.pipeline.store_writer`, which is also what the ROOT reader writes through.
 
-    python -m src.pipeline.compact \
+    python -m src.pipeline.ingest_h5 \
         --input-dir ../Vertex_timing_HGTD_w_LAr \
         --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar \
         --sample ttbar
@@ -24,7 +24,7 @@ import h5py
 import numpy as np
 
 from .schema import collect_h5, compare
-from .writer import Block, write_compact, write_manifest
+from .store_writer import Block, write_compact, write_manifest
 
 # Source datasets that hold per-event scalars rather than a collection.
 EVENT_TABLE_CANDIDATES = ("HSvertex",)
@@ -186,7 +186,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--input-dir", required=True, help="directory of dense R2H5 files")
-    p.add_argument("--output-dir", required=True, help="destination compact store")
+    p.add_argument("--output-dir", required=True, help="destination event store")
     p.add_argument("--sample", required=True, help="sample name recorded in the manifest")
     p.add_argument("--pattern", default="output_*.h5")
     p.add_argument("--limit", type=int, default=None, help="convert only the first N files")

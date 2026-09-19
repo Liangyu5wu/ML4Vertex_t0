@@ -1,4 +1,4 @@
-"""Write a compact store file.
+"""Write a event store file.
 
 The compact layout is the boundary between "where the data came from" and
 "how the pipeline reads it", so the writer lives on its own: converters hand

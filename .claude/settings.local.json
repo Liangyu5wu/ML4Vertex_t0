@@ -18,7 +18,8 @@
       "Bash(uv pip install:*)",
       "Bash(git checkout:*)",
       "Read(/Users/liangyu5/Desktop/models/**)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(jupyter nbconvert *)"
     ],
     "deny": [],
     "ask": []

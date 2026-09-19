@@ -6,19 +6,19 @@ pairs and the per-architecture branches in `scripts/train.py`.
 Adding an input (or a sample) is a YAML change, not a code change.
 
 ```
-raw R2H5 h5  --compact.py-->  compact store  --blocks.py-->  selected ragged
+raw R2H5 h5  --compact.py-->  event store  --blocks.py-->  selected ragged
     --assemble.py-->  padded tensors + tf.data  --block_model.py-->  Keras model
 ```
 
-## 1. Compact store
+## 1. Event store
 
 Raw files keep every collection as a dense `(n_events, n_slots)` float64
 structured array: cells use 144 of 1000 slots, tracks 35 of 200, jets 1.8 of 50.
-The compact store drops invalid slots and stores one compressed column per
+The event store drops invalid slots and stores one compressed column per
 field, giving **11–14x smaller files** with bit-identical values.
 
 ```bash
-python -m src.pipeline.compact \
+python -m src.pipeline.ingest_h5 \
     --input-dir ../Vertex_timing_HGTD_w_LAr \
     --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar \
     --sample ttbar
