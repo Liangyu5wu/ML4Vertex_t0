@@ -38,6 +38,8 @@ from typing import Dict, List, Optional, Tuple
 import h5py
 import numpy as np
 
+from .schema import check_column, collect_h5, compare
+
 SCHEMA_VERSION = 1
 
 # Source datasets that hold per-event scalars rather than a collection.
@@ -129,10 +131,12 @@ def convert_file(src_path: str, dst_path: str, compression: str = "gzip",
         summary["n_events"] = int(n_events)
 
         # ---- event-level scalars -------------------------------------------
+        warnings: List[str] = []
         ev_group = fout.create_group("events")
         raw_events = fin[event_table][:]
         for field in raw_events.dtype.names:
             col = _downcast(np.ascontiguousarray(raw_events[field]))
+            warnings.extend(check_column(f"events/{field}", col))
             ev_group.create_dataset(field, data=col, **comp_kw)
         ev_group.attrs["fields"] = json.dumps(list(raw_events.dtype.names))
         ev_group.attrs["source_dataset"] = event_table
@@ -165,6 +169,7 @@ def convert_file(src_path: str, dst_path: str, compression: str = "gzip",
                 # Boolean-mask indexing flattens row-major, i.e. already in
                 # event order -- this is the ragged concatenation we want.
                 col = _downcast(raw[field][valid])
+                warnings.extend(check_column(f"{block}/{field}", col))
                 g.create_dataset(field, data=col, **comp_kw)
             g.attrs["fields"] = json.dumps(fields)
             g.attrs["source_dataset"] = ds_name
@@ -197,7 +202,7 @@ def convert_file(src_path: str, dst_path: str, compression: str = "gzip",
     dst_mb = os.path.getsize(dst_path) / 1e6
     summary.update({"src_mb": src_mb, "dst_mb": dst_mb,
                     "ratio": src_mb / dst_mb if dst_mb else 0.0,
-                    "seconds": time.time() - t0})
+                    "seconds": time.time() - t0, "warnings": warnings})
     if verbose:
         print(f"  {src_mb:8.1f} MB -> {dst_mb:7.1f} MB  "
               f"({summary['ratio']:.1f}x)  in {summary['seconds']:.1f}s")
@@ -223,7 +228,20 @@ def convert_directory(input_dir: str, output_dir: str, sample: str,
     os.makedirs(output_dir, exist_ok=True)
     print(f"Converting {len(inputs)} file(s) from {input_dir}")
 
+    # Productions drift between files: check before writing anything, so a
+    # renamed or missing branch is a loud failure rather than a silent column.
+    schemas = [collect_h5(p) for p in inputs]
+    differences = compare(schemas)
+    if differences:
+        print("\nInput files do not share one schema:")
+        for d in differences:
+            print(f"  ! {d}")
+        raise ValueError("inconsistent input schema; convert the groups separately "
+                         "or fix the production")
+    print(f"schema: {len(schemas[0].columns)} fields, consistent across all files")
+
     files_meta = []
+    all_warnings: set = set()
     for i, src in enumerate(inputs):
         dst = os.path.join(output_dir, os.path.basename(src))
         if os.path.exists(dst) and not overwrite:
@@ -235,6 +253,7 @@ def convert_directory(input_dir: str, output_dir: str, sample: str,
             continue
         print(f"[{i + 1}/{len(inputs)}] {os.path.basename(src)}")
         summary = convert_file(src, dst, compression=compression, complevel=complevel)
+        all_warnings.update(summary.get("warnings", []))
         files_meta.append({
             "file": os.path.basename(dst),
             "n_events": summary["n_events"],
@@ -261,6 +280,11 @@ def convert_directory(input_dir: str, output_dir: str, sample: str,
     manifest_path = os.path.join(output_dir, "manifest.json")
     with open(manifest_path, "w") as fh:
         json.dump(manifest, fh, indent=2)
+
+    if all_warnings:
+        print(f"\ncontent warnings ({len(all_warnings)}):")
+        for w in sorted(all_warnings):
+            print(f"  ! {w}")
 
     total_src = sum(m.get("src_mb", 0.0) for m in files_meta)
     total_dst = sum(m.get("dst_mb", 0.0) for m in files_meta)
