@@ -20,9 +20,11 @@ import keras
 import numpy as np
 from keras import layers, ops
 
-from .layers import AttentionPooling, MaskedAveragePooling, TransformerBlock
+from .layers import (AttentionPooling, MaskedAveragePooling,
+                     SelectionWeightedTime, TransformerBlock)
 
-POOLINGS = ("attention", "average", "masked_average", "max", "sum", "flatten")
+POOLINGS = ("attention", "average", "masked_average", "max", "sum", "flatten",
+            "selection_weighted_time")
 MASKED_POOLINGS = ("attention", "masked_average")
 WEIGHTS_FILE = "model.weights.h5"
 SPEC_FILE = "model_spec.json"
@@ -106,18 +108,17 @@ def build_model(model_spec: dict) -> keras.Model:
          "optimizer": {"type": "adam", "learning_rate": 1e-3}}
     """
     inputs: Dict[str, keras.KerasTensor] = {}
-    branches = []
+    branches, deferred = [], []
 
-    for name, block in model_spec["blocks"].items():
+    def encode(name, block):
+        """Inputs and per-object embeddings for one block."""
         max_items, n_features = block["shape"]
         x_in = layers.Input(shape=(max_items, n_features), name=f"{name}_input")
         inputs[f"{name}_input"] = x_in
-
         mask = None
         if block.get("mask"):
             mask = layers.Input(shape=(max_items,), dtype="bool", name=f"{name}_mask")
             inputs[f"{name}_mask"] = mask
-
         encoder = dict(block.get("encoder") or {})
         kind = encoder.get("type", "mlp")
         if kind == "mlp":
@@ -126,11 +127,20 @@ def build_model(model_spec: dict) -> keras.Model:
             x = _transformer(x_in, encoder, name, mask=mask)
         else:
             raise ValueError(f"{name}: unknown encoder type {kind!r}")
+        return x_in, x, mask, encoder
 
+    for name, block in model_spec["blocks"].items():
+        x_in, x, mask, encoder = encode(name, block)
         pooling = encoder.get("pooling", "average")
-        if pooling in MASKED_POOLINGS and mask is None:
+        if (pooling in MASKED_POOLINGS or pooling == "selection_weighted_time") \
+                and mask is None:
             raise ValueError(f"block {name!r} uses {pooling} pooling but emits no "
                              f"mask; set emit_mask: true on the block")
+        if pooling == "selection_weighted_time":
+            # Needs the other blocks first: its whole point is to score objects
+            # against what the rest of the event says.
+            deferred.append((name, block, x_in, x, mask, encoder))
+            continue
         branches.append(_pool(x, pooling, encoder, name, mask=mask))
 
     event_dim = int(model_spec.get("event_dim", 0))
@@ -141,8 +151,38 @@ def build_model(model_spec: dict) -> keras.Model:
         branches.append(_mlp(event_in, event_cfg, "event")
                         if event_cfg.get("units") else event_in)
 
-    if not branches:
+    if not branches and not deferred:
         raise ValueError("model spec defines no inputs")
+
+    for name, block, x_in, x, mask, encoder in deferred:
+        if not branches:
+            raise ValueError(f"block {name!r} scores its objects against the rest of "
+                             f"the event, so the model needs at least one other input")
+        context = (branches[0] if len(branches) == 1
+                   else layers.Concatenate(name=f"{name}_context")(branches))
+        cfg = block.get("time_head") or {}
+        if "time_index" not in cfg:
+            raise ValueError(f"block {name!r}: selection_weighted_time needs a "
+                             f"time_head spec (time_index, res_index, scales)")
+        raw = layers.Lambda(
+            lambda t, i=cfg["time_index"], j=cfg["res_index"]:
+                ops.stack([t[..., i], t[..., j]], axis=-1),
+            output_shape=lambda sh: (sh[0], sh[1], 2), name=f"{name}_raw")(x_in)
+        if mask is None:
+            raise ValueError(f"block {name!r}: selection_weighted_time needs the "
+                             f"block's mask; set emit_mask: true")
+        summary, _weights = SelectionWeightedTime(
+            time_scale=cfg.get("time_scale", (0.0, 1.0)),
+            res_scale=cfg.get("res_scale", (0.0, 1.0)),
+            hidden_units=int(encoder.get("attention_units", 32)),
+            name=f"{name}_selection")([x, raw, context, mask])
+        # The explicit estimate is an addition to the learned representation,
+        # not a replacement: collapsing the block to two numbers throws away
+        # everything the encoder found that the weighted mean does not express.
+        pooled = _pool(x, encoder.get("summary_pooling", "masked_average"),
+                       encoder, name, mask=mask)
+        branches.append(layers.Concatenate(name=f"{name}_combined")([pooled, summary]))
+
     x = branches[0] if len(branches) == 1 else layers.Concatenate(name="combine")(branches)
 
     head = model_spec.get("head") or {}
@@ -159,9 +199,19 @@ def build_model(model_spec: dict) -> keras.Model:
         # claiming picosecond precision on hundred-picosecond residuals spends
         # its first epochs undoing that instead of learning.
         sigma0 = float(loss_cfg.get("sigma_init", 100.0))
-        output = layers.Dense(
-            2, name="vertex_time",
+        lo, hi = (float(loss_cfg.get("sigma_min", 5.0)),
+                  float(loss_cfg.get("sigma_max", 2000.0)))
+        raw = layers.Dense(
+            2, name="vertex_time_raw",
             bias_initializer=keras.initializers.Constant([0.0, 2 * np.log(sigma0)]))(x)
+        # Hold the width inside a range anyone would believe. Without a ceiling
+        # the beta-weighted likelihood is unbounded in log-variance, and a head
+        # whose mean starts far from the target can walk off to infinity
+        # before it ever learns to predict the mean.
+        output = layers.Lambda(
+            lambda t, a=2 * np.log(lo), b=2 * np.log(hi):
+                ops.stack([t[..., 0], ops.clip(t[..., 1], a, b)], axis=-1),
+            output_shape=lambda sh: sh, name="vertex_time")(raw)
     else:
         output = layers.Dense(1, name="vertex_time")(x)
 
@@ -236,16 +286,32 @@ def _make_optimizer(cfg: dict):
 def model_spec_from_assembly(assembly, head: dict, loss: dict, optimizer: dict,
                              event_encoder: Optional[dict] = None,
                              name: str = "block_model",
-                             event_dim: Optional[int] = None) -> dict:
+                             event_dim: Optional[int] = None,
+                             norm: Optional[dict] = None) -> dict:
     """Derive a model spec from an :class:`AssemblySpec` plus head/loss settings.
 
     ``event_dim`` overrides the count taken from the spec; pass the prepared
     data's ``event_feature_names`` length when a sample tag was appended.
     """
-    blocks = {bname: {"shape": [bspec.max_items, len(bspec.features)],
-                      "mask": bool(bspec.emit_mask),
-                      "encoder": dict(bspec.encoder)}
-              for bname, bspec in assembly.blocks.items()}
+    blocks = {}
+    for bname, bspec in assembly.blocks.items():
+        entry = {"shape": [bspec.max_items, len(bspec.features)],
+                 "mask": bool(bspec.emit_mask), "encoder": dict(bspec.encoder)}
+        if bspec.encoder.get("pooling") == "selection_weighted_time":
+            names = bspec.feature_names
+            missing = [f for f in ("time", "time_res") if f not in names]
+            if missing:
+                raise ValueError(f"block {bname!r}: selection_weighted_time needs "
+                                 f"{missing} among its features")
+            stats = (norm or {}).get("blocks", {}).get(bname)
+            scale = (lambda f: [float(stats["mean"][names.index(f)]),
+                                float(stats["std"][names.index(f)])]) if stats \
+                else (lambda f: [0.0, 1.0])
+            entry["time_head"] = {"time_index": names.index("time"),
+                                  "res_index": names.index("time_res"),
+                                  "time_scale": scale("time"),
+                                  "res_scale": scale("time_res")}
+        blocks[bname] = entry
     return {"name": name, "blocks": blocks,
             "event_dim": (len(assembly.event_features) if event_dim is None
                           else int(event_dim)),

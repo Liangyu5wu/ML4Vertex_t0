@@ -103,7 +103,8 @@ def main():
     model_spec = model_spec_from_assembly(
         spec, head=cfg.get("head", {}), loss=cfg.get("loss", {}),
         optimizer=cfg.get("optimizer", {}), event_encoder=cfg.get("event_encoder"),
-        name=cfg["model_name"], event_dim=len(data.event_feature_names))
+        name=cfg["model_name"], event_dim=len(data.event_feature_names),
+        norm=data.norm)
 
     train_cfg = cfg.get("training", {})
     strategy, n_replicas = get_strategy()
