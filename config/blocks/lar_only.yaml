@@ -1,0 +1,61 @@
+# LAr only: calorimeter cells + jets + LAr tracks.
+# The three configs in config/blocks/ differ only in 'inputs:'.
+#
+#   python scripts/train_blocks.py --config config/blocks/lar_only.yaml
+#   ... --datasets ttbar        # or vbf_hinv; omit for the mixture
+
+model_name: lar_only
+model_dir: /pscratch/sd/l/liangyu/vertextiming/models/lar_only
+
+data:
+  datasets:
+    - {name: ttbar,    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/ttbar}
+    - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/compact/vbf_hinv}
+  balance: true            # equalise each sample's contribution to the loss
+  sample_onehot: false     # tell the network which sample an event came from
+  target: HSvertex_time
+  event_features: [HSvertex_reco_x, HSvertex_reco_y, HSvertex_reco_z]
+  split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
+
+  inputs:
+    cells:
+      preset: lar_cells
+      max_items: 60
+      min_items: 1
+      select:
+        - {field: layer, in: [1, 2, 3]}
+        - time_quality:
+            n_sigma: 3.0
+            vertex_sigma: 175.0          # HS vertex time resolution [ps]
+            calibration: sigma_only_test_calibration.txt
+            apply_calibration: false
+      encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention, attention_units: 32}
+
+    jets:
+      preset: antikt4_jets
+      max_items: 7
+      encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
+
+    tracks:
+      preset: hs_tracks
+      max_items: 30
+      encoder: {units: [64, 32], dropout: [0.1, 0.1], batch_norm: true, pooling: masked_average}
+
+head:
+  units: [128, 64, 32, 16]
+  dropout: [0.2, 0.1, 0.1, 0.1]
+  batch_norm: false
+
+loss: {type: huber, delta: 100.0}
+optimizer: {type: adam, learning_rate: 0.001}
+
+training:
+  epochs: 200
+  batch_size: 256
+  early_stopping_patience: 20
+  lr_reduction_factor: 0.5
+  lr_patience: 8
+  min_lr: 1.0e-7
+
+evaluation:
+  fit: {method: double_gaussian, pileup_sigma: 175.74, fix_pileup_sigma: true}

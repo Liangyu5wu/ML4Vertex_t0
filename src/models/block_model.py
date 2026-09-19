@@ -1,0 +1,218 @@
+"""Build a Keras model from input-block specs.
+
+One builder covers every architecture the repo used to keep as a separate
+class: which blocks exist, what encoder sits on each and how it is pooled all
+come from the same specs that drive the data pipeline, so a "multi-input DNN
+with HGTD" and an "HGTD-only DNN" differ only by their ``inputs:`` stanza.
+
+Models are saved as weights plus a JSON spec and rebuilt on load, which keeps
+checkpoints readable across Keras versions -- the repo's older ``model.h5``
+files can no longer be deserialized at all.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Dict, List, Optional
+
+import keras
+from keras import layers, ops
+
+from .layers import AttentionPooling, MaskedAveragePooling, TransformerBlock
+
+POOLINGS = ("attention", "average", "masked_average", "max", "sum", "flatten")
+MASKED_POOLINGS = ("attention", "masked_average")
+WEIGHTS_FILE = "model.weights.h5"
+SPEC_FILE = "model_spec.json"
+
+
+def _as_list(value, n: int, what: str) -> List:
+    """Broadcast a scalar to ``n`` entries, or check an explicit list's length."""
+    if isinstance(value, (list, tuple)):
+        if len(value) != n:
+            raise ValueError(f"{what}: expected {n} entries, got {len(value)}")
+        return list(value)
+    return [value] * n
+
+
+def _mlp(x, cfg: dict, name: str):
+    units = list(cfg.get("units", [64, 32]))
+    dropouts = _as_list(cfg.get("dropout", 0.1), len(units), f"{name} dropout")
+    activation = cfg.get("activation", "relu")
+    batch_norm = bool(cfg.get("batch_norm", False))
+    for i, (u, d) in enumerate(zip(units, dropouts)):
+        x = layers.Dense(u, activation=activation, name=f"{name}_dense_{i}")(x)
+        if batch_norm:
+            x = layers.BatchNormalization(name=f"{name}_bn_{i}")(x)
+        if d:
+            x = layers.Dropout(d, name=f"{name}_dropout_{i}")(x)
+    return x
+
+
+def _transformer(x, cfg: dict, name: str, mask=None):
+    d_model = int(cfg.get("d_model", 64))
+    x = layers.Dense(d_model, name=f"{name}_projection")(x)
+    for i in range(int(cfg.get("num_blocks", 2))):
+        x = TransformerBlock(d_model=d_model,
+                             num_heads=int(cfg.get("num_heads", 4)),
+                             dff=int(cfg.get("dff", 4 * d_model)),
+                             dropout=float(cfg.get("dropout", 0.1)),
+                             name=f"{name}_block_{i}")(x, mask=mask)
+    return x
+
+
+def _pool(x, how: str, cfg: dict, name: str, mask=None):
+    if how == "attention":
+        return AttentionPooling(hidden_units=int(cfg.get("attention_units", 32)),
+                                name=f"{name}_attention_pool")(x, mask=mask)
+    if how == "masked_average":
+        return MaskedAveragePooling(name=f"{name}_masked_avg_pool")(x, mask=mask)
+    if how == "average":
+        return layers.GlobalAveragePooling1D(name=f"{name}_avg_pool")(x)
+    if how == "max":
+        return layers.GlobalMaxPooling1D(name=f"{name}_max_pool")(x)
+    if how == "sum":
+        return layers.Lambda(lambda t: ops.sum(t, axis=1),
+                             output_shape=lambda s: (s[0], s[-1]),
+                             name=f"{name}_sum_pool")(x)
+    if how == "flatten":
+        return layers.Flatten(name=f"{name}_flatten")(x)
+    raise ValueError(f"{name}: unknown pooling {how!r}; choose from {POOLINGS}")
+
+
+def needs_mask(encoder: dict) -> bool:
+    """True when the block's pooling or encoder consumes an attention mask."""
+    return encoder.get("pooling", "average") in MASKED_POOLINGS or \
+        encoder.get("type", "mlp") == "transformer"
+
+
+def build_model(model_spec: dict) -> keras.Model:
+    """Build and compile a model from a plain-dict spec.
+
+    The spec is JSON-serialisable so it can be saved next to the weights::
+
+        {"blocks": {"cells": {"shape": [60, 7], "mask": true,
+                              "encoder": {...}}, ...},
+         "event_dim": 3,
+         "head": {"units": [...], "dropout": [...]},
+         "loss": {"type": "huber", "delta": 100.0},
+         "optimizer": {"type": "adam", "learning_rate": 1e-3}}
+    """
+    inputs: Dict[str, keras.KerasTensor] = {}
+    branches = []
+
+    for name, block in model_spec["blocks"].items():
+        max_items, n_features = block["shape"]
+        x_in = layers.Input(shape=(max_items, n_features), name=f"{name}_input")
+        inputs[f"{name}_input"] = x_in
+
+        mask = None
+        if block.get("mask"):
+            mask = layers.Input(shape=(max_items,), dtype="bool", name=f"{name}_mask")
+            inputs[f"{name}_mask"] = mask
+
+        encoder = dict(block.get("encoder") or {})
+        kind = encoder.get("type", "mlp")
+        if kind == "mlp":
+            x = _mlp(x_in, encoder, name)
+        elif kind == "transformer":
+            x = _transformer(x_in, encoder, name, mask=mask)
+        else:
+            raise ValueError(f"{name}: unknown encoder type {kind!r}")
+
+        pooling = encoder.get("pooling", "average")
+        if pooling in MASKED_POOLINGS and mask is None:
+            raise ValueError(f"block {name!r} uses {pooling} pooling but emits no "
+                             f"mask; set emit_mask: true on the block")
+        branches.append(_pool(x, pooling, encoder, name, mask=mask))
+
+    event_dim = int(model_spec.get("event_dim", 0))
+    if event_dim:
+        event_in = layers.Input(shape=(event_dim,), name="event_input")
+        inputs["event_input"] = event_in
+        event_cfg = model_spec.get("event_encoder") or {}
+        branches.append(_mlp(event_in, event_cfg, "event")
+                        if event_cfg.get("units") else event_in)
+
+    if not branches:
+        raise ValueError("model spec defines no inputs")
+    x = branches[0] if len(branches) == 1 else layers.Concatenate(name="combine")(branches)
+
+    head = model_spec.get("head") or {}
+    x = _mlp(x, {"units": head.get("units", [128, 64, 32, 16]),
+                 "dropout": head.get("dropout", 0.1),
+                 "activation": head.get("activation", "relu"),
+                 "batch_norm": head.get("batch_norm", False)}, "head")
+    output = layers.Dense(1, name="vertex_time")(x)
+
+    model = keras.Model(inputs=inputs, outputs=output,
+                        name=model_spec.get("name", "block_model"))
+    model.compile(optimizer=_make_optimizer(model_spec.get("optimizer") or {}),
+                  loss=_make_loss(model_spec.get("loss") or {}),
+                  metrics=[keras.metrics.RootMeanSquaredError(name="rmse"),
+                           keras.metrics.MeanAbsoluteError(name="mae")],
+                  # Sample weights steer the loss; reported metrics stay
+                  # unweighted so they remain comparable across mixtures.
+                  weighted_metrics=[])
+    return model
+
+
+def _make_loss(cfg: dict):
+    kind = cfg.get("type", "mse")
+    if kind in ("mse", "mae"):
+        return kind
+    if kind == "huber":
+        return keras.losses.Huber(delta=float(cfg.get("delta", 100.0)))
+    raise ValueError(f"unsupported loss {kind!r}")
+
+
+def _make_optimizer(cfg: dict):
+    kind = cfg.get("type", "adam")
+    lr = float(cfg.get("learning_rate", 1e-3))
+    if kind == "adam":
+        return keras.optimizers.Adam(learning_rate=lr)
+    if kind == "adamw":
+        return keras.optimizers.AdamW(learning_rate=lr,
+                                      weight_decay=float(cfg.get("weight_decay", 1e-4)))
+    if kind == "sgd":
+        return keras.optimizers.SGD(learning_rate=lr,
+                                    momentum=float(cfg.get("momentum", 0.9)))
+    raise ValueError(f"unsupported optimizer {kind!r}")
+
+
+def model_spec_from_assembly(assembly, head: dict, loss: dict, optimizer: dict,
+                             event_encoder: Optional[dict] = None,
+                             name: str = "block_model",
+                             event_dim: Optional[int] = None) -> dict:
+    """Derive a model spec from an :class:`AssemblySpec` plus head/loss settings.
+
+    ``event_dim`` overrides the count taken from the spec; pass the prepared
+    data's ``event_feature_names`` length when a sample tag was appended.
+    """
+    blocks = {bname: {"shape": [bspec.max_items, len(bspec.features)],
+                      "mask": bool(bspec.emit_mask),
+                      "encoder": dict(bspec.encoder)}
+              for bname, bspec in assembly.blocks.items()}
+    return {"name": name, "blocks": blocks,
+            "event_dim": (len(assembly.event_features) if event_dim is None
+                          else int(event_dim)),
+            "event_encoder": event_encoder or {},
+            "head": head, "loss": loss, "optimizer": optimizer}
+
+
+def save_model(model: keras.Model, model_spec: dict, directory: str) -> None:
+    """Write weights + spec so the model can be rebuilt on any Keras version."""
+    os.makedirs(directory, exist_ok=True)
+    model.save_weights(os.path.join(directory, WEIGHTS_FILE))
+    with open(os.path.join(directory, SPEC_FILE), "w") as fh:
+        json.dump(model_spec, fh, indent=2)
+
+
+def load_model(directory: str) -> keras.Model:
+    """Rebuild a model from its spec and load the saved weights."""
+    with open(os.path.join(directory, SPEC_FILE)) as fh:
+        model_spec = json.load(fh)
+    model = build_model(model_spec)
+    model.load_weights(os.path.join(directory, WEIGHTS_FILE))
+    return model
