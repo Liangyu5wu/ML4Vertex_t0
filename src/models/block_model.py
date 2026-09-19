@@ -76,6 +76,20 @@ def _transformer(x, cfg: dict, name: str, mask=None):
     return x
 
 
+def _occupancy(mask, max_items: int, name: str):
+    """How many real objects the block had, as a fraction of its capacity.
+
+    Pooling averages away the count, yet the count is exactly what says how
+    well an event can be measured -- two timed tracks and twenty are not the
+    same evidence. Without this the model cannot tell them apart, nor tell an
+    empty block from one whose objects happen to average to zero.
+    """
+    return layers.Lambda(
+        lambda m, n=float(max_items): ops.sum(ops.cast(m, "float32"), axis=1,
+                                              keepdims=True) / n,
+        output_shape=lambda sh: (sh[0], 1), name=f"{name}_occupancy")(mask)
+
+
 def _pool(x, how: str, cfg: dict, name: str, mask=None):
     if how == "attention":
         return AttentionPooling(hidden_units=int(cfg.get("attention_units", 32)),
@@ -141,7 +155,11 @@ def build_model(model_spec: dict) -> keras.Model:
             # against what the rest of the event says.
             deferred.append((name, block, x_in, x, mask, encoder))
             continue
-        branches.append(_pool(x, pooling, encoder, name, mask=mask))
+        pooled = _pool(x, pooling, encoder, name, mask=mask)
+        if mask is not None:
+            pooled = layers.Concatenate(name=f"{name}_pooled")(
+                [pooled, _occupancy(mask, block["shape"][0], name)])
+        branches.append(pooled)
 
     event_dim = int(model_spec.get("event_dim", 0))
     if event_dim:
@@ -181,7 +199,8 @@ def build_model(model_spec: dict) -> keras.Model:
         # everything the encoder found that the weighted mean does not express.
         pooled = _pool(x, encoder.get("summary_pooling", "masked_average"),
                        encoder, name, mask=mask)
-        branches.append(layers.Concatenate(name=f"{name}_combined")([pooled, summary]))
+        branches.append(layers.Concatenate(name=f"{name}_combined")(
+            [pooled, summary, _occupancy(mask, block["shape"][0], name)]))
 
     x = branches[0] if len(branches) == 1 else layers.Concatenate(name="combine")(branches)
 
