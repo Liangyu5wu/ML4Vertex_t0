@@ -16,14 +16,17 @@ pushed through those scalers so padded slots stay where the config put them.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import pickle
 import zlib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .blocks import BlockSpec, load_block, spec_from_config
+from .blocks import BlockSpec, load_block, source_fields, spec_from_config
 from .event_store import EventStore, RaggedBlock, pad_ragged
 
 SPLITS = ("train", "val", "test")
@@ -67,6 +70,28 @@ class AssemblySpec:
     split: SplitConfig = field(default_factory=SplitConfig)
     balance: bool = False          # equalise the loss contribution of each sample
     sample_onehot: bool = False    # append a one-hot sample tag to the event features
+    cache_dir: Optional[str] = None   # where prepared tensors are kept
+
+    def fingerprint(self) -> str:
+        """Hash of everything that changes the tensors this spec produces."""
+        payload = {
+            "datasets": [(d.name, os.path.abspath(d.path), d.files, d.fraction,
+                          d.max_events) for d in self.datasets],
+            "blocks": {name: {
+                "source": b.source, "features": b.feature_names,
+                "selections": b.selections, "sort_by": b.sort_by,
+                "descending": b.descending, "max_items": b.max_items,
+                "min_items": b.min_items, "pad_in": b.pad_in,
+                "pads": b.pad_values, "normalize": b.normalize_flags,
+                "emit_mask": b.emit_mask,
+            } for name, b in sorted(self.blocks.items())},
+            "event_features": self.event_features, "target": self.target,
+            "split": (self.split.test_size, self.split.val_split,
+                      self.split.random_state),
+            "sample_onehot": self.sample_onehot,
+        }
+        return hashlib.sha1(json.dumps(payload, sort_keys=True,
+                                       default=str).encode()).hexdigest()[:16]
 
     @classmethod
     def from_config(cls, cfg: dict) -> "AssemblySpec":
@@ -78,7 +103,10 @@ class AssemblySpec:
                    event_features=list(cfg.get("event_features") or []),
                    target=cfg.get("target", "HSvertex_time"), split=split,
                    balance=bool(cfg.get("balance", False)),
-                   sample_onehot=bool(cfg.get("sample_onehot", False)))
+                   sample_onehot=bool(cfg.get("sample_onehot", False)),
+                   cache_dir=cfg.get("cache_dir") or os.environ.get(
+                       "VERTEX_T0_CACHE",
+                       "/pscratch/sd/l/liangyu/vertextiming/prepared_cache"))
 
 
 # --------------------------------------------------------------------------
@@ -123,7 +151,18 @@ def load_sample(source: DatasetSource, spec: AssemblySpec,
                 verbose: bool = True) -> SampleData:
     """Read one store, apply block selections, and drop events that fail min_items."""
     store = EventStore(source.path, files=source.files, sample=source.name)
-    blocks = {name: load_block(store, bspec) for name, bspec in spec.blocks.items()}
+
+    # Read every source collection once, with the union of the fields the
+    # specs using it need, then hand the same array to each of them.
+    needed: Dict[str, set] = {}
+    for bspec in spec.blocks.values():
+        needed.setdefault(bspec.source, set()).update(
+            source_fields(store, bspec).values())
+    raw = {src: store.block(src, fields=sorted(fields))
+           for src, fields in needed.items()}
+    blocks = {name: load_block(store, bspec, raw=raw[bspec.source])
+              for name, bspec in spec.blocks.items()}
+    del raw
 
     keep = np.ones(store.n_events, dtype=bool)
     for name, bspec in spec.blocks.items():
@@ -276,14 +315,84 @@ class PreparedData:
         return inputs, target, prov
 
 
+def _cache_paths(spec: AssemblySpec) -> Optional[Tuple[str, str]]:
+    if not spec.cache_dir:
+        return None
+    key = spec.fingerprint()
+    base = os.path.join(spec.cache_dir, key)
+    return base + ".npz", base + ".pkl"
+
+
+def load_cached(spec: AssemblySpec, verbose: bool = True) -> Optional[PreparedData]:
+    """Return the prepared tensors for this spec if they are already on disk."""
+    paths = _cache_paths(spec)
+    if not paths or not all(os.path.exists(p) for p in paths):
+        return None
+    npz_path, pkl_path = paths
+    with open(pkl_path, "rb") as fh:
+        meta = pickle.load(fh)
+    arrays = np.load(npz_path)
+    inputs = {s: {} for s in SPLITS}
+    targets, weights, provenance = {}, {}, {s: {} for s in SPLITS}
+    for key in arrays.files:
+        split, _, name = key.partition("/")
+        if name == "__target__":
+            targets[split] = arrays[key]
+        elif name == "__weight__":
+            weights[split] = arrays[key]
+        elif name.startswith("prov:"):
+            provenance[split][name[5:]] = arrays[key]
+        else:
+            inputs[split][name] = arrays[key]
+    if verbose:
+        print(f"  prepared tensors from cache: {npz_path}")
+    return PreparedData(inputs, targets, weights, provenance, meta["norm"],
+                        meta["dataset_names"], spec, meta["event_feature_names"])
+
+
+def save_cached(spec: AssemblySpec, data: "PreparedData", verbose: bool = True) -> None:
+    paths = _cache_paths(spec)
+    if not paths:
+        return
+    npz_path, pkl_path = paths
+    os.makedirs(os.path.dirname(npz_path), exist_ok=True)
+    arrays = {}
+    for split in SPLITS:
+        for name, value in data.inputs[split].items():
+            arrays[f"{split}/{name}"] = value
+        arrays[f"{split}/__target__"] = data.targets[split]
+        arrays[f"{split}/__weight__"] = data.weights[split]
+        for name, value in data.provenance[split].items():
+            arrays[f"{split}/prov:{name}"] = value
+    tmp = f"{npz_path}.{os.getpid()}.tmp.npz"     # np.savez appends .npz itself
+    np.savez(tmp[:-4], **arrays)
+    os.replace(tmp, npz_path)
+    with open(pkl_path, "wb") as fh:
+        pickle.dump({"norm": data.norm, "dataset_names": data.dataset_names,
+                     "event_feature_names": data.event_feature_names}, fh)
+    if verbose:
+        print(f"  prepared tensors cached: {npz_path} "
+              f"({os.path.getsize(npz_path) / 1e9:.1f} GB)")
+
+
 def prepare(spec: AssemblySpec, verbose: bool = True,
-            norm: Optional[Dict[str, dict]] = None) -> PreparedData:
+            norm: Optional[Dict[str, dict]] = None,
+            use_cache: bool = True) -> PreparedData:
     """Load every sample, split, fit scalers on train, and build padded tensors.
 
     Pass ``norm`` to reuse scalers fitted during training -- that is what makes
     evaluating an existing model on a new sample independent of the sample it
     was trained on.
     """
+    # Reusing scalers means the caller is scoring a different sample; that is a
+    # one-off, so it does not go through the cache.  Keep the answer now: `norm`
+    # itself is reassigned below once the scalers are fitted.
+    reuse_norm = norm is not None
+    if use_cache and not reuse_norm:
+        cached = load_cached(spec, verbose=verbose)
+        if cached is not None:
+            return cached
+
     if verbose:
         print(f"Loading {len(spec.datasets)} dataset(s): "
               f"{[d.name for d in spec.datasets]}")
@@ -352,8 +461,11 @@ def prepare(spec: AssemblySpec, verbose: bool = True,
         print("  inputs: " + ", ".join(
             f"{k}{tuple(v.shape[1:])}" for k, v in inputs["train"].items()))
 
-    return PreparedData(inputs, targets, weights, provenance, norm, names, spec,
-                        event_feature_names)
+    prepared = PreparedData(inputs, targets, weights, provenance, norm, names,
+                            spec, event_feature_names)
+    if use_cache and not reuse_norm:
+        save_cached(spec, prepared, verbose=verbose)
+    return prepared
 
 
 def _concat_blocks(name: str, parts: Sequence[RaggedBlock]) -> RaggedBlock:

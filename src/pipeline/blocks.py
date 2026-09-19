@@ -383,19 +383,34 @@ def _selection_mask(cols: Dict[str, np.ndarray], rule: dict) -> np.ndarray:
     return mask
 
 
-def load_block(store: EventStore, spec: BlockSpec) -> RaggedBlock:
-    """Read, select and sort one block; columns come back under logical names."""
+def source_fields(store: EventStore, spec: BlockSpec) -> Dict[str, str]:
+    """Logical feature name -> the field it resolves to in this store."""
     available = store.block_fields(spec.source)
-    wanted = spec.all_features()
-    mapping = {f.name: f.resolve(available) for f in wanted}
+    return {f.name: f.resolve(available) for f in spec.all_features()}
 
-    raw = store.block(spec.source, fields=sorted(set(mapping.values())))
+
+def load_block(store: EventStore, spec: BlockSpec,
+               raw: Optional[RaggedBlock] = None) -> RaggedBlock:
+    """Read, select and sort one block; columns come back under logical names.
+
+    ``raw`` lets the caller pass a block that has already been read -- two
+    specs often share a source (LAr and HGTD tracks are one collection), and
+    reading it twice is the single most expensive thing this module does.
+    """
+    mapping = source_fields(store, spec)
+    if raw is None:
+        raw = store.block(spec.source, fields=sorted(set(mapping.values())))
     block = RaggedBlock(spec.name,
                         {logical: raw[source] for logical, source in mapping.items()},
                         raw.offsets)
 
-    for rule in spec.selections:
-        block = block.select(_selection_mask(block.columns, rule))
+    # Combine the rules into one mask: each is an element-wise predicate, and
+    # applying them one at a time would copy every column once per rule.
+    if spec.selections:
+        mask = np.ones(block.n_items, dtype=bool)
+        for rule in spec.selections:
+            mask &= _selection_mask(block.columns, rule)
+        block = block.select(mask)
 
     if spec.sort_by:
         keys = [spec.sort_by] if isinstance(spec.sort_by, str) else list(spec.sort_by)
@@ -403,10 +418,14 @@ def load_block(store: EventStore, spec: BlockSpec) -> RaggedBlock:
         if missing:
             raise KeyError(f"block {spec.name!r}: sort_by {missing} not among the "
                            f"loaded fields ({sorted(block.columns)})")
-        sign = -1.0 if spec.descending else 1.0
-        # lexsort applies the last key first, so keys go least- to most-significant.
-        lex_keys = [sign * block[k].astype(np.float64) for k in reversed(keys)]
-        order = np.lexsort(tuple(lex_keys) + (block.event_index(),))
+        sign = np.float32(-1.0 if spec.descending else 1.0)
+        # lexsort applies the last key first, so keys go least- to most-
+        # significant.  float32/int32 keys halve the memory traffic, which is
+        # what this costs on a hundred million objects.
+        lex_keys = [sign * block[k].astype(np.float32, copy=False)
+                    for k in reversed(keys)]
+        order = np.lexsort(tuple(lex_keys)
+                           + (block.event_index().astype(np.int32, copy=False),))
         block = RaggedBlock(block.name,
                             {f: c[order] for f, c in block.columns.items()},
                             block.offsets)
