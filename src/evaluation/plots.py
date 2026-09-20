@@ -124,13 +124,14 @@ def _finish(ax, title: str, xlabel: str, ylabel: str, legend: bool) -> None:
 
 def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, dict]] = None,
                        window: float = 600.0, bins: int = 120, ax=None,
-                       density: Optional[bool] = None, logy: bool = False,
+                       logy: bool = False,
                        title: str = "Vertex time residual"):
     """Histogram of (predicted - true) per sample, with the fitted core overlaid.
 
-    With more than one sample the histograms are drawn as densities, because
-    the samples differ in size by a factor of several and the question being
-    asked of the plot is about shape.
+    Raw event counts, never a density: a histogram in this project reports how
+    many events it has. Samples differ in size by a factor of two, so the
+    legend carries each one's count and the reader scales by eye rather than
+    being handed a normalisation they did not ask for.
     """
     from src.evaluation.summary import _gauss, _two_gauss
 
@@ -140,14 +141,12 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
     edges = np.linspace(-window, window, bins + 1)
     centres = 0.5 * (edges[1:] + edges[:-1])
     width = float(edges[1] - edges[0])
-    if density is None:
-        density = len(errors) > 1
 
     for i, (name, err) in enumerate(errors.items()):
         colour = colors[i % len(colors)]
         counts, _ = np.histogram(err, bins=edges)
-        scale = 1.0 / (len(err) * width) if density else 1.0
-        ax.stairs(counts * scale, edges, color=colour, linewidth=2.0, label=name)
+        ax.stairs(counts, edges, color=colour, linewidth=2.0,
+                  label=f"{name}  ({len(err):,})")
 
         fit = (fits or {}).get(name)
         if not fit or "sigma" not in fit:
@@ -162,14 +161,14 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
             curve = curve * (width / fit["bin_width"])
         else:
             curve = curve * (counts.max() / max(curve.max(), 1e-9))   # legacy files
-        ax.plot(centres, curve * scale, color=colour, linewidth=1.5, linestyle="--",
+        ax.plot(centres, curve, color=colour, linewidth=1.5, linestyle="--",
                 label=f"{name} fit  $\\sigma$ = {fit['sigma']:.1f} ps")
 
     ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
     if logy:
         ax.set_yscale("log")
-    _finish(ax, title, "predicted - true [ps]",
-            "events / ps (normalised)" if density else "events", legend=True)
+    _finish(ax, title, "predicted - true [ps]", f"events / {width:.0f} ps",
+            legend=True)
     return fig, ax
 
 
@@ -342,15 +341,18 @@ def pull_distribution(errors: np.ndarray, sigma: np.ndarray, window: float = 5.0
     edges = np.linspace(-window, window, bins + 1)
     centres = 0.5 * (edges[1:] + edges[:-1])
 
+    width = float(edges[1] - edges[0])
     counts, _ = np.histogram(pull, bins=edges)
-    ax.stairs(counts / (len(pull) * (edges[1] - edges[0])), edges,
-              color=colors[0], linewidth=2.0,
-              label=f"pull, width {inside.std():.2f}")
-    ax.plot(centres, np.exp(-0.5 * centres ** 2) / np.sqrt(2 * np.pi),
+    ax.stairs(counts, edges, color=colors[0], linewidth=2.0,
+              label=f"pull ({len(pull):,}), width {inside.std():.2f}")
+    # The reference is scaled to this histogram rather than the histogram to
+    # it, so the y axis stays a count.
+    ax.plot(centres, len(pull) * width * np.exp(-0.5 * centres ** 2)
+            / np.sqrt(2 * np.pi),
             color=t["axis"], linewidth=1.5, linestyle="--", label="unit Gaussian")
     ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
     _finish(ax, title, r"(predicted - true) / predicted $\sigma$",
-            "events (normalised)", legend=True)
+            f"events / {width:.2f}", legend=True)
     return fig, ax
 
 

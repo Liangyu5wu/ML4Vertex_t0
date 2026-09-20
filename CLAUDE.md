@@ -33,8 +33,12 @@ adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
 - Anything expensive that depends only on settings gets a fingerprint and is
   reused — the event store and the tensor cache both work this way. Extend
   that pattern rather than adding a workflow engine.
-- All figures go through `src/evaluation/plots.py`. Read the `dataviz` skill
-  before adding a plot type.
+- All figures go through `src/evaluation/plots.py`, in the ATLAS house style
+  it sets: closed black frame, ticks inward on all four sides with minors, no
+  grid, type at 15-17pt. Read the `dataviz` skill before adding a plot type.
+- **Histograms report event counts, never a density.** Label the axis
+  `events / <bin width>` and put each sample's count in the legend; do not
+  normalise so that two samples overlay neatly.
 - **Every training keeps its record**: `record.md`, `history.csv`,
   `metrics.json` and `plots/history.png` are written unconditionally, even
   under `--no-plots` and for sweep trials. A run whose loss curve was never
