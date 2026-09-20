@@ -74,15 +74,37 @@ encoder, batch size, learning rate over 2e-4 to 6e-3, warmup, LR patience,
 the cell time-quality cut, the `significance` threshold at 2 against 4,
 `max_items` at 120 against 250, and the cell sort key.
 
+Also null: rescaling the time features. Cell time is heavy-tailed enough
+that a z-score left the signal region spanning 0.087 sigma, and nine of ten
+vertices carry a sentinel resolution that flattened the one real value into
+a hundredth of a sigma. Both were fixed -- `transform: {time: {asinh: 100}}`
+and `valid_when` -- and the 27 physics runs were repeated: every change fell
+between -1.3 and +1.1 ps, while `hgtd_only`, which contains no cells and
+should not have moved at all, moved by +3.6. The fixes are kept because
+they are right, not because they pay: a first Dense layer can learn a large
+weight, and nothing here is optimisation-limited.
+
 One thing was measurably worse: a transformer over the cell set, 37.4 +- 0.3
 against 35.2 +- 0.5 for MLP plus attention pooling.
 
 That `max_items` 250 does not beat 120, and that admitting every cell down to
 significance 2 does not either, says truncation and selection are not the
 constraint -- what the calorimeter can say has saturated. The open lead is
-vertex identification: the sum-pt^2 vertex is wrong in 5.3% of ttbar and
-18.6% of VBF events, and splitting by that accounted for the whole
-ttbar/VBF difference.
+vertex identification. Measured on 27 runs, three seeds each: with the
+mixed lar_hgtd training, ttbar reads 32.8 ps and VBF 46.5, but split on
+whether the highest-sum-pt^2 vertex is the true hard scatter (|dz| < 0.5 mm,
+which fails for 5.9% of ttbar and 20.4% of VBF events) they are 29.5 and
+28.4 -- identical. The entire ttbar/VBF gap is that rate. On the events
+where the vertex is wrong, q68 is 140-168 ps against a target spread of
+175, i.e. nothing is recoverable there, because the target belongs to one
+vertex and every input describes another.
+
+One caveat on the null list: everything on it except the transform was
+measured before the batch-mixing bug was fixed. Head normalization was
+retested afterwards and its verdict flipped, so `selection_weighted_time`
+-- the one head with a physics argument behind it, scoring each HGTD track
+against a context that contains the calorimeter -- should be retested
+before it is believed dead.
 
 Two rules that came out of the process:
 
