@@ -33,6 +33,9 @@ config/blocks/*.yaml                     one file per experiment
 calibration_data/*.txt                   per-layer cell time resolutions
 scripts/train_blocks.py                  training entry point
 scripts/evaluate_blocks.py               scoring, including on an unseen sample
+scripts/sweep.py                         hyper-parameter search
+scripts/audit_inputs.py                  one event, stage by stage
+config/sweeps/*.yaml                     search spaces, with what each found
 src/pipeline/
     ingest_root.py                       ROOT ntuple -> event store
     event_store.py  store_writer.py      read / write the store
@@ -43,12 +46,6 @@ src/pipeline/
 src/models/block_model.py  layers.py     model built from the same block specs
 src/evaluation/summary.py  plots.py  baseline.py
 src/runtime.py                           CPU / 1 GPU / multi-GPU strategy
-```
-
-```
-scripts/audit_inputs.py                  one event, stage by stage
-scripts/sweep.py                         hyper-parameter search
-config/sweeps/*.yaml                     search spaces, with what each found
 ```
 
 `audit_inputs.py` prints one event's path through selection, sorting,
