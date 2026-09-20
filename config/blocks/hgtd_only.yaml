@@ -14,7 +14,7 @@ data:
   - reco_vtx_z
   split:
     test_size: 0.2
-    val_split: 0.222222
+    val_split: 0.125
     random_state: 42
   inputs:
     hgtd_tracks:
