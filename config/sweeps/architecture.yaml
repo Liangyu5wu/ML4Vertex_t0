@@ -22,5 +22,5 @@ space:
   # small range rather than being assumed dead.
   data.inputs.cells.encoder.dropout:      {uniform: [0.0, 0.10]}
   data.inputs.hgtd_tracks.encoder.units:  [[32, 16], [64, 32], [128, 64]]
-  data.inputs.hgtd_tracks.encoder.pooling: [masked_average, attention, selection_weighted_time]
+  data.inputs.hgtd_tracks.encoder.pooling: [masked_average, attention]
   head.units:                             [[64, 32], [128, 64, 32, 16], [256, 128, 64, 32]]

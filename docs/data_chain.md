@@ -311,7 +311,9 @@ vector, concatenated and read out by a single head. Numbers below are for
   pooled mean destroys.
 - **Cells get attention pooling, the rest a masked average.** Both were
   measured on every block; the difference is inside the run-to-run spread, so
-  this is a default rather than a finding.
+  this is a default rather than a finding. A head that scored each HGTD track
+  against the calorimeter context and averaged by that probability was also
+  tried, and measured 0.0 +- 0.6 ps against a masked average.
 - **The head predicts two numbers**, a time and a log-variance, trained with a
   β-weighted Gaussian negative log-likelihood (β = 0.25). σ is clipped to
   [5, 2000] ps and its bias initialised at 100 ps, since a head that starts by

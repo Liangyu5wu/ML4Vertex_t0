@@ -334,8 +334,7 @@ def spec_from_config(name: str, cfg: dict) -> BlockSpec:
     # one is an easy mistake, so derive it from the encoder unless set explicitly.
     if not mask_was_explicit:
         pooling = spec.encoder.get("pooling", "average")
-        spec.emit_mask = pooling in ("attention", "masked_average",
-                                     "selection_weighted_time") or \
+        spec.emit_mask = pooling in ("attention", "masked_average") or \
             spec.encoder.get("type") == "transformer"
     return spec
 

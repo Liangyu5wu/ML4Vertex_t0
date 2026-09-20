@@ -67,8 +67,7 @@ Where the gain came from:
   model that does not overfit.
 
 Measured and found to do nothing, each within the 1-2 ps run-to-run spread:
-pooling (attention, masked average, and the `selection_weighted_time` head),
-encoder and head widths beyond [256,128,64] and [256,128,64,32] (wider heads
+pooling (attention against masked average), encoder and head widths beyond [256,128,64] and [256,128,64,32] (wider heads
 are *worse*), `head.norm` (layer, batch and none are identical), the event
 encoder, batch size, learning rate over 2e-4 to 6e-3, warmup, LR patience,
 the cell time-quality cut, the `significance` threshold at 2 against 4,
@@ -99,12 +98,20 @@ where the vertex is wrong, q68 is 140-168 ps against a target spread of
 175, i.e. nothing is recoverable there, because the target belongs to one
 vertex and every input describes another.
 
-One caveat on the null list: everything on it except the transform was
-measured before the batch-mixing bug was fixed. Head normalization was
-retested afterwards and its verdict flipped, so `selection_weighted_time`
--- the one head with a physics argument behind it, scoring each HGTD track
-against a context that contains the calorimeter -- should be retested
-before it is believed dead.
+A head that scored each HGTD track against a context containing the
+calorimeter, and averaged their times by that probability, was built and
+removed. It had the best physics argument of anything tried -- the LAr and
+HGTD combination is superadditive, 29.5 ps against the 35.8 that two
+independent measurements would give, so the calorimeter really is helping
+pick HGTD tracks -- and it measured 0.0 +- 0.6 ps against a masked average
+on identical tensors. An ordinary encoder already learns that; writing the
+mechanism out as a fixed formula added neither capacity nor a useful prior.
+Do not rebuild it (`git log --diff-filter=D` finds it).
+
+One caveat on the rest of the null list: everything on it except the
+transform and this head was measured before the batch-mixing bug was fixed,
+and head normalization was retested afterwards and flipped. Treat the
+others as provisional if one of them starts to matter.
 
 Two rules that came out of the process:
 
