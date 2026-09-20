@@ -1,0 +1,29 @@
+# Three things the architecture sweep does not touch, as an exact grid.
+#
+#   python scripts/sweep.py --space config/sweeps/loss_and_norm.yaml \
+#       --config ../sweeps/loss_and_norm_base.yaml --out ../sweeps/loss_and_norm
+#
+# A grid, not a random search, on purpose. The optimization sweep drew 24
+# random points over 7 parameters and came back with nothing significant
+# (the strongest trend, head dropout, reached only p = 0.07) -- that is what
+# an underpowered random search looks like. 4 x 3 x 2 lands on exactly 24
+# points and measures every beta at six settings, every norm at eight, so the
+# marginal effect of each is estimable instead of merely suggested.
+#
+# What is being asked:
+#   beta      unresolved by the optimization sweep -- as strong a trend as
+#             dropout, but the top four trials spanned 0.0 to 0.5.
+#   head.norm never measured. It currently defaults to "none", so the head is
+#             the one MLP in the model with no normalization at all.
+#   event_encoder  also never measured: the reco vertex position currently
+#             enters the concatenation raw, with no layer of its own. An
+#             empty unit list keeps that behaviour.
+
+trials: 24
+seed: 2
+epochs: 300
+
+space:
+  loss.beta:           [0.0, 0.25, 0.5, 1.0]
+  head.norm:           [none, layer, batch]
+  event_encoder.units: [[], [32, 16]]

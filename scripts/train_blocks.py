@@ -14,13 +14,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import sys
 import time
+from datetime import datetime
 
 import numpy as np
 import yaml
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
 
 from src.evaluation.summary import format_summary, split_prediction, summarize
 from src.models.block_model import build_model, model_spec_from_assembly, save_model
@@ -66,6 +69,27 @@ def apply_overrides(cfg: dict, args) -> dict:
     return cfg
 
 
+def linear_warmup(epochs: int, target_lr: float, start_fraction: float = 0.1):
+    """Ramp the learning rate up over the first ``epochs``, then step aside.
+
+    The heteroscedastic head starts with sigma far from the data's scale, so
+    the first gradients are large; a full-size step can push the model
+    somewhere it spends many epochs climbing back out of.
+
+    The warmup owns the learning rate while it runs, so keep it shorter than
+    ``lr_patience`` -- otherwise it would undo a plateau reduction.
+    """
+    import tensorflow as tf
+
+    class LinearWarmup(tf.keras.callbacks.Callback):
+        def on_epoch_begin(self, epoch, logs=None):
+            if epoch < epochs:
+                ramp = start_fraction + (1 - start_fraction) * (epoch + 1) / epochs
+                self.model.optimizer.learning_rate.assign(target_lr * ramp)
+
+    return LinearWarmup()
+
+
 def build_callbacks(cfg: dict, model_dir: str):
     import tensorflow as tf
     train = cfg.get("training", {})
@@ -79,7 +103,72 @@ def build_callbacks(cfg: dict, model_dir: str):
             min_lr=float(train.get("min_lr", 1e-7)), verbose=1),
         tf.keras.callbacks.CSVLogger(os.path.join(model_dir, "history.csv")),
     ]
+    warmup = int(train.get("warmup_epochs", 0))
+    if warmup > 0:
+        lr = float(cfg.get("optimizer", {}).get("learning_rate", 1e-3))
+        cbs.append(linear_warmup(warmup, lr))
     return cbs
+
+
+def write_record(path: str, cfg: dict, data, model, history, scored: dict,
+                 seconds: float) -> None:
+    """One page saying what was run and what came out.
+
+    Everything here is also in config.yaml / metrics.json / history.csv; the
+    point is that a run should be readable months later without opening any
+    of them.
+    """
+    import subprocess
+
+    def git(*cmd):
+        try:
+            return subprocess.check_output(("git",) + cmd, cwd=REPO,
+                                           stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            return "unknown"
+
+    losses = history.history.get("val_loss", [])
+    inputs = cfg.get("data", {}).get("inputs", {})
+    blocks = ", ".join(f"{key} ({spec.get('preset', key)})"
+                       for key, spec in inputs.items()) or "none"
+    samples = ", ".join(
+        f"{name} ({int((data.provenance['train']['dataset_id'] == i).sum())} train)"
+        for i, name in enumerate(data.dataset_names))
+    lines = [
+        f"# {cfg['model_name']}",
+        "",
+        f"{datetime.now():%Y-%m-%d %H:%M}  on {platform.node()}  "
+        f"in {seconds / 60:.1f} min",
+        f"commit {git('rev-parse', '--short', 'HEAD')}"
+        f"{' (dirty)' if git('status', '--porcelain') else ''}"
+        f" on {git('rev-parse', '--abbrev-ref', 'HEAD')}",
+        "",
+        "## Setup",
+        "",
+        f"- inputs      {blocks}",
+        f"- event feats {', '.join(data.event_feature_names) or 'none'}",
+        f"- samples     {samples}",
+        f"- target      {cfg['data']['target']}",
+        f"- loss        {cfg.get('loss', {})}",
+        f"- optimizer   {cfg.get('optimizer', {})}",
+        f"- training    {cfg.get('training', {})}",
+        f"- parameters  {model.count_params():,}",
+        "",
+        "## Result",
+        "",
+        f"- ran {len(history.history.get('loss', []))} epochs, best was "
+        f"{int(np.argmin(losses)) + 1 if losses else 0} "
+        f"(val loss {min(losses):.4f})" if losses else "- no epochs",
+        "",
+        "```",
+    ]
+    for split in ("val", "test"):
+        for name, stats in scored[split].items():
+            lines.append(format_summary(f"{split}/{name}", stats))
+    lines += ["```", "",
+              "Curves in `plots/history.png`, full numbers in `metrics.json`.", ""]
+    with open(path, "w") as fh:
+        fh.write("\n".join(lines))
 
 
 def main():
@@ -132,23 +221,31 @@ def main():
     with open(os.path.join(model_dir, "config.yaml"), "w") as fh:
         yaml.safe_dump(cfg, fh, sort_keys=False)
 
-    # Score the test split as a whole and per sample.
-    test_ds = make_tf_dataset(data, "test", batch_size, use_weights=False)
-    y_pred, sigma = split_prediction(model.predict(test_ds, verbose=0))
-    y_true = data.targets["test"]
+    # Score both splits: validation is what any tuning may look at, test is
+    # reported once and never optimised against.
     fit_cfg = cfg.get("evaluation", {}).get("fit")
+    scored = {}
+    for split in ("val", "test"):
+        ds = make_tf_dataset(data, split, batch_size, use_weights=False)
+        pred, sig = split_prediction(model.predict(ds, verbose=0))
+        truth = data.targets[split]
+        entry = {"all": summarize(truth, pred, sigma=sig, fit=fit_cfg)}
+        if len(data.dataset_names) > 1:
+            for name in data.dataset_names:
+                m = data.dataset_mask(split, name)
+                entry[name] = summarize(truth[m], pred[m],
+                                        sigma=None if sig is None else sig[m],
+                                        fit=fit_cfg)
+        scored[split] = entry
+        if split == "test":
+            y_pred, sigma, y_true = pred, sig, truth
 
     print("\n" + "=" * 74)
-    metrics = {"all": summarize(y_true, y_pred, sigma=sigma, fit=fit_cfg)}
-    print(format_summary("all", metrics["all"]))
-    if len(data.dataset_names) > 1:
-        for name in data.dataset_names:
-            m = data.dataset_mask("test", name)
-            metrics[name] = summarize(y_true[m], y_pred[m],
-                                      sigma=None if sigma is None else sigma[m],
-                                      fit=fit_cfg)
-            print(format_summary(name, metrics[name]))
+    for split in ("val", "test"):
+        for name, stats in scored[split].items():
+            print(format_summary(f"{split}/{name}", stats))
     print("=" * 74)
+    metrics = scored["test"]
 
     np.savez(os.path.join(model_dir, "predictions_test.npz"),
              y_true=y_true, y_pred=y_pred, errors=y_pred - y_true,
@@ -158,13 +255,19 @@ def main():
              file_index=data.provenance["test"]["file_index"],
              dataset_names=np.array(data.dataset_names))
     with open(os.path.join(model_dir, "metrics.json"), "w") as fh:
-        json.dump({"test": metrics,
+        json.dump({"val": scored["val"], "test": scored["test"],
                    "epochs_run": len(history.history.get("loss", [])),
+                   "best_epoch": int(np.argmin(history.history["val_loss"]) + 1),
                    "best_val_loss": float(min(history.history["val_loss"]))}, fh, indent=2)
-    print(f"\nsaved model, norm params, predictions and metrics to {model_dir}")
+    from src.evaluation import plots
+    # Every run keeps its curve and its one-page record, sweep trials included.
+    plots.save_training_history(model_dir)
+    write_record(os.path.join(model_dir, "record.md"), cfg, data, model,
+                 history, scored, time.time() - t0)
+    print(f"\nsaved model, norm params, predictions, metrics and record.md "
+          f"to {model_dir}")
 
     if not args.no_plots:
-        from src.evaluation import plots
         plots.report(model_dir)
 
 

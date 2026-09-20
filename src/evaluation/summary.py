@@ -89,6 +89,12 @@ def summarize(y_true: np.ndarray, y_pred: np.ndarray,
         "rmse": float(np.sqrt(np.mean(errors ** 2))),
         "mae": float(np.mean(np.abs(errors))),
         "bias": float(np.mean(errors)),
+        # The half-width holding 68% of the events. Unlike a fitted core width
+        # it cannot be improved by a worse model -- a fit will happily find a
+        # narrow peak inside a distribution that is nothing but the target's
+        # own spread -- so this is what automated ranking uses.
+        "q68": float(np.percentile(np.abs(errors), 68)) if len(errors) else float("nan"),
+        "q95": float(np.percentile(np.abs(errors), 95)) if len(errors) else float("nan"),
         "core_fraction": float(len(core) / len(errors)) if len(errors) else 0.0,
         "core_std": float(core.std()) if len(core) else float("nan"),
     }
@@ -109,8 +115,8 @@ def summarize(y_true: np.ndarray, y_pred: np.ndarray,
 
 
 def format_summary(name: str, stats: Dict[str, float]) -> str:
-    line = (f"{name:>14s}  n={stats['n_events']:6d}  RMSE={stats['rmse']:7.2f}  "
-            f"MAE={stats['mae']:7.2f}  bias={stats['bias']:+6.2f}  "
+    line = (f"{name:>16s}  n={stats['n_events']:6d}  q68={stats['q68']:6.1f}  "
+            f"RMSE={stats['rmse']:7.2f}  bias={stats['bias']:+6.2f}  "
             f"core({stats['core_fraction'] * 100:.0f}%)_std={stats['core_std']:6.2f}")
     if "sigma_median" in stats:
         line += (f"  pred_sigma={stats['sigma_median']:6.1f}"

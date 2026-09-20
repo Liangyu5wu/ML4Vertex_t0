@@ -364,12 +364,17 @@ def save_cached(spec: AssemblySpec, data: "PreparedData", verbose: bool = True) 
         arrays[f"{split}/__weight__"] = data.weights[split]
         for name, value in data.provenance[split].items():
             arrays[f"{split}/prov:{name}"] = value
+    # Both files go in atomically, and the sidecar goes first: a sweep starts
+    # several trials at once on a cold cache, and load_cached() gates on the
+    # npz, so the npz must be the last thing to appear.
+    tmp_pkl = f"{pkl_path}.{os.getpid()}.tmp"
+    with open(tmp_pkl, "wb") as fh:
+        pickle.dump({"norm": data.norm, "dataset_names": data.dataset_names,
+                     "event_feature_names": data.event_feature_names}, fh)
+    os.replace(tmp_pkl, pkl_path)
     tmp = f"{npz_path}.{os.getpid()}.tmp.npz"     # np.savez appends .npz itself
     np.savez(tmp[:-4], **arrays)
     os.replace(tmp, npz_path)
-    with open(pkl_path, "wb") as fh:
-        pickle.dump({"norm": data.norm, "dataset_names": data.dataset_names,
-                     "event_feature_names": data.event_feature_names}, fh)
     if verbose:
         print(f"  prepared tensors cached: {npz_path} "
               f"({os.path.getsize(npz_path) / 1e9:.1f} GB)")

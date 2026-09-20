@@ -1,0 +1,26 @@
+# What the model looks like. Wider/deeper encoders and the pooling choice.
+# Run this *after* the optimization sweep, based on its winning trial config:
+#
+#   python scripts/sweep.py --space config/sweeps/architecture.yaml \
+#       --config ../sweeps/optimization/trial_NNN/trial_config.yaml \
+#       --out ../sweeps/architecture
+#
+# No epoch cap worth the name: early stopping decides. The optimization sweep
+# ran into its 80-epoch ceiling -- its best trial was still improving when it
+# was cut off -- so the ceiling is now only there to bound a runaway.
+
+trials: 24
+seed: 1
+epochs: 300
+
+space:
+  data.inputs.cells.encoder.units:        [[64, 32], [128, 64, 32], [256, 128, 64]]
+  data.inputs.cells.encoder.pooling:      [attention, masked_average]
+  # Narrow, not absent: the optimization sweep found head dropout monotonically
+  # harmful (no train/val gap at all at 194k events vs 52k parameters), but
+  # encoder dropout acts per object rather than on the event, so it gets a
+  # small range rather than being assumed dead.
+  data.inputs.cells.encoder.dropout:      {uniform: [0.0, 0.10]}
+  data.inputs.hgtd_tracks.encoder.units:  [[32, 16], [64, 32], [128, 64]]
+  data.inputs.hgtd_tracks.encoder.pooling: [masked_average, attention, selection_weighted_time]
+  head.units:                             [[64, 32], [128, 64, 32, 16], [256, 128, 64, 32]]

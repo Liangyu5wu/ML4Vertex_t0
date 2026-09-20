@@ -1,0 +1,22 @@
+# How the model is trained, not what it looks like. These are the cheapest
+# knobs to get wrong and the cheapest to scan: no data changes, so every trial
+# reuses the same prepared tensors.
+#
+#   python scripts/sweep.py --config config/blocks/lar_hgtd.yaml \
+#       --space config/sweeps/optimization.yaml --out ../sweeps/optimization
+#
+# The epoch budget is deliberately absent: early stopping decides when to stop,
+# so what matters is the patience, and the budget only has to be large enough.
+
+trials: 24
+seed: 0
+epochs: 80
+
+space:
+  optimizer.learning_rate:          {log_uniform: [2.0e-4, 6.0e-3]}
+  training.batch_size:              [256, 512, 1024]
+  head.dropout:                     {uniform: [0.0, 0.30]}
+  loss.beta:                        [0.0, 0.25, 0.5, 1.0]
+  training.lr_reduction_factor:     [0.3, 0.5]
+  training.lr_patience:             [5, 8, 12]
+  training.warmup_epochs:           [0, 3, 5]    # keep below lr_patience

@@ -35,6 +35,14 @@ adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
   that pattern rather than adding a workflow engine.
 - All figures go through `src/evaluation/plots.py`. Read the `dataviz` skill
   before adding a plot type.
+- **Every training keeps its record**: `record.md`, `history.csv`,
+  `metrics.json` and `plots/history.png` are written unconditionally, even
+  under `--no-plots` and for sweep trials. A run whose loss curve was never
+  saved cannot be argued about afterwards.
+- Anything automated ranks on the **validation** split, and on `q68` rather
+  than a fitted core width — a double-Gaussian fit finds a narrow core in an
+  untrained model's residuals too, so it rewards models that learned nothing
+  (measured: identical degenerate runs fitted anywhere from 5.7 to 46 ps).
 - Models are saved as weights + `model_spec.json` and rebuilt on load; do not
   reintroduce whole-model serialization.
 - Store files are written to a temporary name and renamed, so an interrupted

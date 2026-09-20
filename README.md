@@ -80,6 +80,16 @@ python -m src.pipeline.ingest_root \
 python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml
 python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml --datasets ttbar
 
+# search hyper-parameters, one trial per GPU, ranked on the validation split
+python scripts/sweep.py --config config/blocks/lar_hgtd.yaml \
+    --space config/sweeps/optimization.yaml --out ../sweeps/optimization
+
+# the same sweep across two interactive jobs (the per-user limit), 8 GPUs:
+#   node A:  ... sweep.py --shard 0/2 --out ../sweeps/opt ...
+#   node B:  ... sweep.py --shard 1/2 --out ../sweeps/opt ...
+python scripts/sweep.py --report-only --out ../sweeps/opt \
+    --space config/sweeps/optimization.yaml       # one ranking over both
+
 # score a trained model on another sample, reusing its fitted scalers
 python scripts/evaluate_blocks.py --model-dir ../models/lar_hgtd \
     --dataset vbf_hinv:/global/cfs/.../store/vbf_hinv --split test
@@ -89,9 +99,20 @@ python -m src.evaluation.baseline --store /global/cfs/.../store/ttbar --delta-r 
 ```
 
 Three configs, differing only in their `inputs:` block: `lar_only`,
-`hgtd_only`, `lar_hgtd`. A run writes the weights, `model_spec.json`,
-`norm_params.pkl`, the config, `history.csv`, `metrics.json`,
-`predictions_test.npz` and a plot set into its model directory.
+`hgtd_only`, `lar_hgtd`.
+
+Every run writes its own record into the model directory: `record.md` (one
+readable page — setup, timing, commit, results), `history.csv` and
+`plots/history.png` (loss and RMSE against epoch, train and validation),
+`metrics.json` (validation *and* test, split by sample), the weights,
+`model_spec.json`, `norm_params.pkl`, `config.yaml` and
+`predictions_test.npz`. `--no-plots` skips only the evaluation figures; the
+record and the loss curve are always kept.
+
+Sweeps rank on the validation `q68` — the half-width holding 68% of the
+errors. A fitted core width is not used for ranking: the fit finds a narrow
+core in an untrained model's residuals as well, so it scores the worst trials
+best.
 
 For an unattended long run, the same command under `sbatch`:
 
