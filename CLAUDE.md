@@ -48,6 +48,51 @@ adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
 - Store files are written to a temporary name and renamed, so an interrupted
   run never leaves a half-written store that still opens.
 
+## What tuning found
+
+Five rounds of sweeps took the validation q68 from 39 to about 35 ps. Almost
+none of it came from tuning, and the null results are worth more than the
+wins: do not re-run these.
+
+Where the gain came from:
+
+- **4.6 ps** from a data bug, not a setting. The splits were concatenated by
+  sample and the shuffle buffer held 10k of 194k rows, so every batch was
+  pure ttbar or pure VBF. Fixed by permuting the training split in
+  `prepare()`.
+- **3.8 ps** from `loss.beta`: 0.25 and 0.5 tie, 0.0 costs 5.5 ps and 1.0
+  costs 3.8. The one hyper-parameter that matters.
+- **~2 ps** from removing dropout everywhere. At 194k events against 52k
+  parameters there is no train/val gap to close; dropout was regularising a
+  model that does not overfit.
+
+Measured and found to do nothing, each within the 1-2 ps run-to-run spread:
+pooling (attention, masked average, and the `selection_weighted_time` head),
+encoder and head widths beyond [256,128,64] and [256,128,64,32] (wider heads
+are *worse*), `head.norm` (layer, batch and none are identical), the event
+encoder, batch size, learning rate over 2e-4 to 6e-3, warmup, LR patience,
+the cell time-quality cut, the `significance` threshold at 2 against 4,
+`max_items` at 120 against 250, and the cell sort key.
+
+One thing was measurably worse: a transformer over the cell set, 37.4 +- 0.3
+against 35.2 +- 0.5 for MLP plus attention pooling.
+
+That `max_items` 250 does not beat 120, and that admitting every cell down to
+significance 2 does not either, says truncation and selection are not the
+constraint -- what the calorimeter can say has saturated. The open lead is
+vertex identification: the sum-pt^2 vertex is wrong in 5.3% of ttbar and
+18.6% of VBF events, and splitting by that accounted for the whole
+ttbar/VBF difference.
+
+Two rules that came out of the process:
+
+- **Repeat before believing.** Weight initialisation is unseeded, so one
+  setting run twice spreads by 1-2 ps. Sweeps take `repeats:` and report the
+  spread; gaps below it are not findings.
+- **Grid, not random search, for a handful of axes.** 24 random points over 7
+  parameters returned nothing significant (best p = 0.07); the same budget as
+  an exact 4x3x2 grid settled `beta` outright.
+
 ## Known data issues
 
 Found while validating the ingest; the first two are handled in code, the rest

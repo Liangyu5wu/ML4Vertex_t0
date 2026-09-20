@@ -1,0 +1,41 @@
+# Which cells to keep, and in what order.
+#
+#   python scripts/sweep.py --space config/sweeps/cell_selection.yaml \
+#       --config ../sweeps/v2_base.yaml --out ../sweeps/v3_cell_selection
+#
+# The preset keeps |significance| > 4 and the top 120 by energy, out of ~870
+# cells an event. Auditing one event turned up two reasons to doubt both
+# halves of that.
+#
+# The threshold discards a population with the best timing in the whole
+# endcap. In EME1 at 1-2 GeV, cells with 2 < significance <= 4 sit at a
+# median |t| of 147 ps, against 1514 ps for 4-6 and 588 ps for above 10 --
+# and 93384 of those 93489 cells fall in |eta| 2.2-2.6, so it is one
+# localised region of the detector rather than a tail.
+#
+# The sort key is energy, which does not order timing quality: the median
+# |t| of cells above 10 GeV is 462 ps against 298 ps for 5-10 GeV. Nor does
+# significance order it cleanly on its own -- quality turns out to depend on
+# layer, |eta|, energy and significance together. Rather than hand-fit a key
+# to that surface, which is really rebuilding the calibration table this
+# project just removed, keep more cells and let attention pooling choose.
+# The model already sees eta, region, layer, e and significance per cell,
+# and the architecture sweep found it indifferent to how it pools them.
+#
+# Every point here changes the tensors, so this sweep builds 8 caches rather
+# than reusing one. Repeats are still worth their cost: two runs of one
+# setting spread by up to 2 ps.
+
+trials: 16
+seed: 21
+epochs: 300
+repeats: 2
+
+space:
+  data.inputs.cells.select:
+    - [{field: region, in: [0, 1]}, {field: layer, in: [1, 2, 3]},
+       {field: significance, abs_min: 2.0}, {field: e, min: 1.0}]
+    - [{field: region, in: [0, 1]}, {field: layer, in: [1, 2, 3]},
+       {field: significance, abs_min: 4.0}, {field: e, min: 1.0}]
+  data.inputs.cells.max_items: [120, 250]
+  data.inputs.cells.sort_by:   [[e, significance], [significance, e]]

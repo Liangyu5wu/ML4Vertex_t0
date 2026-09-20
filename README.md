@@ -45,6 +45,17 @@ src/evaluation/summary.py  plots.py  baseline.py
 src/runtime.py                           CPU / 1 GPU / multi-GPU strategy
 ```
 
+```
+scripts/audit_inputs.py                  one event, stage by stage
+scripts/sweep.py                         hyper-parameter search
+config/sweeps/*.yaml                     search spaces, with what each found
+```
+
+`audit_inputs.py` prints one event's path through selection, sorting,
+truncation, normalization, padding and masking, in physical units before and
+normalized after — the way to check a config switch against what it did
+rather than against its name.
+
 Config reference: [`src/pipeline/README.md`](src/pipeline/README.md).
 
 ## Environment
