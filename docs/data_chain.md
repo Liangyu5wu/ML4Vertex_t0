@@ -262,6 +262,77 @@ the shuffle covers every index rather than a 10k window.
 
 ---
 
+## Stage 4 — tensors → model
+
+One branch per input block, each reducing a variable-length set to a fixed
+vector, concatenated and read out by a single head. Numbers below are for
+`lar_hgtd`; the other two configs differ only in which branches exist.
+
+```
+ cells_input (120,7) ──▶ MLP 256→128→64 ──▶ attention pooling ─┐  65
+       + cells_mask                          + occupancy       │  46,209 par
+                                                               │
+ jets_emtopo (15,4) ──▶ MLP 64→32 ──▶ masked average ──────────┤  33
+       + mask                              + occupancy         │   2,592 par
+                                                               │
+ tracks (50,5) ──────▶ MLP 64→32 ──▶ masked average ───────────┤  33
+       + mask            (HS tracks)        + occupancy        │   2,656 par
+                                                               │
+ hgtd_tracks (55,7) ─▶ MLP 64→32 ──▶ masked average ───────────┤  33
+       + mask                              + occupancy         │   2,784 par
+                                                               │
+ vertices (10,6) ────▶ MLP 32→16 ──▶ masked average ───────────┤  17
+       + mask                              + occupancy         │     848 par
+                                                               │
+ event_input (3,) ─────────────────── passed through ──────────┘   3
+       reco vertex x, y, z                                     │
+                                                    concatenate │ 184
+                                                               ▼
+                              head: MLP 256→128→64→32, layer norm, no dropout
+                                                               │  91,618 par
+                                                               ▼
+                                     Dense(2) → (t0, log σ²)
+```
+
+**146,707 parameters, 11 input tensors, output of shape (2,).**
+
+### Why it is shaped this way
+
+- **One encoder per block, not one over everything.** Each collection has its
+  own features and its own multiplicity, and an object-level MLP followed by
+  a pooling is permutation-invariant by construction. A transformer over the
+  combined set was measured and came out 2.2 ± 0.6 ps worse.
+- **Pooling is masked everywhere.** Padded slots enter neither the weights nor
+  the denominator. Plain averaging over a block that is half padding would let
+  the padding set the answer.
+- **Each pooled vector carries an occupancy scalar**, the real object count as
+  a fraction of the block's capacity — which is why a 64-unit encoder
+  contributes 65 numbers. How many objects a block had is information the
+  pooled mean destroys.
+- **Cells get attention pooling, the rest a masked average.** Both were
+  measured on every block; the difference is inside the run-to-run spread, so
+  this is a default rather than a finding.
+- **The head predicts two numbers**, a time and a log-variance, trained with a
+  β-weighted Gaussian negative log-likelihood (β = 0.25). σ is clipped to
+  [5, 2000] ps and its bias initialised at 100 ps, since a head that starts by
+  claiming picosecond precision on 175 ps residuals spends its first epochs
+  undoing that.
+
+The predicted σ is honest rather than decorative. Binned by it, the fifth of
+events the model is most confident about have a core width of 12.9 ps against
+a predicted 11.3, and the least confident fifth 65.2 against 109.5 — pulls of
+1.09 and 1.29 across the range.
+
+### Where the model is defined
+
+`src/models/block_model.py` builds it from the same `AssemblySpec` that built
+the tensors, so a block added to `inputs:` becomes a branch with no code
+change. The built model is saved as weights plus `model_spec.json` and rebuilt
+on load; `model_spec.json` in any run directory is the authoritative record of
+what that run actually ran.
+
+---
+
 ## Caching and reuse
 
 | artefact | keyed by | cost | reuse |
