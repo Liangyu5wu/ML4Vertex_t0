@@ -95,7 +95,16 @@ No truth information enters the store.
 
 ### The one place the ingest does cut
 
-Tracks. The ntuple carries ~1992 per event and the store keeps 890:
+Tracks, and only tracks. Cell counts were checked event by event against the
+ROOT file, matched on `eventNumber`: 3000 of 3000 events agree exactly, so
+every cell the ntuple has reaches the store.
+
+That said, **the ntuple itself is already cut at |significance| >= 2** — its
+minimum is exactly 2.000 and nothing falls below it. Studying cells quieter
+than that is not a config change; it means going back to the ntuple
+production. "Keep everything" here means everything upstream chose to write.
+
+The tracks: the ntuple carries ~1992 per event and the store keeps 890:
 
 ```
 on reco HS vertex  |  has a valid HGTD time  |  |z0 - z_HS| < 3 mm
