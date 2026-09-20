@@ -61,6 +61,12 @@ are open.
 - **Cell energies are quantised**: ~10% of cells share an energy exactly with
   another cell in the same event, so any top-N selection needs an explicit
   tie-break (the cell preset sorts on `(e, significance)`).
+- **`calibration_data/HStrackmatching_calibration.txt` has no recorded
+  provenance** -- no note of who produced it, against which time reference, or
+  on which sample. The block presets no longer use it (the cell time-quality
+  cut was dropped), but `src/evaluation/baseline.py` still weights by its
+  sigmas, so the comparison the whole study is built against rests on a table
+  nobody here can source. Settle that before quoting a baseline number.
 - **No calibration outside the EM calorimeter.** `calibration_data/*.txt` has
   sigma only for EMB1-3 and EME1-3. FCal, HEC and Tile cells (18% of the
   store, |eta| up to 4.8) fall back to a 1000 ps resolution, which effectively

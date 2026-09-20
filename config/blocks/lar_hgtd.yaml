@@ -1,64 +1,100 @@
-# LAr + HGTD: calorimeter cells + jets + LAr tracks + HGTD tracks.
-# The three configs in config/blocks/ differ only in 'inputs:'.
-#
-#   python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml
-#   ... --datasets ttbar        # or vbf_hinv; omit for the mixture
-
 model_name: lar_hgtd
 model_dir: /pscratch/sd/l/liangyu/vertextiming/models/lar_hgtd
-
 data:
   datasets:
-    - {name: ttbar,    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar}
-    - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}
-  resample: oversample     # none | oversample | undersample, training split only
+  - name: ttbar
+    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar
+  - name: vbf_hinv
+    path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv
+  resample: oversample
   target: truth_vtx_time
-  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]
-  split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
-
+  event_features:
+  - reco_vtx_x
+  - reco_vtx_y
+  - reco_vtx_z
+  split:
+    test_size: 0.2
+    val_split: 0.222222
+    random_state: 42
   inputs:
     cells:
       preset: lar_cells
       max_items: 120
       min_items: 1
-      encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention, attention_units: 32}
-
+      encoder:
+        units:
+        - 256
+        - 128
+        - 64
+        dropout: 0.0
+        pooling: attention
+        attention_units: 32
     jets_emtopo:
       preset: jets_emtopo
       max_items: 15
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
-
+      encoder:
+        units:
+        - 64
+        - 32
+        dropout: 0.0
+        norm: layer
+        pooling: masked_average
     tracks:
       preset: hs_tracks
       max_items: 50
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
-
+      encoder:
+        units:
+        - 64
+        - 32
+        dropout: 0.0
+        norm: layer
+        pooling: masked_average
     hgtd_tracks:
       preset: hgtd_tracks
       max_items: 55
       min_items: 1
-      encoder: {units: [64, 32], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
-
+      encoder:
+        units:
+        - 64
+        - 32
+        dropout: 0.0
+        norm: layer
+        pooling: masked_average
     vertices:
       preset: vertices
       max_items: 10
-      encoder: {units: [32, 16], dropout: [0.1, 0.1], norm: layer, pooling: masked_average}
-
+      encoder:
+        units:
+        - 32
+        - 16
+        dropout: 0.0
+        norm: layer
+        pooling: masked_average
 head:
-  units: [128, 64, 32, 16]
-  dropout: [0.2, 0.1, 0.1, 0.1]
-  batch_norm: false
-
-loss: {type: gaussian_nll, beta: 0.5, sigma_init: 100.0}
-optimizer: {type: adam, learning_rate: 0.001}
-
+  units:
+  - 256
+  - 128
+  - 64
+  - 32
+  dropout: 0.0
+  norm: layer
+loss:
+  type: gaussian_nll
+  beta: 0.25
+  sigma_init: 100.0
+optimizer:
+  type: adam
+  learning_rate: 0.005
 training:
-  epochs: 200
-  batch_size: 256
-  early_stopping_patience: 20
+  epochs: 300
+  batch_size: 1024
+  early_stopping_patience: 25
   lr_reduction_factor: 0.5
   lr_patience: 8
-  min_lr: 1.0e-7
-
+  min_lr: 1.0e-07
+  warmup_epochs: 5
 evaluation:
-  fit: {method: double_gaussian, pileup_sigma: 175.74, fix_pileup_sigma: true}
+  fit:
+    method: double_gaussian
+    pileup_sigma: 175.74
+    fix_pileup_sigma: true
