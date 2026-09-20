@@ -1,0 +1,25 @@
+# lar_only: trained on the mixture, on ttbar alone and on VBF alone.
+#
+#   python scripts/sweep.py --space config/sweeps/physics_lar_only.yaml \
+#       --config config/blocks/lar_only.yaml --out ../runs/lar_only
+#
+# Three seeds of each, because two runs of one setting spread by 1-2 ps and a
+# single number cannot carry a physics claim. Nothing is being searched here;
+# the sweep runner is used for its repeats, its GPU fan-out and its record.
+#
+# Read the results split by whether the sum-pt^2 vertex is the true hard
+# scatter -- it is not, in 5.9% of ttbar and 20.4% of VBF events, and when it
+# is wrong the target belongs to one vertex while every input describes
+# another. Unsplit, the ttbar/VBF gap is that rate and nothing else.
+
+trials: 9
+seed: 100
+epochs: 300
+repeats: 3
+
+space:
+  data.datasets:
+    - - {name: ttbar, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar}
+      - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}
+    - - {name: ttbar, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar}
+    - - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}

@@ -53,7 +53,9 @@ truncation, normalization, padding and masking, in physical units before and
 normalized after — the way to check a config switch against what it did
 rather than against its name.
 
-Config reference: [`src/pipeline/README.md`](src/pipeline/README.md).
+Data chain, stage by stage, with the numbers each stage produces:
+[`docs/data_chain.md`](docs/data_chain.md). Config reference:
+[`src/pipeline/README.md`](src/pipeline/README.md).
 
 ## Environment
 
