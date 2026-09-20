@@ -1,0 +1,25 @@
+# A transformer over the cell set, against the MLP-plus-pooling the presets
+# have always used. The last untested architectural axis.
+#
+#   python scripts/sweep.py --space config/sweeps/transformer.yaml \
+#       --config ../sweeps/transformer_base.yaml --out ../sweeps/transformer
+#
+# Worth asking now rather than earlier, because the architecture sweep found
+# the model indifferent to *how* it aggregates cells -- attention pooling,
+# masked average and the selection head all landed within 0.7 ps of each
+# other -- but strongly sensitive to capacity. A transformer is the one
+# aggregator that adds capacity and cell-to-cell interaction at the same
+# time, which is the combination nothing has yet tried.
+#
+# Comparable to the capacity sweep running beside it: same base config, same
+# repeats, so both sides of the comparison carry error bars.
+
+trials: 16
+seed: 4
+epochs: 300
+repeats: 2
+
+space:
+  data.inputs.cells.encoder.d_model:    [64, 128]
+  data.inputs.cells.encoder.num_blocks: [2, 3]
+  data.inputs.cells.encoder.num_heads:  [4, 8]

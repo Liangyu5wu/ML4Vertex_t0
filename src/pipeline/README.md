@@ -53,10 +53,9 @@ data:
       fraction: 1.0              # subsample this fraction of events
       max_events: null           # hard cap
       files: null                # null = every file in the manifest
-  balance: true                  # equalise each sample's loss contribution
-  sample_onehot: false           # append a one-hot sample tag to event features
+  resample: oversample           # none | oversample | undersample; training split only
   target: truth_vtx_time
-  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]   # [] drops the branch
+  event_features: [reco_vtx_z]   # [] drops the branch
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
   cache_dir: /pscratch/.../prepared_cache                # null disables caching
 

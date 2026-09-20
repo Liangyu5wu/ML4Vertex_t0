@@ -109,6 +109,11 @@ def run_trial(index: int, params: Dict[str, Any], base: dict, out_dir: str,
         set_path(cfg, path, value)
     name = f"trial_{index:03d}"
     model_dir = os.path.join(out_dir, name)
+    if os.path.exists(os.path.join(model_dir, "metrics.json")):
+        # Interactive jobs cap at four hours and a sweep of converged trainings
+        # does not, so relaunching into the same directory has to pick up where
+        # the last allocation was cut off rather than start again.
+        return {"trial": index, "model_dir": model_dir, **params, "skipped": True}
     cfg["model_name"] = name
     cfg["model_dir"] = model_dir
     if epochs:
@@ -199,14 +204,22 @@ def run_sweep(base_config: str, space_file: str, out_dir: str,
     epochs = epochs or spec.get("epochs")
     rng = np.random.default_rng(spec.get("seed", 0))
 
+    repeats = int(spec.get("repeats", 1))
     points = grid_points(space)
-    if points is not None and len(points) <= n_trials:
+    if points is not None and len(points) * repeats <= n_trials:
         settings = points                       # small discrete space: take all
         print(f"grid search: {len(settings)} combinations")
     else:
         settings = [{p: sample_value(s, rng) for p, s in space.items()}
-                    for _ in range(n_trials)]
-        print(f"random search: {len(settings)} trials over {len(space)} parameters")
+                    for _ in range(n_trials // repeats)]
+        print(f"random search: {len(settings)} settings over {len(space)} parameters")
+
+    if repeats > 1:
+        # Nothing seeds the weight initialisation, so the same setting trained
+        # twice already differs. That spread is the only thing that says
+        # whether a 1 ps gap between two settings means anything.
+        settings = [dict(s) for s in settings for _ in range(repeats)]
+        print(f"  x{repeats} repeats -> {len(settings)} trials")
 
     # Every shard samples the same trial list from the same seed and then takes
     # its own slice, so the shards never have to agree on anything at runtime.
@@ -233,10 +246,14 @@ def run_sweep(base_config: str, space_file: str, out_dir: str,
             with lock:
                 results.append(record)
                 done, total = len(results), len(mine)
-                obj = record.get("objective")
-                print(f"[{done}/{total}] trial {i:3d} "
-                      f"{'q68 %.1f ps' % obj if np.isfinite(obj) else record.get('error')}",
-                      flush=True)
+                obj = record.get("objective", np.nan)
+                if record.get("skipped"):
+                    note = "already done, skipped"
+                elif np.isfinite(obj):
+                    note = f"q68 {obj:.1f} ps"
+                else:
+                    note = record.get("error", "failed")
+                print(f"[{done}/{total}] trial {i:3d} {note}", flush=True)
 
     threads = [threading.Thread(target=worker, args=(g,)) for g in (gpus or [None])]
     for t in threads:
@@ -283,6 +300,27 @@ def report(results: List[Dict[str, Any]], space: Dict[str, Any], out_dir: str) -
         print(f"{rank:4d}{r['objective']:8.1f}{r['val_core_std']:10.2f}"
               f"{100 * r['val_core_fraction']:9.1f}%{r['val_rmse']:8.1f}"
               f"{r['epochs_run']:8d}  {params[:100]}")
+
+    # With repeats the per-trial table is the wrong unit: group them, because
+    # the spread within one setting is the yardstick for every gap between
+    # settings.
+    groups: Dict[str, List[float]] = {}
+    for r in finished:
+        groups.setdefault("  ".join(f"{k.split('.')[-1]}={_short(r[k])}"
+                                    for k in space), []).append(r["objective"])
+    if any(len(v) > 1 for v in groups.values()):
+        print(f"\nby setting ({max(len(v) for v in groups.values())} repeats max)")
+        head = f"{'mean':>7}{'spread':>8}{'n':>4}  setting"
+        print(head)
+        print("-" * len(head))
+        for key, vals in sorted(groups.items(), key=lambda kv: np.mean(kv[1])):
+            spread = (max(vals) - min(vals)) if len(vals) > 1 else float("nan")
+            print(f"{np.mean(vals):7.1f}{spread:8.1f}{len(vals):4d}  {key[:80]}")
+        repeated = [v for v in groups.values() if len(v) > 1]
+        if repeated:
+            print(f"\nrepeat spread: median {np.median([max(v) - min(v) for v in repeated]):.1f} ps, "
+                  f"worst {max(max(v) - min(v) for v in repeated):.1f} ps "
+                  f"-- gaps smaller than this mean nothing")
 
     plots.use_style("light")
     fig, _ = plots.sweep_results(finished, objective="objective",

@@ -65,8 +65,9 @@ def main():
     elif args.datasets:
         keep = set(args.datasets)
         data_cfg["datasets"] = [d for d in data_cfg["datasets"] if d["name"] in keep]
-    # Weighting only matters for training; scoring is always unweighted.
-    data_cfg["balance"] = False
+    # Resampling only makes sense while training; scoring reads each sample as
+    # it is.
+    data_cfg["resample"] = "none"
 
     spec = AssemblySpec.from_config(data_cfg)
     norm = load_norm(os.path.join(model_dir, "norm_params.pkl"))

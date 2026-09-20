@@ -1,0 +1,26 @@
+# How big should the model be? The architecture sweep hit the top of its
+# range on both capacity axes and the effect was monotonic:
+#
+#   cell encoder  [64,32] 40.4  [128,64,32] 39.0  [256,128,64] 37.5 ps
+#   head          [64,32] 41.3  [128,64,32,16] 39.5  [256,128,64,32] 37.7 ps
+#
+# so the range was set too small. This extends it upward until the trend
+# stops, which is the only way to know where the boundary really is.
+#
+#   python scripts/sweep.py --space config/sweeps/capacity.yaml \
+#       --config ../sweeps/capacity_base.yaml --out ../sweeps/capacity
+#
+# Two repeats of every point, because nothing in this project has yet
+# measured what a 1 ps difference is worth. Weight initialisation is
+# unseeded, so two runs of one setting differ by exactly the amount that any
+# gap between settings has to beat.
+
+trials: 24
+seed: 3
+epochs: 300
+repeats: 2
+
+space:
+  data.inputs.cells.encoder.units:       [[256, 128, 64], [512, 256, 128], [512, 256, 128, 64]]
+  head.units:                            [[256, 128, 64, 32], [512, 256, 128, 64]]
+  data.inputs.hgtd_tracks.encoder.units: [[64, 32], [128, 64]]

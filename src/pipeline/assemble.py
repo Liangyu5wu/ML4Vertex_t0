@@ -68,8 +68,10 @@ class AssemblySpec:
     event_features: List[str] = field(default_factory=list)
     target: str = "HSvertex_time"
     split: SplitConfig = field(default_factory=SplitConfig)
-    balance: bool = False          # equalise the loss contribution of each sample
-    sample_onehot: bool = False    # append a one-hot sample tag to the event features
+    # How to handle samples of different size: "none", "oversample" (draw the
+    # smaller samples up to the largest) or "undersample" (cut the larger ones
+    # down). Applied to the training split only.
+    resample: str = "none"
     cache_dir: Optional[str] = None   # where prepared tensors are kept
 
     def fingerprint(self) -> str:
@@ -88,7 +90,11 @@ class AssemblySpec:
             "event_features": self.event_features, "target": self.target,
             "split": (self.split.test_size, self.split.val_split,
                       self.split.random_state),
-            "sample_onehot": self.sample_onehot,
+            # The per-event loss weights and the row count are both baked into
+            # the cached tensors, so anything that changes them has to change
+            # the key too.
+            "resample": self.resample,
+            "weights": [d.weight for d in self.datasets],
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True,
                                        default=str).encode()).hexdigest()[:16]
@@ -102,8 +108,7 @@ class AssemblySpec:
         return cls(datasets=sources, blocks=blocks,
                    event_features=list(cfg.get("event_features") or []),
                    target=cfg.get("target", "HSvertex_time"), split=split,
-                   balance=bool(cfg.get("balance", False)),
-                   sample_onehot=bool(cfg.get("sample_onehot", False)),
+                   resample=_check_resample(cfg),
                    cache_dir=cfg.get("cache_dir") or os.environ.get(
                        "VERTEX_T0_CACHE",
                        "/pscratch/sd/l/liangyu/vertextiming/prepared_cache"))
@@ -396,7 +401,7 @@ def prepare(spec: AssemblySpec, verbose: bool = True,
     if use_cache and not reuse_norm:
         cached = load_cached(spec, verbose=verbose)
         if cached is not None:
-            return cached
+            return _shuffle_training_split(cached, verbose)
 
     if verbose:
         print(f"Loading {len(spec.datasets)} dataset(s): "
@@ -430,16 +435,7 @@ def prepare(spec: AssemblySpec, verbose: bool = True,
              for i, idx in enumerate(per_sample_idx)])
         split_events[split] = ev
 
-    # The sample tag is appended here rather than written back onto the spec:
-    # prepare() has to stay callable more than once with the same spec.
     event_feature_names = list(spec.event_features)
-    if spec.sample_onehot and len(samples) > 1:
-        for split in SPLITS:
-            ids = split_events[split]["dataset_id"]
-            onehot = np.eye(len(samples), dtype=np.float32)[ids]
-            split_events[split]["features"] = np.concatenate(
-                [split_events[split]["features"], onehot], axis=1)
-        event_feature_names += [f"is_{n}" for n in names]
 
     if norm is None:
         norm = fit_normalization(spec, split_blocks["train"],
@@ -470,7 +466,7 @@ def prepare(spec: AssemblySpec, verbose: bool = True,
                             spec, event_feature_names)
     if use_cache and not reuse_norm:
         save_cached(spec, prepared, verbose=verbose)
-    return prepared
+    return _shuffle_training_split(prepared, verbose)
 
 
 def _concat_blocks(name: str, parts: Sequence[RaggedBlock]) -> RaggedBlock:
@@ -486,14 +482,80 @@ def _concat_blocks(name: str, parts: Sequence[RaggedBlock]) -> RaggedBlock:
     return RaggedBlock(name, columns, np.concatenate(offsets))
 
 
+RESAMPLE_MODES = ("none", "oversample", "undersample")
+
+
+def _check_resample(cfg: dict) -> str:
+    mode = str(cfg.get("resample", "none")).lower()
+    if mode not in RESAMPLE_MODES:
+        raise ValueError(f"resample: expected one of {RESAMPLE_MODES}, got {mode!r}")
+    return mode
+
+
+def _resample_order(mode: str, dataset_id: np.ndarray, seed: int) -> Optional[np.ndarray]:
+    """Row indices that give every sample the same number of events.
+
+    ``oversample`` draws the smaller samples up to the size of the largest
+    (with replacement, so a duplicated event really is the same event);
+    ``undersample`` cuts the larger ones down. Returns None for "none".
+    """
+    if mode == "none" or not len(dataset_id):
+        return None
+    rng = np.random.default_rng(seed)
+    groups = [np.flatnonzero(dataset_id == i) for i in np.unique(dataset_id)]
+    target = max(len(g) for g in groups) if mode == "oversample" \
+        else min(len(g) for g in groups)
+    picked = [g if len(g) == target
+              else rng.choice(g, size=target, replace=len(g) < target)
+              for g in groups]
+    return np.concatenate(picked)
+
+
+def _reorder_split(data: "PreparedData", split: str, order: np.ndarray) -> None:
+    """Apply one row ordering to every array of a split, keeping them aligned."""
+    data.inputs[split] = {k: v[order] for k, v in data.inputs[split].items()}
+    data.targets[split] = data.targets[split][order]
+    data.weights[split] = data.weights[split][order]
+    data.provenance[split] = {k: v[order] for k, v in data.provenance[split].items()}
+
+
+def _shuffle_training_split(data: "PreparedData", verbose: bool = True) -> "PreparedData":
+    """Resample if asked, then permute the training split.
+
+    Splits are built by concatenating the samples, so the training split runs
+    all of one sample and then all of the next -- one transition in 194k rows.
+    The tf.data shuffle buffer holds 10k of them and cannot reach across that
+    join, which left every batch drawn from a single sample, so any batch
+    statistic saw one sample at a time and the samples never mixed. Measured cost, 2.8 ps of q68.
+
+    Only the training split. Validation and test are read in order and never
+    shuffled, and their order does not enter any metric.
+
+    Applied after the cache is read rather than before it is written, so an
+    existing cache stays valid, and seeded from the split's random_state, so
+    a run remains reproducible.
+    """
+    spec = data.spec
+    seed = spec.split.random_state
+    order = _resample_order(spec.resample, data.provenance["train"]["dataset_id"], seed)
+    if order is not None:
+        _reorder_split(data, "train", order)
+        if verbose:
+            print(f"  {spec.resample}d the training split to "
+                  f"{len(data.targets['train'])} events")
+    n = len(data.targets["train"])
+    _reorder_split(data, "train", np.random.default_rng(seed + 1).permutation(n))
+    return data
+
+
 def _sample_weights(spec: AssemblySpec, samples: Sequence[SampleData],
                     dataset_id: np.ndarray) -> np.ndarray:
-    """Per-event loss weight: configured weight, optionally size-balanced."""
+    """Per-event loss weight, from each dataset's configured `weight`.
+
+    Sample sizes are equalised by `resample`, not here: duplicating rows and
+    reweighting them are two ways to do one thing, and one of them is enough.
+    """
     weights = np.array([s.weight for s in samples], dtype=np.float32)
-    if spec.balance:
-        counts = np.array([max((dataset_id == i).sum(), 1)
-                           for i in range(len(samples))], dtype=np.float64)
-        weights = weights * (counts.mean() / counts).astype(np.float32)
     out = weights[dataset_id]
     return (out / out.mean()).astype(np.float32) if len(out) else out
 
@@ -509,14 +571,26 @@ def make_tf_dataset(prepared: PreparedData, split: str, batch_size: int,
     weights = prepared.weights[split]
     unweighted = np.allclose(weights, 1.0) if len(weights) else True
 
-    if use_weights and not unweighted:
-        ds = tf.data.Dataset.from_tensor_slices((inputs, target, weights))
-    else:
-        ds = tf.data.Dataset.from_tensor_slices((inputs, target))
-    if shuffle:
-        ds = ds.shuffle(min(len(target), 10000), seed=shuffle_seed,
-                        reshuffle_each_iteration=True)
-    return ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    rows = (inputs, target, weights) if use_weights and not unweighted \
+        else (inputs, target)
+
+    if not shuffle:
+        # Validation and test are read in order, so their batches never change
+        # and are worth cutting once: 2.3 s per pass becomes 0.1 s.
+        return (tf.data.Dataset.from_tensor_slices(rows).batch(batch_size)
+                .cache().prefetch(tf.data.AUTOTUNE))
+
+    # Training shuffles per event, which costs about 1.3 s an epoch more than
+    # caching fixed batches and reshuffling their order. Measured, that
+    # trade is not worth taking: fixing the batch membership was 22% faster
+    # end to end and 3.7 ps worse, because what a batch resamples between
+    # epochs is doing real work. The 10k buffer is enough now that prepare()
+    # permutes the training split -- it no longer has to bridge a join
+    # between samples, only to vary the composition.
+    return (tf.data.Dataset.from_tensor_slices(rows)
+            .shuffle(min(len(target), 10000), seed=shuffle_seed,
+                     reshuffle_each_iteration=True)
+            .batch(batch_size).prefetch(tf.data.AUTOTUNE))
 
 
 def save_norm(prepared: PreparedData, path: str) -> None:
