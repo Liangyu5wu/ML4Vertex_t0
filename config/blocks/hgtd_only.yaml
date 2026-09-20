@@ -13,7 +13,7 @@ data:
     - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}
   resample: oversample     # none | oversample | undersample, training split only
   target: truth_vtx_time
-  event_features: [reco_vtx_z]   # x and y have a 10 um spread: no information
+  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
 
   inputs:

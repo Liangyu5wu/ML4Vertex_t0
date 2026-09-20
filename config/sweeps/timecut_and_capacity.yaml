@@ -1,0 +1,31 @@
+# Is the cell time-quality cut worth keeping, and is more capacity still
+# buying anything?
+#
+#   python scripts/sweep.py --space config/sweeps/timecut_and_capacity.yaml \
+#       --config ../sweeps/v2_base.yaml --out ../sweeps/v2_timecut_capacity
+#
+# The time cut keeps cells with |t| < 3 sqrt(sigma_vertex^2 + sigma_cell^2)
+# and drops 12% of them, evenly across every bin of the true vertex time, so
+# it sculpts nothing. Whether it is worth having is a different question: the
+# model already sees each cell's energy and significance and can learn to
+# discount a badly measured one by itself. One config stanza, so measure it.
+#
+# Capacity is here because it was the architecture sweep's one real finding,
+# and it hit the top of its range on both axes.
+#
+# Two repeats of everything: a setting repeated spreads by up to 2 ps, and a
+# difference that small is not a difference.
+
+trials: 16
+seed: 13
+epochs: 300
+repeats: 2
+
+space:
+  data.inputs.cells.select_extra:
+    - []
+    - [{time_quality: {n_sigma: 3.0, vertex_sigma: 175.0,
+                       calibration: HStrackmatching_calibration.txt,
+                       apply_calibration: false}}]
+  data.inputs.cells.encoder.units: [[256, 128, 64], [512, 256, 128]]
+  head.units:                      [[256, 128, 64, 32], [512, 256, 128, 64]]

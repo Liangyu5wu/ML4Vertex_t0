@@ -580,17 +580,26 @@ def make_tf_dataset(prepared: PreparedData, split: str, batch_size: int,
         return (tf.data.Dataset.from_tensor_slices(rows).batch(batch_size)
                 .cache().prefetch(tf.data.AUTOTUNE))
 
-    # Training shuffles per event, which costs about 1.3 s an epoch more than
-    # caching fixed batches and reshuffling their order. Measured, that
-    # trade is not worth taking: fixing the batch membership was 22% faster
-    # end to end and 3.7 ps worse, because what a batch resamples between
-    # epochs is doing real work. The 10k buffer is enough now that prepare()
-    # permutes the training split -- it no longer has to bridge a join
-    # between samples, only to vary the composition.
-    return (tf.data.Dataset.from_tensor_slices(rows)
-            .shuffle(min(len(target), 10000), seed=shuffle_seed,
-                     reshuffle_each_iteration=True)
-            .batch(batch_size).prefetch(tf.data.AUTOTUNE))
+    # Shuffle the row indices and gather a whole batch at a time, rather than
+    # slicing 248k individual events and reassembling them. 4.3 s per epoch
+    # becomes 0.6 s, and the shuffle gets better rather than worse: the buffer
+    # now covers every index instead of 10k of them, because 248k int32 is a
+    # megabyte.
+    #
+    # The obvious alternative -- cache the batches and permute their order --
+    # is faster still and was measured at 2.6 ps worse, so the per-event
+    # resampling that this keeps is doing real work.
+    constants = tf.nest.map_structure(tf.constant, rows)
+
+    def gather(idx):
+        return tf.nest.map_structure(lambda a: tf.gather(a, idx), constants)
+
+    return (tf.data.Dataset
+            .from_tensor_slices(np.arange(len(target), dtype=np.int32))
+            .shuffle(len(target), seed=shuffle_seed, reshuffle_each_iteration=True)
+            .batch(batch_size)
+            .map(gather, num_parallel_calls=tf.data.AUTOTUNE)
+            .prefetch(tf.data.AUTOTUNE))
 
 
 def save_norm(prepared: PreparedData, path: str) -> None:

@@ -13,7 +13,7 @@ data:
     - {name: vbf_hinv, path: /global/cfs/cdirs/m2616/liangyu/vertextiming/store/vbf_hinv}
   resample: oversample     # none | oversample | undersample, training split only
   target: truth_vtx_time
-  event_features: [reco_vtx_z]   # x and y have a 10 um spread: no information
+  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
 
   inputs:
@@ -21,12 +21,6 @@ data:
       preset: lar_cells
       max_items: 120
       min_items: 1
-      select_extra:
-        - time_quality:
-            n_sigma: 3.0
-            vertex_sigma: 175.0          # HS vertex time resolution [ps]
-            calibration: HStrackmatching_calibration.txt
-            apply_calibration: false
       encoder: {units: [128, 64, 32], dropout: 0.1, pooling: attention, attention_units: 32}
 
     jets_emtopo:

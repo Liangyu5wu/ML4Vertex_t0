@@ -55,7 +55,7 @@ data:
       files: null                # null = every file in the manifest
   resample: oversample           # none | oversample | undersample; training split only
   target: truth_vtx_time
-  event_features: [reco_vtx_z]   # [] drops the branch
+  event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]   # [] drops the branch
   split: {test_size: 0.2, val_split: 0.222222, random_state: 42}
   cache_dir: /pscratch/.../prepared_cache                # null disables caching
 
@@ -69,9 +69,7 @@ data:
       descending: true
       select: [...]              # replaces the preset's cuts
       select_extra:              # adds to them
-        - time_quality: {n_sigma: 3.0, vertex_sigma: 175.0,
-                         calibration: sigma_only_test_calibration.txt,
-                         apply_calibration: false}
+        - {field: e, min: 2.0}
       padding: {time: 0.0}       # per-feature, in physical units
       skip_normalization: [region, layer]
       pad_in: literal            # literal | normalized (see below)
@@ -107,8 +105,15 @@ lists in `blocks.py`. A name that resolves to nothing raises — it is never
 silently filled with zeros.
 
 Selection operators: `eq`, `ne`, `min`, `max`, `in`, `abs_max`, `abs_min`,
-plus the special `time_quality` cut. All of a block's rules are combined into
-one mask and applied in a single pass over the whole sample.
+plus a special `time_quality` cut that keeps cells within `n_sigma` of
+`sqrt(vertex_sigma^2 + sigma_cell(layer, E)^2)`. All of a block's rules are
+combined into one mask and applied in a single pass over the whole sample.
+
+The presets do not use `time_quality`. It was measured at 0.8 +- 0.5 ps, and
+buying that in data means deriving a per-layer, per-energy resolution table
+against some independent time reference and carrying its systematic. The
+model already sees each cell's energy and significance and can discount a
+badly measured one without being told to.
 
 ### Pooling
 
