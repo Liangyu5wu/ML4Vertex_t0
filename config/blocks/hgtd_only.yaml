@@ -38,6 +38,9 @@ data:
         dropout: 0.0
         norm: layer
         pooling: masked_average
+      valid_when:
+        time: has_valid_time
+        time_res: has_valid_time
 head:
   units:
   - 256

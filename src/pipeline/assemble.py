@@ -86,6 +86,7 @@ class AssemblySpec:
                 "min_items": b.min_items, "pad_in": b.pad_in,
                 "pads": b.pad_values, "normalize": b.normalize_flags,
                 "emit_mask": b.emit_mask,
+                "transform": b.transform, "valid_when": b.valid_when,
             } for name, b in sorted(self.blocks.items())},
             "event_features": self.event_features, "target": self.target,
             "split": (self.split.test_size, self.split.val_split,
@@ -229,10 +230,23 @@ def fit_normalization(spec: AssemblySpec, train_blocks: Dict[str, RaggedBlock],
     """Fit per-feature mean/std on the training split only (real objects only)."""
     params: Dict[str, dict] = {"blocks": {}, "event": None}
     for name, bspec in spec.blocks.items():
-        flat = train_blocks[name].stack(bspec.feature_names).astype(np.float64)
+        block = train_blocks[name]
+        flat = block.stack(bspec.feature_names).astype(np.float64)
         if len(flat) == 0:
             raise ValueError(f"block {name!r} has no objects in the training split")
         mean, std = _fit_stats(flat)
+        # A feature that is only meaningful on some rows gets its scale from
+        # those rows. Nine of ten vertices carry a sentinel time resolution,
+        # and letting it into the statistics left every real value inside a
+        # hundredth of a standard deviation of every other.
+        for fname, flag in bspec.valid_when.items():
+            j = bspec.feature_names.index(fname)
+            valid = np.asarray(block[flag]).astype(bool)
+            if valid.sum() < 2:
+                raise ValueError(f"block {name!r}: {flag!r} marks {int(valid.sum())} "
+                                 f"row(s) valid, too few to fit {fname!r}")
+            m_j, s_j = _fit_stats(flat[valid, j:j + 1])
+            mean[j], std[j] = float(m_j[0]), float(s_j[0])
         # Features flagged normalize=False pass through untouched.
         active = np.array(bspec.normalize_flags, dtype=bool)
         mean = np.where(active, mean, 0.0)
@@ -267,11 +281,16 @@ def build_tensors(spec: AssemblySpec, blocks: Dict[str, RaggedBlock],
     for name, bspec in spec.blocks.items():
         stats = norm["blocks"][name]
         blk = blocks[name]
-        normalized = RaggedBlock(
-            name,
-            {f: ((blk[f].astype(np.float64) - m) / s).astype(np.float32)
-             for f, m, s in zip(bspec.feature_names, stats["mean"], stats["std"])},
-            blk.offsets)
+        columns = {f: ((blk[f].astype(np.float64) - m) / s).astype(np.float32)
+                   for f, m, s in zip(bspec.feature_names,
+                                      stats["mean"], stats["std"])}
+        # Rows the flag calls invalid hold a sentinel, not a measurement. Put
+        # them at the mean of the real ones; the flag is itself a feature, so
+        # the model is told which rows those are.
+        for fname, flag in bspec.valid_when.items():
+            columns[fname] = np.where(np.asarray(blk[flag]).astype(bool),
+                                      columns[fname], 0.0).astype(np.float32)
+        normalized = RaggedBlock(name, columns, blk.offsets)
         padded, mask = pad_ragged(normalized, bspec.feature_names, bspec.max_items,
                                   _padding_vector(bspec, stats))
         out[f"{name}_input"] = padded

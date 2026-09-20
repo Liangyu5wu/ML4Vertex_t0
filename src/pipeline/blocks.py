@@ -72,6 +72,16 @@ class BlockSpec:
     # physical units through the fitted scaler instead, which is only useful
     # if a block deliberately wants its padding to be an outlier.
     pad_in: str = "literal"
+    # Per-feature reshaping applied before the scaler is fitted, so both the
+    # statistics and the values see the same thing: {"time": {"asinh": 100.0}}
+    # or {"time": {"clip": [-1000.0, 1000.0]}}.
+    transform: Dict[str, dict] = field(default_factory=dict)
+    # Features whose statistics should be fitted only over the rows another
+    # feature marks valid: {"time_res": "has_valid_time"}. Rows that are not
+    # valid carry a sentinel, and a sentinel in the sample destroys the scale
+    # of the real values; those rows are written as the mean afterwards, which
+    # the validity feature already tells the model to ignore.
+    valid_when: Dict[str, str] = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
     emit_mask: bool = False
 
@@ -314,7 +324,7 @@ def spec_from_config(name: str, cfg: dict) -> BlockSpec:
 
     mask_was_explicit = "emit_mask" in cfg
     for key in ("source", "sort_by", "descending", "max_items", "min_items",
-                "pad_in", "emit_mask"):
+                "pad_in", "emit_mask", "transform", "valid_when"):
         if key in cfg:
             setattr(spec, key, cfg.pop(key))
     if cfg:
@@ -393,6 +403,29 @@ def _time_quality_mask(cols: Dict[str, np.ndarray], opts: dict) -> np.ndarray:
         time -= offset
     sigma_total = np.sqrt(float(opts.get("vertex_sigma", 175.0)) ** 2 + sigma ** 2)
     return np.abs(time) <= float(opts.get("n_sigma", 3.0)) * sigma_total
+
+
+def apply_transform(values: np.ndarray, rule: dict, block: str,
+                    feature: str) -> np.ndarray:
+    """Reshape one feature before its scaler is fitted.
+
+    ``{"asinh": t0}`` is linear for |x| << t0 and logarithmic beyond it, which
+    is what a heavy-tailed feature wants: the cell time has 47% of its entries
+    past 1 ns, so a plain z-score leaves the 200 ps that matters spanning
+    0.09 of a standard deviation. ``{"clip": [lo, hi]}`` is the blunt
+    alternative, and loses the ordering of everything outside the window.
+    """
+    x = np.asarray(values, dtype=np.float64)
+    if "asinh" in rule:
+        scale = float(rule["asinh"])
+        if scale <= 0:
+            raise ValueError(f"{block}.{feature}: asinh scale must be > 0")
+        return np.arcsinh(x / scale).astype(np.float32)
+    if "clip" in rule:
+        lo, hi = rule["clip"]
+        return np.clip(x, float(lo), float(hi)).astype(np.float32)
+    raise ValueError(f"{block}.{feature}: unknown transform {rule!r}; "
+                     f"expected 'asinh' or 'clip'")
 
 
 def _selection_mask(cols: Dict[str, np.ndarray], rule: dict) -> np.ndarray:
@@ -479,8 +512,17 @@ def load_block(store: EventStore, spec: BlockSpec,
     # are fitted on exactly the objects the model will see.
     block = block.truncate(spec.max_items)
 
-    # Drop the aux columns; only model features continue downstream.
-    keep = set(spec.feature_names)
+    # Reshape before anything downstream looks at the values, so the scaler
+    # and the tensors cannot see different things.
+    for fname, rule in spec.transform.items():
+        if fname not in block.columns:
+            raise KeyError(f"block {spec.name!r}: transform names {fname!r}, "
+                           f"which is not a feature; have {sorted(block.columns)}")
+        block.columns[fname] = apply_transform(block[fname], rule, spec.name, fname)
+
+    # Drop the aux columns; only model features continue downstream. Anything
+    # valid_when refers to has to survive, since normalization still needs it.
+    keep = set(spec.feature_names) | set(spec.valid_when.values())
     return RaggedBlock(block.name,
                        {f: c for f, c in block.columns.items() if f in keep},
                        block.offsets)
