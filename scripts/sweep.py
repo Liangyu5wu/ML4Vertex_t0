@@ -130,7 +130,10 @@ def run_trial(index: int, params: Dict[str, Any], base: dict, out_dir: str,
     with open(log, "w") as fh:
         code = subprocess.call(
             [sys.executable, os.path.join(REPO, "scripts", "train_blocks.py"),
-             "--config", cfg_path, "--no-plots", "--verbose", "0"],
+             # The plot set costs 1.8 s against a trial's several minutes, and
+             # a trial whose residual was never drawn is one nobody can look
+             # at afterwards -- which for the physics runs is the whole point.
+             "--config", cfg_path, "--verbose", "0"],
             stdout=fh, stderr=subprocess.STDOUT, cwd=REPO, env=env)
 
     record: Dict[str, Any] = {"trial": index, "model_dir": model_dir, **params}

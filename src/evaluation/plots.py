@@ -1,7 +1,15 @@
 """Plots for t0 regression results -- one style, applied everywhere.
 
 Every figure in the repo goes through this module so that colour, type scale,
-grid weight and annotation style are identical across plots and across people.
+frame weight and annotation style are identical across plots and across
+people.
+
+The visual style is the ATLAS house one: a closed black frame, ticks turned
+inward on all four sides with minors shown, no grid, and type large enough to
+stay readable when the figure is shrunk into a paper column. Only those
+parameters are ATLAS; the rules underneath are the usual ones -- categorical
+hues assigned in fixed order and never cycled, one hue light-to-dark for
+density, one axis per plot, text in ink rather than in a series colour.
 
 Colour follows a validated categorical palette: samples take slots in a fixed
 order (blue, orange, aqua) and never cycle -- those three slots are the ones
@@ -33,10 +41,10 @@ SERIES = {
 SEQUENTIAL = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 
 INK = {
-    "light": {"surface": "#fcfcfb", "primary": "#0b0b0b", "secondary": "#52514e",
-              "muted": "#898781", "grid": "#e1e0d9", "axis": "#c3c2b7"},
-    "dark": {"surface": "#1a1a19", "primary": "#ffffff", "secondary": "#c3c2b7",
-             "muted": "#898781", "grid": "#2c2c2a", "axis": "#383835"},
+    "light": {"surface": "#ffffff", "primary": "#000000", "secondary": "#000000",
+              "muted": "#000000", "grid": "#e1e0d9", "axis": "#000000"},
+    "dark": {"surface": "#1a1a19", "primary": "#ffffff", "secondary": "#ffffff",
+             "muted": "#ffffff", "grid": "#2c2c2a", "axis": "#ffffff"},
 }
 
 _MODE = "light"
@@ -63,27 +71,37 @@ def use_style(mode: str = "light") -> None:
         "savefig.dpi": 200, "figure.dpi": 110,
         "font.family": "sans-serif",
         "font.sans-serif": ["DejaVu Sans"],
-        "font.size": 10,
-        "axes.titlesize": 12, "axes.titleweight": "bold",
+        # ATLAS house style: a closed black frame, ticks turned inward on all
+        # four sides with minors shown, no grid, and type large enough to
+        # survive being shrunk into a paper column.
+        "font.size": 15,
+        "axes.titlesize": 16, "axes.titleweight": "bold",
         "axes.titlecolor": t["primary"], "axes.titlelocation": "left",
         "axes.titlepad": 10,
-        "axes.labelsize": 10, "axes.labelcolor": t["secondary"],
+        "axes.labelsize": 17, "axes.labelcolor": t["primary"],
         "text.color": t["primary"],
-        # Recessive chrome: hairline y-grid, no top/right spines.
-        "axes.grid": True, "axes.grid.axis": "y",
+        "axes.grid": False,
         "grid.color": t["grid"], "grid.linewidth": 0.8, "grid.alpha": 1.0,
-        "axes.spines.top": False, "axes.spines.right": False,
-        "axes.edgecolor": t["axis"], "axes.linewidth": 1.0,
-        "xtick.color": t["muted"], "ytick.color": t["muted"],
-        "xtick.labelcolor": t["muted"], "ytick.labelcolor": t["muted"],
-        "xtick.direction": "out", "ytick.direction": "out",
-        "lines.linewidth": 2.0, "lines.markersize": 6,
-        "legend.frameon": False, "legend.labelcolor": t["secondary"],
-        "legend.fontsize": 9,
+        "axes.spines.top": True, "axes.spines.right": True,
+        "axes.spines.left": True, "axes.spines.bottom": True,
+        "axes.edgecolor": t["axis"], "axes.linewidth": 1.3,
+        "xtick.color": t["primary"], "ytick.color": t["primary"],
+        "xtick.labelcolor": t["primary"], "ytick.labelcolor": t["primary"],
+        "xtick.labelsize": 15, "ytick.labelsize": 15,
+        "xtick.direction": "in", "ytick.direction": "in",
+        "xtick.top": True, "ytick.right": True,
+        "xtick.minor.visible": True, "ytick.minor.visible": True,
+        "xtick.major.size": 9, "ytick.major.size": 9,
+        "xtick.minor.size": 4.5, "ytick.minor.size": 4.5,
+        "xtick.major.width": 1.2, "ytick.major.width": 1.2,
+        "xtick.minor.width": 1.0, "ytick.minor.width": 1.0,
+        "lines.linewidth": 2.0, "lines.markersize": 7,
+        "legend.frameon": False, "legend.labelcolor": t["primary"],
+        "legend.fontsize": 14,
     })
 
 
-def _ax(ax=None, figsize=(6.4, 4.2)):
+def _ax(ax=None, figsize=(7.2, 5.4)):
     import matplotlib.pyplot as plt
 
     if ax is not None:
@@ -237,6 +255,102 @@ def prediction_vs_truth(y_true: np.ndarray, y_pred: np.ndarray, window: float = 
     cbar.outline.set_edgecolor(t["axis"])
     ax.grid(False)
     _finish(ax, title, "true vertex time [ps]", "predicted vertex time [ps]", legend=False)
+    return fig, ax
+
+
+def resolution_vs_efficiency(errors: np.ndarray, sigma: np.ndarray,
+                             ax=None, title: str = "Resolution vs efficiency"):
+    """Resolution of the events kept, against the fraction kept, cutting on sigma.
+
+    The one plot of the predicted uncertainty that an analysis can act on: it
+    says what a tighter selection buys, and the selection needs no truth, only
+    the number the model already outputs. The horizontal line is what keeping
+    everything gives.
+    """
+    fig, ax = _ax(ax)
+    colors, t = series_colors(), tokens()
+    order = np.argsort(sigma)
+    err = np.abs(errors[order])
+    keep = np.linspace(0.05, 1.0, 96)
+    q68 = [np.percentile(err[:max(int(f * len(err)), 20)], 68) for f in keep]
+
+    ax.plot(100 * keep, q68, color=colors[0], linewidth=2.5)
+    ax.axhline(q68[-1], color=t["axis"], linewidth=1.2, linestyle="--")
+    ax.annotate(f"all events, {q68[-1]:.1f} ps", (8, q68[-1]), va="top",
+                xytext=(0, -6), textcoords="offset points",
+                fontsize=13, color=t["primary"])
+    for f in (0.5, 0.8):
+        i = int(np.argmin(np.abs(keep - f)))
+        ax.plot([100 * keep[i]], [q68[i]], "o", color=colors[1], zorder=4)
+        # Label to the left of the marker: at 80% there is no room to its right.
+        ax.annotate(f"{100 * keep[i]:.0f}%: {q68[i]:.1f} ps",
+                    (100 * keep[i], q68[i]), textcoords="offset points",
+                    xytext=(-10, -20), ha="right",
+                    fontsize=13, color=t["primary"])
+    ax.set_xlim(0, 104)
+    _finish(ax, title, r"events kept, tightest predicted $\sigma$ first [%]",
+            "q68 of the kept events [ps]", legend=False)
+    return fig, ax
+
+
+def sigma_calibration(errors: np.ndarray, sigma: np.ndarray, bins: int = 12,
+                      ax=None, title: str = "Predicted vs achieved resolution"):
+    """Does a predicted sigma mean what it says? Binned, against y = x.
+
+    Points on the diagonal mean the width is honest; above it the model is
+    overconfident. Ordering can be right while the scale is not, and the two
+    failures want different responses, so they are separated here.
+    """
+    fig, ax = _ax(ax)
+    colors, t = series_colors(), tokens()
+    edges = np.quantile(sigma, np.linspace(0, 1, bins + 1))
+    pred, got, err_got = [], [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        m = (sigma >= lo) & (sigma < hi)
+        if m.sum() < 50:
+            continue
+        e = errors[m]
+        pred.append(np.median(sigma[m]))
+        # A robust width, so a handful of unrecoverable events cannot set it.
+        got.append(0.7413 * (np.percentile(e, 75) - np.percentile(e, 25)))
+        err_got.append(got[-1] / np.sqrt(2 * m.sum()))
+
+    lim = [0, 1.15 * max(max(pred), max(got))]
+    ax.plot(lim, lim, color=t["axis"], linewidth=1.2, linestyle="--",
+            label="perfectly calibrated")
+    ax.errorbar(pred, got, yerr=err_got, fmt="o", color=colors[0],
+                markersize=8, linewidth=1.5, capsize=3, label="measured")
+    ax.set_xlim(lim)
+    ax.set_ylim(lim)
+    _finish(ax, title, r"predicted $\sigma$ [ps]",
+            "achieved width of those events [ps]", legend=True)
+    return fig, ax
+
+
+def pull_distribution(errors: np.ndarray, sigma: np.ndarray, window: float = 5.0,
+                      bins: int = 100, ax=None, title: str = "Pull"):
+    """(predicted - true) / predicted sigma, against a unit Gaussian.
+
+    The compact form of the calibration question: if the widths are honest
+    this is a standard normal, and its own width is the factor they are out
+    by, in one number rather than a curve.
+    """
+    fig, ax = _ax(ax)
+    colors, t = series_colors(), tokens()
+    pull = errors / np.maximum(sigma, 1e-9)
+    inside = pull[np.abs(pull) < window]
+    edges = np.linspace(-window, window, bins + 1)
+    centres = 0.5 * (edges[1:] + edges[:-1])
+
+    counts, _ = np.histogram(pull, bins=edges)
+    ax.stairs(counts / (len(pull) * (edges[1] - edges[0])), edges,
+              color=colors[0], linewidth=2.0,
+              label=f"pull, width {inside.std():.2f}")
+    ax.plot(centres, np.exp(-0.5 * centres ** 2) / np.sqrt(2 * np.pi),
+            color=t["axis"], linewidth=1.5, linestyle="--", label="unit Gaussian")
+    ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
+    _finish(ax, title, r"(predicted - true) / predicted $\sigma$",
+            "events (normalised)", legend=True)
     return fig, ax
 
 
@@ -409,14 +523,19 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
     fig.savefig(os.path.join(outdir, "pred_vs_true.png")); plt.close(fig)
     written.append("pred_vs_true.png")
 
-    comparable = {n: metrics[n] for n in names if n in metrics}
-    if len(comparable) > 1:
-        for key, unit in (("core_std", "ps"), ("core_fraction", "")):
-            fig, _ = sample_comparison(comparable, key=key,
-                                       title=key.replace("_", " ") + " by sample",
-                                       unit=unit or "-")
-            fig.savefig(os.path.join(outdir, f"{key}_by_sample.png")); plt.close(fig)
-            written.append(f"{key}_by_sample.png")
+    # What the predicted sigma is worth: what a cut on it buys, whether its
+    # scale is honest, and the same question in one number.
+    if "sigma" in data.files:
+        sigma = data["sigma"]
+        for fn, fname, kw in (
+                (resolution_vs_efficiency, "resolution_vs_efficiency.png",
+                 {"title": f"{name} -- resolution vs efficiency"}),
+                (sigma_calibration, "sigma_calibration.png",
+                 {"title": f"{name} -- predicted vs achieved"}),
+                (pull_distribution, "pull.png", {"title": f"{name} -- pull"})):
+            fig, _ = fn(errors, sigma, **kw)
+            fig.savefig(os.path.join(outdir, fname)); plt.close(fig)
+            written.append(fname)
 
     if save_training_history(model_dir, mode=mode, outdir=outdir):
         written.append("history.png")
