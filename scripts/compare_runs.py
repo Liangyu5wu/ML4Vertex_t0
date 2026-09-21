@@ -50,11 +50,17 @@ def vertex_lookup(paths: dict) -> dict:
     return out
 
 
-def load_run(trial: str, lookup: dict) -> dict:
-    """One trial: its training samples and its per-event predictions."""
+def load_run(trial: str, lookup: dict, predictions: str = "predictions_test.npz"
+             ) -> dict:
+    """One trial: its training samples and one set of per-event predictions.
+
+    ``predictions`` selects the file, so the same reader serves a model's own
+    test split and the cross-sample scores `evaluate_blocks.py` writes beside
+    it as ``predictions_xeval_<sample>.npz``.
+    """
     with open(os.path.join(trial, "trial_config.yaml")) as fh:
         cfg = yaml.safe_load(fh)
-    z = np.load(os.path.join(trial, "predictions_test.npz"), allow_pickle=False)
+    z = np.load(os.path.join(trial, predictions), allow_pickle=False)
     names = [str(n) for n in z["dataset_names"]]
     sample = np.array(names, dtype=object)[z["dataset_id"]]
     dz = np.array([lookup[s].get(int(e), np.nan)
@@ -65,6 +71,45 @@ def load_run(trial: str, lookup: dict) -> dict:
         "sigma": z["sigma"] if "sigma" in z else None,
         "sample": sample, "dz": dz,
     }
+
+
+def matrix(run_dirs, lookup, match_mm: float) -> None:
+    """Every (input set, training samples, evaluation sample) cell, together.
+
+    The cells off the diagonal are what say whether the model learned the
+    physics or the sample: they come from scoring a single-sample model on
+    the other sample, which `evaluate_blocks.py` does with the training
+    scalers rather than refitting on what is being measured.
+    """
+    rows = defaultdict(list)
+    for d in run_dirs:
+        cfg_name = os.path.basename(os.path.normpath(d))
+        for t in sorted(glob.glob(os.path.join(d, "trial_*"))):
+            for f in sorted(glob.glob(os.path.join(t, "predictions*.npz"))):
+                if not os.path.exists(os.path.join(t, "trial_config.yaml")):
+                    continue
+                r = load_run(t, lookup, os.path.basename(f))
+                for s in sorted(set(r["sample"])):
+                    m = (r["sample"] == s) & (r["dz"] < match_mm) & np.isfinite(r["dz"])
+                    if m.sum() < 100:
+                        continue
+                    rows[(cfg_name, r["trained_on"], s)].append(
+                        summarize(r["y_true"][m], r["y_pred"][m])["q68"])
+
+    order = ["ttbar", "ttbar+vbf_hinv", "vbf_hinv"]
+    evals = ["ttbar", "vbf_hinv"]
+    print(f"\n{'=' * 72}\nq68 [ps], events whose vertex was found, "
+          f"mean +- half-range over seeds\n{'=' * 72}")
+    for cfg_name in [os.path.basename(os.path.normpath(d)) for d in run_dirs]:
+        print(f"\n{cfg_name}")
+        print(f"  {'trained on \\ scored on':26s}" + "".join(f"{e:>16s}" for e in evals))
+        for tr in order:
+            line = f"  {tr:26s}"
+            for ev in evals:
+                v = rows.get((cfg_name, tr, ev))
+                line += (f"{np.mean(v):11.1f} +-{(max(v) - min(v)) / 2:3.1f}"
+                         if v else f"{'-':>16s}")
+            print(line)
 
 
 def report(runs: list, label: str) -> None:
@@ -104,6 +149,8 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("run_dirs", nargs="+", help="directories holding trial_* runs")
     p.add_argument("--match-mm", type=float, default=MATCH_MM)
+    p.add_argument("--matrix", action="store_true",
+                   help="one table per input set: training samples x scored sample")
     args = p.parse_args()
 
     globals()["MATCH_MM"] = args.match_mm
@@ -119,6 +166,10 @@ def main():
                         paths[ds["name"]] = ds["path"]
     print(f"vertex match: |z_reco - z_truth| < {args.match_mm} mm")
     lookup = vertex_lookup(paths)
+
+    if args.matrix:
+        matrix(args.run_dirs, lookup, args.match_mm)
+        return
 
     for d in args.run_dirs:
         trials = [t for t in sorted(glob.glob(os.path.join(d, "trial_*")))

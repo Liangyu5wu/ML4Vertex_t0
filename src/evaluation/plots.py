@@ -356,6 +356,38 @@ def pull_distribution(errors: np.ndarray, sigma: np.ndarray, window: float = 5.0
     return fig, ax
 
 
+def sigma_distribution(sigma: Dict[str, np.ndarray], bins: int = 60, ax=None,
+                       title: str = "Predicted uncertainty"):
+    """How the predicted sigma is spread, per sample and over all of them.
+
+    What the model thinks it knows, before any question of whether it is
+    right. The spread is the useful part -- a model that returned one width
+    for every event would be reporting an average, not a per-event
+    uncertainty -- and comparing samples shows where the easy events are.
+
+    Log-spaced bins, because sigma runs over nearly two orders of magnitude.
+    """
+    fig, ax = _ax(ax)
+    colors, t = series_colors(), tokens()
+    every = np.concatenate(list(sigma.values()))
+    edges = np.geomspace(max(every.min(), 1e-3), every.max(), bins + 1)
+
+    series = dict(sigma)
+    if len(sigma) > 1:
+        series["total"] = every
+    for i, (name, v) in enumerate(series.items()):
+        counts, _ = np.histogram(v, bins=edges)
+        # "total" is the sum of the others, so it takes the neutral ink rather
+        # than a categorical slot -- it is not a fourth sample.
+        colour = t["primary"] if name == "total" else colors[i % len(colors)]
+        ax.stairs(counts, edges, color=colour, linewidth=2.0,
+                  linestyle="--" if name == "total" else "-",
+                  label=f"{name}  ({len(v):,}), median {np.median(v):.0f} ps")
+    ax.set_xscale("log")
+    _finish(ax, title, r"predicted $\sigma$ [ps]", "events / bin", legend=True)
+    return fig, ax
+
+
 def training_history(history_csv: str, axes=None, title: str = "Training"):
     """Loss and the physical error against epoch, train and validation.
 
@@ -529,6 +561,10 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
     # scale is honest, and the same question in one number.
     if "sigma" in data.files:
         sigma = data["sigma"]
+        fig, _ = sigma_distribution({n: sigma[ids == i] for i, n in enumerate(names)},
+                                    title=f"{name} -- predicted uncertainty")
+        fig.savefig(os.path.join(outdir, "sigma_distribution.png")); plt.close(fig)
+        written.append("sigma_distribution.png")
         for fn, fname, kw in (
                 (resolution_vs_efficiency, "resolution_vs_efficiency.png",
                  {"title": f"{name} -- resolution vs efficiency"}),
