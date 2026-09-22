@@ -87,8 +87,19 @@ should not have moved at all, moved by +3.6. The fixes are kept because
 they are right, not because they pay: a first Dense layer can learn a large
 weight, and nothing here is optimisation-limited.
 
-One thing was measurably worse: a transformer over the cell set, 37.4 +- 0.3
-against 35.2 +- 0.5 for MLP plus attention pooling.
+Two things were measurably worse. A transformer over the cell set, 37.4 +-
+0.3 against 35.2 +- 0.5 for MLP plus attention pooling. And promoting
+`reco_vtx_time` and its resolution to event features, +2.0 ps on
+vertex-correct events, worse in every bin.
+
+That second one came from a single event opened in the display, where the
+reconstructed vertex time was right to 2 ps and the model missed by 450,
+and from the pattern behind it: on the 24,608 test events where the vertex
+time is itself good to 20 ps the model reads 16.6 ps against its 11.7. It
+is not that the model cannot reach the input -- the `vertices` block
+carries it -- it is that the same input is wrong by more than 20 ps in 41%
+of events, and declining to follow it is what turns 452 ps into 135 in the
+worst bin. The 5 ps is the price of that trade, not a bug.
 
 That `max_items` 250 does not beat 120, and that admitting every cell down to
 significance 2 does not either, says truncation and selection are not the

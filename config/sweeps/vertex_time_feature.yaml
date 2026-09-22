@@ -16,6 +16,19 @@
 #
 # An event feature is concatenated straight into the head, so if the loss is
 # about reachability rather than about the trade-off, this recovers it.
+#
+# RESULT: it does not. Against the three existing baseline seeds it is worse
+# in every bin -- +1.3 ps where the vertex time is good to 20 ps, +2.0 ps
+# overall on vertex-correct events, about 3 sigma. The 5 ps is the model's
+# trade-off, not a reachability problem: it already has the vertex time
+# through the `vertices` block and declines to follow it blindly because the
+# input is wrong by more than 20 ps in 41% of events.
+#
+# A likely reason the extra features hurt: event features have no
+# `valid_when`, so reco_vtx_time_res keeps its 14434 sentinel through a
+# plain z-score and every real value (5-30 ps) collapses onto one number.
+# Do not re-run this without fixing that first -- and see CLAUDE.md before
+# deciding it is worth fixing.
 
 # Only the new arm: the baseline is runs/lar_hgtd trials 000-002, which are
 # this same config with three event features, already trained on three seeds.
