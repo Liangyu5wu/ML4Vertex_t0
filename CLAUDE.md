@@ -117,11 +117,16 @@ transform and this head was measured before the batch-mixing bug was fixed,
 and head normalization was retested afterwards and flipped. Treat the
 others as provisional if one of them starts to matter.
 
-Two rules that came out of the process:
+Three rules that came out of the process:
 
 - **Repeat before believing.** Weight initialisation is unseeded, so one
   setting run twice spreads by 1-2 ps. Sweeps take `repeats:` and report the
   spread; gaps below it are not findings.
+- **Check whether the control arm already exists before running it.** Compare
+  `AssemblySpec.fingerprint()` and the model settings against what is in
+  `../runs`; an A/B whose baseline is already on disk should run one arm, not
+  two. Since weight initialisation is unseeded, three fresh seeds of an
+  existing setting are the same three draws, not a paired comparison.
 - **Grid, not random search, for a handful of axes.** 24 random points over 7
   parameters returned nothing significant (best p = 0.07); the same budget as
   an exact 4x3x2 grid settled `beta` outright.

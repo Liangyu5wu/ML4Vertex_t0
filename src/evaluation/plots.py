@@ -388,6 +388,58 @@ def sigma_distribution(sigma: Dict[str, np.ndarray], bins: int = 60, ax=None,
     return fig, ax
 
 
+def cut_comparison(errors: np.ndarray, keep: np.ndarray, window: float = 600.0,
+                   bins: int = 60, axes=None, label: str = "kept",
+                   title: str = "Effect of the selection"):
+    """What a selection removed, and how well it targeted what it should.
+
+    Top: the residual before the cut, with the surviving and removed events
+    drawn over it, on a log scale because the tails are the whole question.
+    Bottom: the fraction surviving in each bin -- a cut that only removes
+    badly predicted events shows a dip in the middle and wings near zero.
+
+    Two panels rather than two y-axes on one: a ratio and a count do not
+    share a scale.
+    """
+    import matplotlib.pyplot as plt
+
+    colors, t = series_colors(), tokens()
+    if axes is None:
+        fig, axes = plt.subplots(2, 1, figsize=(7.6, 6.6), sharex=True,
+                                 gridspec_kw={"height_ratios": [3, 1],
+                                              "hspace": 0.08})
+    axes = np.atleast_1d(axes)
+    fig = axes[0].figure
+    edges = np.linspace(-window, window, bins + 1)
+    width = float(edges[1] - edges[0])
+
+    total, _ = np.histogram(errors, bins=edges)
+    kept, _ = np.histogram(errors[keep], bins=edges)
+    axes[0].stairs(total, edges, color=t["primary"], linewidth=2.0,
+                   label=f"all ({len(errors):,})")
+    axes[0].stairs(kept, edges, color=colors[0], linewidth=2.0,
+                   fill=True, alpha=0.30,
+                   label=f"{label} ({int(keep.sum()):,}, "
+                         f"{100 * keep.mean():.0f}%)")
+    axes[0].stairs(total - kept, edges, color=colors[1], linewidth=2.0,
+                   label=f"removed ({int((~keep).sum()):,})")
+    axes[0].set_yscale("log")
+    _finish(axes[0], title, "", f"events / {width:.0f} ps", legend=True)
+
+    # Only where there is something to divide by.
+    ok = total > 0
+    centres = 0.5 * (edges[1:] + edges[:-1])[ok]
+    frac = kept[ok] / total[ok]
+    err = np.sqrt(np.maximum(frac * (1 - frac), 0) / total[ok])
+    axes[1].errorbar(centres, 100 * frac, yerr=100 * err, fmt="o",
+                     color=colors[0], markersize=4, linewidth=1.0)
+    axes[1].axhline(100 * keep.mean(), color=t["axis"], linewidth=1.2,
+                    linestyle="--")
+    axes[1].set_ylim(0, 105)
+    _finish(axes[1], "", "predicted - true [ps]", f"{label} [%]", legend=False)
+    return fig, axes
+
+
 def training_history(history_csv: str, axes=None, title: str = "Training"):
     """Loss and the physical error against epoch, train and validation.
 

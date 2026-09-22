@@ -1,0 +1,32 @@
+# Does the model use the reconstructed vertex time better when it is handed
+# to the head directly?
+#
+#   python scripts/sweep.py --space config/sweeps/vertex_time_feature.yaml \
+#       --config config/blocks/lar_hgtd.yaml --out ../sweeps/vtx_time_feature
+#
+# It already has it: `vertices.time` carries RecoVtx_time for the row whose
+# is_hs flag is set. But that row reaches the head only through a masked
+# average over ten vertices, nine of which have no time at all.
+#
+# The reason to ask: on the 24,608 test events where the reconstructed vertex
+# time is itself good to 20 ps, the model reads 16.8 ps against the vertex
+# time's own 11.7. It improves every worse bin -- 452 -> 142 ps in the worst
+# -- so it is right not to trust the input blindly, but it is paying 5 ps on
+# the 39% of events where trusting it would have been correct.
+#
+# An event feature is concatenated straight into the head, so if the loss is
+# about reachability rather than about the trade-off, this recovers it.
+
+# Only the new arm: the baseline is runs/lar_hgtd trials 000-002, which are
+# this same config with three event features, already trained on three seeds.
+# Weight initialisation is unseeded, so re-running it would draw three more
+# samples from the same distribution and learn nothing.
+
+trials: 3
+seed: 30
+epochs: 300
+repeats: 3
+
+space:
+  data.event_features:
+    - [reco_vtx_x, reco_vtx_y, reco_vtx_z, reco_vtx_time, reco_vtx_time_res]

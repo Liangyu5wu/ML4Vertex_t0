@@ -108,6 +108,13 @@ RECO_VERTEX_FIELDS = {
     # counts are the running sum of the vertex counts, i.e. the producer never
     # clears the vector between events.  _check_counts() would reject it.
 }
+# Truth hard-scatter jets. Not a model input -- truth matching does not exist
+# in data -- but the VBF H->inv event selection is defined on them, so they
+# have to be in the store for that selection to be expressible.
+TRUTH_HS_JET_FIELDS = {
+    "pt": "TruthHSJet_pt", "eta": "TruthHSJet_eta", "phi": "TruthHSJet_phi",
+    "m": "TruthHSJet_m", "width": "TruthHSJet_width",
+}
 TRUTH_VERTEX_FIELDS = {
     "x": "TruthVtx_x", "y": "TruthVtx_y", "z": "TruthVtx_z",
     "time": "TruthVtx_time", "is_hs": "TruthVtx_isHS",
@@ -131,6 +138,7 @@ def settings_fingerprint(extrapolations: bool, tree_name: str) -> str:
         "tracks": TRACK_FIELDS, "jets": JET_FIELDS, "jet_matches": JET_MATCH_COUNTS,
         "jet_collections": JET_COLLECTIONS, "reco_vtx": RECO_VERTEX_FIELDS,
         "truth_vtx": TRUTH_VERTEX_FIELDS,
+        "truth_hs_jets": TRUTH_HS_JET_FIELDS,
         "extrapolation": TRACK_EXTRAPOLATION if extrapolations else None,
         "track_selection": TRACK_SELECTION, "tree": tree_name,
     }
@@ -338,6 +346,14 @@ def read_file(src: str, tree_name: str = "ntuple", extrapolations: bool = True
         _check_counts(jets, block)
         out.blocks[block] = _ragged(jets)
         out.block_attrs[block] = {"selection": "everything in the ntuple"}
+
+    # ---- truth hard-scatter jets -------------------------------------------
+    hsj_map = _resolve(available, TRUTH_HS_JET_FIELDS, "truth HS jets")
+    hs_jets = _read(tree, hsj_map)
+    _check_counts(hs_jets, "truth_hs_jets")
+    out.blocks["truth_hs_jets"] = _ragged(hs_jets)
+    out.block_attrs["truth_hs_jets"] = {"selection": "all truth HS jets"}
+    out.mapping.update({f"truth_hs_jets/{k}": v for k, v in hsj_map.items()})
 
     # ---- vertices ----------------------------------------------------------
     for block, arrays, mapping in (("reco_vertices", reco_vtx, rv_map),
