@@ -21,6 +21,8 @@ Continuous density uses a single-hue blue ramp, never a rainbow.
     from src.evaluation import plots
     plots.report("../models/lar_hgtd")           # the standard set
     plots.error_distribution({"ttbar": err}, ax=ax)   # or one at a time
+
+    python -m src.evaluation.plots ../runs/lar_hgtd/trial_000 --max-sigma 40
 """
 
 from __future__ import annotations
@@ -565,9 +567,77 @@ def sweep_results(trials: Sequence[dict], objective: str = "objective",
 
 # --- the standard set ------------------------------------------------------
 
+def _evaluation_cfg(model_dir: str) -> dict:
+    """The ``evaluation:`` stanza of the config a model was trained with."""
+    path = os.path.join(model_dir, "config.yaml")
+    if not os.path.exists(path):
+        return {}
+    import yaml
+    with open(path) as fh:
+        return (yaml.safe_load(fh) or {}).get("evaluation") or {}
+
+
+def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
+               sigma: np.ndarray, ids: np.ndarray, names: Sequence[str],
+               cut: dict, outdir: str, fit: Optional[dict] = None) -> str:
+    """The standard residual plots again, for the events a sigma cut keeps.
+
+    Writes, into ``outdir/sigma_cut_<N>ps``: the residual (linear and log,
+    refitted on the kept events), predicted against true, one kept/removed
+    comparison per sample, and ``cut_metrics.json`` with the threshold, each
+    sample's efficiency and its summary after the cut.
+    """
+    import matplotlib.pyplot as plt
+
+    from src.evaluation.summary import sigma_cut, summarize
+
+    keep, threshold = sigma_cut(sigma, **cut)
+    errors = y_pred - y_true
+    out = os.path.join(outdir, f"sigma_cut_{threshold:.0f}ps")
+    os.makedirs(out, exist_ok=True)
+
+    groups = {n: ids == i for i, n in enumerate(names)}
+    if len(names) > 1:
+        groups["all"] = np.ones(len(ids), dtype=bool)
+    stats = {"cut": dict(cut), "max_sigma": threshold, "samples": {
+        n: {"efficiency": float(keep[m].mean()),
+            **summarize(y_true[m & keep], y_pred[m & keep], sigma=sigma[m & keep], fit=fit)}
+        for n, m in groups.items()}}
+    with open(os.path.join(out, "cut_metrics.json"), "w") as fh:
+        json.dump(stats, fh, indent=2)
+
+    name = os.path.basename(os.path.normpath(model_dir))
+    tag = rf"$\sigma_{{pred}}$ $\leq$ {threshold:.0f} ps"
+    kept = {n: errors[m & keep] for n, m in groups.items() if n != "all"}
+    fits = {n: s["fit"] for n, s in stats["samples"].items()
+            if isinstance(s.get("fit"), dict) and "sigma" in s["fit"]}
+    figures = [("residual.png", error_distribution(kept, fits, title=f"{name}, {tag}")[0]),
+               ("residual_log.png", error_distribution(kept, fits, logy=True,
+                                                       title=f"{name}, {tag}")[0]),
+               ("pred_vs_true.png", prediction_vs_truth(y_true[keep], y_pred[keep],
+                                                        title=f"{name}, {tag}")[0])]
+    figures += [(f"cut_{n}.png", cut_comparison(errors[m], keep[m],
+                                                title=f"{name}, {n}: {tag}")[0])
+                for n, m in groups.items() if n != "all"]
+    for fname, fig in figures:
+        fig.savefig(os.path.join(out, fname))
+        plt.close(fig)
+    print(f"sigma cut at {threshold:.1f} ps: "
+          + ", ".join(f"{n} keeps {100 * s['efficiency']:.0f}% (q68 {s['q68']:.1f})"
+                      for n, s in stats["samples"].items())
+          + f"; plots in {out}")
+    return out
+
+
 def report(model_dir: str, predictions: str = "predictions_test.npz",
-           mode: str = "light", outdir: Optional[str] = None) -> str:
-    """Write the standard plot set for a trained model. Returns the directory."""
+           mode: str = "light", outdir: Optional[str] = None,
+           sigma_cut: Optional[dict] = None) -> str:
+    """Write the standard plot set for a trained model. Returns the directory.
+
+    With a sigma cut -- ``sigma_cut`` here, or ``evaluation.sigma_cut`` in the
+    model's config -- the residual plots are drawn again for the kept events,
+    by :func:`cut_report`.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -626,6 +696,12 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
             fig, _ = fn(errors, sigma, **kw)
             fig.savefig(os.path.join(outdir, fname)); plt.close(fig)
             written.append(fname)
+        evaluation = _evaluation_cfg(model_dir)
+        cut = sigma_cut if sigma_cut is not None else evaluation.get("sigma_cut")
+        if cut:
+            written.append(os.path.basename(cut_report(
+                model_dir, y_true, y_pred, sigma, ids, names, cut, outdir,
+                fit=evaluation.get("fit"))) + "/")
 
     if save_training_history(model_dir, mode=mode, outdir=outdir):
         written.append("history.png")
@@ -656,3 +732,27 @@ def save_training_history(model_dir: str, mode: str = "light",
     fig.savefig(path)
     plt.close(fig)
     return path
+
+
+def main():
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description="Redraw a trained model's plots, optionally after a cut on "
+                    "the predicted sigma (default: evaluation.sigma_cut in its config).")
+    p.add_argument("model_dir")
+    p.add_argument("--predictions", default="predictions_test.npz")
+    cut = p.add_mutually_exclusive_group()
+    cut.add_argument("--max-sigma", type=float, metavar="PS",
+                     help="keep events with a predicted sigma at most this")
+    cut.add_argument("--keep-fraction", type=float, metavar="F",
+                     help="keep the fraction F with the smallest predicted sigma")
+    a = p.parse_args()
+    report(a.model_dir, predictions=a.predictions,
+           sigma_cut={"max_sigma": a.max_sigma} if a.max_sigma is not None else
+                     {"keep_fraction": a.keep_fraction} if a.keep_fraction is not None
+                     else None)
+
+
+if __name__ == "__main__":
+    main()

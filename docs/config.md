@@ -60,7 +60,16 @@ training: {epochs: 300, batch_size: 1024, early_stopping_patience: 25,
            warmup_epochs: 5}
 evaluation:
   fit: {method: double_gaussian, pileup_sigma: 175.74, fix_pileup_sigma: true}
+  sigma_cut: {max_sigma: 40.0}   # or {keep_fraction: 0.8}; optional
 ```
+
+`evaluation.sigma_cut` redraws the residual plots for the events whose
+predicted sigma passes, into `plots/sigma_cut_<N>ps/`, with a kept/removed
+comparison per sample and `cut_metrics.json`. `max_sigma` is a fixed
+threshold in ps, the form a cut in data takes; `keep_fraction` sets it at
+that quantile of the sample's own sigma and records the value. Neither
+reads the truth. For an existing run:
+`python -m src.evaluation.plots <run> --max-sigma 40`.
 
 ### Presets
 

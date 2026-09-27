@@ -74,6 +74,25 @@ def split_prediction(y_pred: np.ndarray):
     return y_pred.reshape(-1), None
 
 
+def sigma_cut(sigma: np.ndarray, max_sigma: Optional[float] = None,
+              keep_fraction: Optional[float] = None):
+    """Keep the events the model is surest of; returns ``(keep, threshold)``.
+
+    Give exactly one of ``max_sigma``, a fixed threshold in ps -- what a cut
+    in data would be -- or ``keep_fraction``, which puts the threshold at that
+    quantile of ``sigma`` itself and returns it, so it can be frozen as a
+    ``max_sigma``. Neither looks at the truth.
+    """
+    if (max_sigma is None) == (keep_fraction is None):
+        raise ValueError("sigma_cut: give exactly one of max_sigma, keep_fraction")
+    sigma = np.asarray(sigma, dtype=np.float64)
+    if keep_fraction is not None:
+        if not 0.0 < keep_fraction <= 1.0:
+            raise ValueError(f"sigma_cut: keep_fraction must be in (0, 1], got {keep_fraction}")
+        max_sigma = np.quantile(sigma, keep_fraction)
+    return sigma <= max_sigma, float(max_sigma)
+
+
 def summarize(y_true: np.ndarray, y_pred: np.ndarray,
               core_window: float = 120.0, sigma: Optional[np.ndarray] = None,
               fit: Optional[dict] = None) -> Dict[str, float]:

@@ -107,6 +107,9 @@ python scripts/sweep.py --report-only --out ../sweeps/opt \
 python scripts/evaluate_blocks.py --model-dir ../models/lar_hgtd \
     --dataset vbf_hinv:/global/cfs/.../store/vbf_hinv --split test
 
+# redraw a run's plots, and again for the events a cut on the predicted sigma keeps
+python -m src.evaluation.plots ../runs/lar_hgtd/trial_000 --max-sigma 40
+
 # the traditional t0 estimate, for comparison
 python -m src.evaluation.baseline --store /global/cfs/.../store/ttbar --delta-r 0.1
 ```
