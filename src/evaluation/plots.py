@@ -397,9 +397,9 @@ def recovery_plot(errors: Dict[str, np.ndarray], base: str, combined: str,
     ``errors`` is {model: Delta t0 of the same events, in the same order}.
     Left: a migration matrix -- rows are ``base``'s |Delta t0| band, columns
     ``combined``'s, each cell the share of its row -- so the events made
-    better sit below the diagonal and those made worse above it, counted in
-    the title. Right: Delta t0 of every model for the events ``base`` gets
-    wrong (> ``fail``), which shows whether the recovered ones reach the
+    better sit below the diagonal and those made worse above it. Right:
+    Delta t0 of every model for the events ``base`` gets wrong
+    (> ``fail``), which shows whether the recovered ones reach the
     precision of the combined model or only that of a model without
     ``base``'s inputs.
     """
@@ -414,7 +414,6 @@ def recovery_plot(errors: Dict[str, np.ndarray], base: str, combined: str,
     n = len(edges) - 1
     counts = np.array([[np.sum((ra == i) & (rb == j)) for j in range(n)] for i in range(n)])
     share = counts / np.maximum(counts.sum(1, keepdims=True), 1)
-    better, worse = np.mean(rb < ra), np.mean(rb > ra)
     names = [f"< {bands[0]:.0f}"] + [f"{lo:.0f}-{hi:.0f}" for lo, hi in
                                       zip(bands[:-1], bands[1:])] + [f"> {bands[-1]:.0f}"]
 
@@ -431,7 +430,7 @@ def recovery_plot(errors: Dict[str, np.ndarray], base: str, combined: str,
     ax.set_yticks(range(n), names)
     ax.minorticks_off()
     ax.tick_params(top=False, right=False)
-    _finish(ax, f"{len(a):,} events: {100 * better:.0f}% better, {100 * worse:.0f}% worse",
+    _finish(ax, f"Event migration, {base} $\\rightarrow$ {combined}",
             rf"$|\Delta t_0|$, {combined} [ps]", rf"$|\Delta t_0|$, {base} [ps]",
             legend=False)
 
