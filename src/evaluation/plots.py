@@ -358,6 +358,48 @@ def pull_distribution(errors: np.ndarray, sigma: np.ndarray, window: float = 5.0
     return fig, ax
 
 
+def sigma_vs_residual(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
+                      window: float = 600.0, bins: int = 100,
+                      title: str = "Predicted uncertainty vs residual"):
+    """Predicted sigma against (predicted - true), one panel per sample.
+
+    Small multiples on shared axes and one colour scale, so the samples
+    compare by position. Sigma is on a log axis -- it spans two orders of
+    magnitude -- and the dashed lines are |residual| = sigma: an honest sigma
+    puts 68% of each row between them.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, LogNorm
+
+    t = tokens()
+    cmap = LinearSegmentedColormap.from_list("seq_blue", [t["surface"]] + SEQUENTIAL)
+    every = np.concatenate(list(sigma.values()))
+    x_edges = np.linspace(-window, window, bins + 1)
+    y_edges = np.geomspace(max(every.min(), 1.0), every.max(), bins + 1)
+    counts = {n: np.histogram2d(errors[n], sigma[n], bins=[x_edges, y_edges])[0]
+              for n in errors}
+    norm = LogNorm(vmin=1, vmax=max(c.max() for c in counts.values()))
+
+    fig, axes = plt.subplots(1, len(errors), figsize=(5.6 * len(errors) + 1.2, 5.4),
+                             sharex=True, sharey=True, squeeze=False,
+                             layout="constrained")
+    for ax, (name, h) in zip(axes[0], counts.items()):
+        mesh = ax.pcolormesh(x_edges, y_edges, h.T, cmap=cmap, norm=norm)
+        for sign in (-1, 1):
+            ax.plot(sign * y_edges, y_edges, color=t["axis"], linewidth=1.3,
+                    linestyle="--")
+        ax.set_yscale("log")
+        ax.set_xlim(-window, window)
+        _finish(ax, f"{name}  ({len(errors[name]):,})", "predicted - true [ps]",
+                r"predicted $\sigma$ [ps]" if ax is axes[0][0] else "", legend=False)
+    cbar = fig.colorbar(mesh, ax=axes[0].tolist())
+    cbar.set_label("events", color=t["secondary"])
+    cbar.outline.set_edgecolor(t["axis"])
+    fig.suptitle(title, x=0.0, ha="left", fontsize=16, fontweight="bold",
+                 color=t["primary"])
+    return fig, axes[0]
+
+
 def sigma_distribution(sigma: Dict[str, np.ndarray], bins: int = 60, ax=None,
                        title: str = "Predicted uncertainty"):
     """How the predicted sigma is spread, per sample and over all of them.
@@ -687,6 +729,10 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
                                     title=f"{name} -- predicted uncertainty")
         fig.savefig(os.path.join(outdir, "sigma_distribution.png")); plt.close(fig)
         written.append("sigma_distribution.png")
+        fig, _ = sigma_vs_residual(per_sample, {n: sigma[ids == i] for i, n in enumerate(names)},
+                                   title=f"{name} -- predicted uncertainty vs residual")
+        fig.savefig(os.path.join(outdir, "sigma_vs_residual.png")); plt.close(fig)
+        written.append("sigma_vs_residual.png")
         for fn, fname, kw in (
                 (resolution_vs_efficiency, "resolution_vs_efficiency.png",
                  {"title": f"{name} -- resolution vs efficiency"}),
