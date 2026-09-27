@@ -145,7 +145,7 @@ Five blocks are in use. Their model-visible features, selections and limits:
 | `jets_emtopo` | pt, eta, phi, width | none | 15 | pt ↓ |
 | `tracks` | pt, eta, phi, d0, z0 | `on_hs_vertex == 1` | 50 | pt ↓ |
 | `hgtd_tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1`, 2.4 < \|eta\| < 4.0, \|dz_hs\| < 2 mm | 55 | pt ↓ |
-| `vertices` | z, sum_pt2, time, time_res, is_hs, has_valid_time | none | 10 | sum_pt2 ↓ |
+| `vertices` | z, sum_pt2, is_hs | none | 10 | sum_pt2 ↓ |
 
 Each preset also loads auxiliary fields — positions, quality flags, truth-match
 counts — that selections may use without them becoming model inputs.
@@ -155,9 +155,15 @@ Four points about this stage:
 - **`reco_vertices/is_hs` is a reconstruction flag, not truth.** It was
   checked against the ordering and equals "highest sum_pt²" in 100% of
   events, so it is available in data and adds nothing beyond the sort order.
-- **No truth in any selection.** Jets carry a truth-match count, and it is
-  deliberately not cut on: truth matching is the only handle that identifies a
-  jet as hard-scatter, and it does not exist in data.
+- **No truth in any object selection.** Jets carry a truth-match count, and
+  it is deliberately not cut on: truth matching is the only handle that
+  identifies a jet as hard-scatter, and it does not exist in data.
+- **One truth cut on events, on purpose.** `event_select` keeps only events
+  whose sum-pt² vertex is within 3 mm of the true hard scatter
+  (`hs_vtx_dz`), standing in for a vertex identification better than
+  sum-pt². It removes 5.2% of ttbar and 18.4% of VBF events. The numbers in
+  Stage 3 and 4 below were measured before this cut and before the vertex
+  time left the inputs.
 - **Sorting needs a tie-break.** Cell energies are quantised; about 10% of
   cells share an energy exactly with another cell in the same event, so the
   cell preset sorts on `(e, significance)` rather than energy alone.
@@ -358,8 +364,9 @@ hyper-parameter sweep cost one training per trial and nothing else.
   is used only by the traditional σ-weighted baseline that the model is
   compared against.
 - **No target normalization.** Predictions come out in picoseconds.
-- **No truth anywhere except the target.** Selections, sorting and features
-  are all quantities available in data.
+- **No truth anywhere except the target and the vertex cut.** Object
+  selections, sorting and features are all quantities available in data;
+  the one exception is the `hs_vtx_dz` event cut above.
 
 ## Reproducing it
 

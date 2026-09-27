@@ -26,7 +26,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .blocks import BlockSpec, load_block, source_fields, spec_from_config
+from .blocks import (BlockSpec, event_mask, load_block, source_fields,
+                     spec_from_config)
 from .event_store import EventStore, RaggedBlock, pad_ragged
 
 SPLITS = ("train", "val", "test")
@@ -72,6 +73,9 @@ class AssemblySpec:
     # smaller samples up to the largest) or "undersample" (cut the larger ones
     # down). Applied to the training split only.
     resample: str = "none"
+    # Event-level cuts, applied before the split: [{field: hs_vtx_dz,
+    # abs_max: 3.0}]. Fields are event columns or blocks.DERIVED_EVENT_FIELDS.
+    event_select: List[dict] = field(default_factory=list)
     cache_dir: Optional[str] = None   # where prepared tensors are kept
 
     def fingerprint(self) -> str:
@@ -97,6 +101,9 @@ class AssemblySpec:
             "resample": self.resample,
             "weights": [d.weight for d in self.datasets],
         }
+        # Only when set, so the caches of configs without it keep their keys.
+        if self.event_select:
+            payload["event_select"] = self.event_select
         return hashlib.sha1(json.dumps(payload, sort_keys=True,
                                        default=str).encode()).hexdigest()[:16]
 
@@ -110,6 +117,7 @@ class AssemblySpec:
                    event_features=list(cfg.get("event_features") or []),
                    target=cfg.get("target", "HSvertex_time"), split=split,
                    resample=_check_resample(cfg),
+                   event_select=list(cfg.get("event_select") or []),
                    cache_dir=cfg.get("cache_dir") or os.environ.get(
                        "VERTEX_T0_CACHE",
                        "/pscratch/sd/l/liangyu/vertextiming/prepared_cache"))
@@ -170,7 +178,10 @@ def load_sample(source: DatasetSource, spec: AssemblySpec,
               for name, bspec in spec.blocks.items()}
     del raw
 
-    keep = np.ones(store.n_events, dtype=bool)
+    keep = event_mask(store, spec.event_select)
+    if verbose and spec.event_select:
+        print(f"    event_select: {int((~keep).sum())} of {store.n_events} "
+              f"event(s) fail {spec.event_select}")
     for name, bspec in spec.blocks.items():
         if bspec.min_items > 0:
             enough = blocks[name].counts >= bspec.min_items

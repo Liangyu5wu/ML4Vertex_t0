@@ -12,6 +12,11 @@ data:
   - reco_vtx_x
   - reco_vtx_y
   - reco_vtx_z
+  # Truth: keep only events whose sum-pt^2 vertex is within 3 mm of the true
+  # hard scatter, standing in for a better vertex identification.
+  event_select:
+  - field: hs_vtx_dz
+    abs_max: 3.0
   split:
     test_size: 0.2
     val_split: 0.125
@@ -62,9 +67,6 @@ data:
         dropout: 0.0
         norm: layer
         pooling: masked_average
-      valid_when:
-        time: has_valid_time
-        time_res: has_valid_time
 head:
   units:
   - 256

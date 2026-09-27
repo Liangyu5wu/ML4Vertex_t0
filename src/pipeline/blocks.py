@@ -243,6 +243,12 @@ def _vertices_preset() -> BlockSpec:
     choice is wrong in 5% of ttbar and 19% of VBF events -- which is where
     most of the tail comes from. Giving the network the competing vertices
     lets it recognise when the anchor it was handed is doubtful.
+
+    The vertex time, its resolution and its validity flag are auxiliary, not
+    features: the vertex time comes from the same HGTD tracks the
+    ``hgtd_tracks`` block already carries, and it is wrong by more than 20 ps
+    in 41% of events. ``features: [..., time, time_res, has_valid_time]``
+    brings them back (with ``valid_when``, see the config reference).
     """
     return BlockSpec(
         name="vertices",
@@ -250,11 +256,12 @@ def _vertices_preset() -> BlockSpec:
         features=[
             Feature("z", ("z",), pad=0.0),
             Feature("sum_pt2", ("sum_pt2",), pad=0.0),
-            Feature("time", ("time",), pad=0.0),
-            Feature("time_res", ("time_res",), pad=-1.0),
             Feature("is_hs", ("is_hs",), pad=-1.0, normalize=False),
-            Feature("has_valid_time", ("has_valid_time",), pad=-1.0, normalize=False),
         ],
+        aux=[Feature("time", ("time",), pad=0.0),
+             Feature("time_res", ("time_res",), pad=-1.0),
+             Feature("has_valid_time", ("has_valid_time",), pad=-1.0,
+                     normalize=False)],
         selections=[],
         sort_by="sum_pt2",
         max_items=10,
@@ -457,6 +464,45 @@ def _selection_mask(cols: Dict[str, np.ndarray], rule: dict) -> np.ndarray:
             mask &= np.abs(col) >= value
         else:
             raise KeyError(f"unknown selection operator {op!r} on field {fname!r}")
+    return mask
+
+
+# Event-level quantities that are not stored but can be selected on, each a
+# function of stored event columns: name -> (columns, function).
+DERIVED_EVENT_FIELDS = {
+    # How far the sum-pt^2 vertex lies from the true hard scatter. This is
+    # truth: cutting on it stands in for a vertex identification better than
+    # sum-pt^2, and is not a selection data can make.
+    "hs_vtx_dz": (("reco_vtx_z", "truth_vtx_z"), lambda reco, truth: reco - truth),
+}
+
+
+def event_mask(store: EventStore, rules: Sequence[dict]) -> np.ndarray:
+    """Which events pass the ``event_select`` rules; same operators as blocks.
+
+    A rule's ``field`` is a stored event column or one of
+    ``DERIVED_EVENT_FIELDS``; anything else raises.
+    """
+    mask = np.ones(store.n_events, dtype=bool)
+    if not rules:
+        return mask
+    cols: Dict[str, np.ndarray] = {}
+    for rule in rules:
+        name = rule.get("field")
+        if name is None or name in cols:
+            continue
+        if name in DERIVED_EVENT_FIELDS:
+            inputs, fn = DERIVED_EVENT_FIELDS[name]
+            cols[name] = fn(*(store.event_column(c).astype(np.float64)
+                              for c in inputs))
+        elif name in store.event_fields:
+            cols[name] = store.event_column(name)
+        else:
+            raise KeyError(f"event_select on unknown field {name!r}; store has "
+                           f"{sorted(store.event_fields)}, derived "
+                           f"{sorted(DERIVED_EVENT_FIELDS)}")
+    for rule in rules:
+        mask &= _selection_mask(cols, rule)
     return mask
 
 

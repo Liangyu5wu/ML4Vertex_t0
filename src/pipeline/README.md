@@ -56,6 +56,8 @@ data:
   resample: oversample           # none | oversample | undersample; training split only
   target: truth_vtx_time
   event_features: [reco_vtx_x, reco_vtx_y, reco_vtx_z]   # [] drops the branch
+  event_select:                  # whole events, before the split; same operators
+    - {field: hs_vtx_dz, abs_max: 3.0}                   # as block selections
   split: {test_size: 0.2, val_split: 0.125, random_state: 42}   # 70/10/20
   cache_dir: /pscratch/.../prepared_cache                # null disables caching
 
@@ -97,7 +99,12 @@ evaluation:
 | `jets_pflow` | `jets_pflow` | same | none | 15 by pt |
 | `hs_tracks` | `tracks` | pt, eta, phi, d0, z0 | `on_hs_vertex == 1` | 50 by pt |
 | `hgtd_tracks` | `tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1`, 2.4 < \|eta\| < 4.0, \|dz_hs\| < 2 mm | 55 by pt |
-| `vertices` | `reco_vertices` | z, sum_pt2, time, time_res, is_hs, has_valid_time | none | 10 by sum_pt2 |
+| `vertices` | `reco_vertices` | z, sum_pt2, is_hs | none | 10 by sum_pt2 |
+
+`vertices` keeps the vertex time, its resolution and `has_valid_time` as
+auxiliary fields, not inputs. `features: [z, sum_pt2, is_hs, time, time_res,
+has_valid_time]` with `valid_when: {time: has_valid_time, time_res:
+has_valid_time}` restores the earlier input.
 
 The jet presets deliberately carry no selection. Truth matching is the only
 handle that identifies a jet as hard-scatter and it does not exist in data,
@@ -123,6 +130,21 @@ against some independent time reference and carrying its systematic. The
 model already sees each cell's energy and significance and can discount a
 badly measured one without being told to.
 
+### Event selection
+
+`event_select` drops whole events before the split, so every split and every
+sample sees the same cut. A rule's `field` is a stored event column or a
+derived one from `DERIVED_EVENT_FIELDS` in `blocks.py`:
+
+| derived field | definition |
+|---|---|
+| `hs_vtx_dz` | `reco_vtx_z - truth_vtx_z`: how far the sum-pt² vertex is from the true hard scatter |
+
+`hs_vtx_dz` is truth. The three configs cut it at 3 mm to stand in for a
+vertex identification better than sum-pt², which removes 5.2% of ttbar and
+18.4% of VBF. This is not a cut data can make. Every number measured before
+it (the tuning record in `CLAUDE.md`, `../runs`) is on all events.
+
 ### Pooling
 
 `attention`, `masked_average`, `average`, `max`, `sum`, `flatten`. The masked
@@ -145,7 +167,8 @@ the window.
 `valid_when` names a feature that marks which rows are real. Nine of ten
 reco vertices carry a sentinel time resolution rather than a measurement,
 and fitting over it flattened the one real value in an event into a
-hundredth of a sigma. With `valid_when` the scale comes from the real rows
+hundredth of a sigma (the vertex time is no longer a default input; this
+applies when it is added back). With `valid_when` the scale comes from the real rows
 and the others are written at its centre; the validity feature is itself an
 input, so the model is told which those are.
 

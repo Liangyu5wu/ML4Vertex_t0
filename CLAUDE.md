@@ -58,6 +58,12 @@ Five rounds of sweeps took the validation q68 from 39 to about 35 ps. Almost
 none of it came from tuning, and the null results are worth more than the
 wins: do not re-run these.
 
+Everything in this section, and every run in `../runs`, predates two
+changes: the configs now keep only events with `|hs_vtx_dz| <= 3 mm` (a
+truth cut standing in for better vertex identification; it removes 5.2% of
+ttbar and 18.4% of VBF), and the vertex time and resolution are no longer
+inputs. Those runs are not a control arm for anything trained since.
+
 Where the gain came from:
 
 - **4.6 ps** from a data bug, not a setting. The splits were concatenated by

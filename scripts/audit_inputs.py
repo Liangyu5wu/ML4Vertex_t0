@@ -123,7 +123,7 @@ def main():
             row, found = int(hit[0]), split
             break
     else:
-        raise SystemExit(f"event {args.event} was dropped by a min_items cut")
+        raise SystemExit(f"event {args.event} was dropped by event_select or a min_items cut")
     print(f"landed in the {found!r} split at row {row}")
 
     for name, bspec in spec.blocks.items():
