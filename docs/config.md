@@ -64,14 +64,16 @@ evaluation:
 
 ### Presets
 
-| preset | block | features | default selection | max |
-|---|---|---|---|---|
-| `lar_cells` | `cells` | eta, phi, region, layer, time, e, significance | region in {EMB, EME}, layer in {1,2,3}, \|significance\| > 4, e > 1 GeV | 120 by (e, significance) |
-| `jets_emtopo` | `jets_emtopo` | pt, eta, phi, width | none | 15 by pt |
-| `jets_pflow` | `jets_pflow` | same | none | 15 by pt |
-| `hs_tracks` | `tracks` | pt, eta, phi, d0, z0 | `on_hs_vertex == 1` | 50 by pt |
-| `hgtd_tracks` | `tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1`, 2.4 < \|eta\| < 4.0, \|dz_hs\| < 2 mm | 55 by pt |
-| `vertices` | `reco_vertices` | z, sum_pt2, is_hs | none | 10 by sum_pt2 |
+| preset | source block | |
+|---|---|---|
+| `lar_cells` | `cells` | EM calorimeter cells |
+| `jets_emtopo`, `jets_pflow` | the same name | jets, no selection |
+| `hs_tracks` | `tracks` | tracks on the reco HS vertex |
+| `hgtd_tracks` | `tracks` | tracks with an HGTD time, near the HS vertex in z |
+| `vertices` | `reco_vertices` | reconstructed vertices |
+
+Each preset's features, units, selection, ordering and cap are tabulated in
+[`data_chain.md`, Stage 2](data_chain.md#what-the-model-reads).
 
 `vertices` keeps the vertex time, its resolution and `has_valid_time` as
 auxiliary fields, not inputs. `features: [z, sum_pt2, is_hs, time, time_res,
@@ -149,9 +151,9 @@ Neither measurably changed the result -- see the null list in `CLAUDE.md`
 
 ### Padding space
 
-`pad_in: normalized` (default) pushes the configured padding value through the
-fitted scaler, so `-999` stays an outlier after normalization. `pad_in: literal`
-writes the number straight into normalized data — the legacy cell behaviour,
-where `0.0` means "the mean" and is harmless because the mask hides it.
+`pad_in: literal` (the default, and what every preset uses) writes the
+padding value straight into the scaled tensor, so `0.0` means "the mean" and
+is harmless because the mask hides it. `pad_in: normalized` pushes it
+through the fitted scaler instead, so `-999` stays an outlier.
 
 Running, environment and outputs: see the [top-level README](../README.md).

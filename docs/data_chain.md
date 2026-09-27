@@ -137,12 +137,54 @@ inputs:
     encoder: {units: [256, 128, 64], dropout: 0.0, pooling: attention}
 ```
 
-Five blocks are in use: `cells`, `jets_emtopo`, `tracks`, `hgtd_tracks` and
-`vertices`. Their features, selections and limits are listed once, in the
-[preset table](config.md#presets).
+### What the model reads
 
-Each preset also loads auxiliary fields — positions, quality flags, truth-match
-counts — that selections may use without them becoming model inputs.
+`lar_hgtd` uses all five blocks; `lar_only` drops `hgtd_tracks`, and
+`hgtd_only` keeps only `hgtd_tracks` and `vertices`. The preset names are in
+[`config.md`](config.md#presets); what they select is here.
+
+| block (preset) | from | objects kept | order, cap |
+|---|---|---|---|
+| `cells` (`lar_cells`) | `cells` | region ∈ {EM barrel, EM endcap}, layer ∈ {1, 2, 3}, \|significance\| ≥ 4, e ≥ 1 GeV; events with none are dropped | (e, significance) ↓, 120 |
+| `jets_emtopo` | `jets_emtopo` | all | pt ↓, 15 |
+| `tracks` (`hs_tracks`) | `tracks` | assigned to the reco HS vertex | pt ↓, 50 |
+| `hgtd_tracks` | `tracks` | valid HGTD time, 2.4 ≤ \|eta\| ≤ 4.0, \|z0 − z_HS\| ≤ 2 mm; events with none are dropped | pt ↓, 55 |
+| `vertices` | `reco_vertices` | all | sum_pt² ↓, 10 |
+
+Per object, in the order they sit in the tensor:
+
+| block | feature | store field | unit | before the z-score | padding |
+|---|---|---|---|---|---|
+| `cells` | eta, phi | `eta`, `phi` | –, rad | | 0 |
+| | region | `region` | code 0/1 | not scaled | −1 |
+| | layer | `layer` | code 1–3 | not scaled | −1 |
+| | time | `time_tof` | ps | asinh(t / 100 ps) | 0 |
+| | e | `e` | GeV | | 0 |
+| | significance | `significance` | E / noise | | 0 |
+| `jets_emtopo` | pt, eta, phi, width | same | GeV, –, rad, – | | 0 |
+| `tracks` | pt, eta, phi, d0, z0 | same | GeV, –, rad, mm, mm | | 0 |
+| `hgtd_tracks` | pt, eta, phi, d0, z0 | same | GeV, –, rad, mm, mm | | 0 |
+| | time, time_res | `time`, `time_res` | ps | | 0 |
+| `vertices` | z, sum_pt2 | same | mm, GeV² | | 0 |
+| | is_hs | `is_hs` | 0/1 | not scaled | −1 |
+
+Per event: `event_input` is the reco HS vertex (x, y, z) in mm, z-scored.
+The target is `truth_vtx_time` in ps, not scaled.
+
+Every scaled feature is a z-score fitted on the real objects of the training
+split (Stage 3.3). Padding is written straight into the scaled tensor, so a
+padded slot sits at the mean, or at −1 for the codes; the block's mask says
+which slots are real and the pooling never sees the rest.
+
+Two features have almost no dynamic range after their z-score. `sum_pt2`
+has a mean of 2.7·10⁴ GeV² and a standard deviation of 2.9·10⁷, so nearly
+every vertex lands on the same value. The two track `pt` columns have means
+of 2-4 GeV and standard deviations of 84-91 GeV. That is the same defect the
+asinh transform fixed for the cell time; it has not been tested here.
+
+Each preset also loads auxiliary fields — positions, quality flags,
+truth-match counts, and for `vertices` the vertex time, which is not an
+input — that selections may use without them becoming model inputs.
 
 Five points about this stage:
 
@@ -218,10 +260,10 @@ was trained with rather than refitting on the new sample.
 
 ### 3.4 Normalize, then pad
 
-Normalizing before padding is what keeps padding out of the statistics. The
-configured padding value is then pushed through the fitted scaler
-(`pad_in: normalized`) or written literally (`pad_in: literal`, the cell
-default, where `0.0` lands on the mean).
+Normalizing before padding is what keeps padding out of the statistics.
+Every block uses `pad_in: literal`: the padding value is written into the
+scaled tensor as it is, so `0.0` lands on the mean. `pad_in: normalized`
+would push it through the scaler instead.
 
 ### 3.5 Emit the mask
 
@@ -254,7 +296,7 @@ reported number are in physical units.
 ### 3.6 Feed
 
 The training split is permuted once at this point. Without it the split runs
-all of one sample and then all of the next — one transition in 218k rows —
+all of one sample and then all of the next — one transition in the whole split —
 which a 10k shuffle buffer cannot bridge, leaving every batch drawn from a
 single sample. Validation and test are read in order; their order enters no
 metric.
@@ -330,6 +372,14 @@ optimistic where it is not. Binned by it (mixed training, test split, mean
 of three seeds), the fifth of events the model is most confident about have
 a width of 11.5 ps against a predicted 11.2, and the least confident fifth
 95.2 against 88.0. The pull is 1.08 wide for ttbar and 1.21 for VBF.
+
+### Training
+
+Adam at a learning rate of 5·10⁻³, warmed up linearly over the first 5
+epochs, halved after 8 epochs without a better validation loss (down to
+10⁻⁷); batches of 1024; at most 300 epochs, stopped 25 epochs after the best
+validation loss and restored to it. The 27 baseline runs stopped after
+44-88 epochs.
 
 ### Where the model is defined
 
