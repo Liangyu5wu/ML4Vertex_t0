@@ -279,33 +279,105 @@ def prediction_vs_truth(y_true: np.ndarray, y_pred: np.ndarray, window: float = 
     return fig, ax
 
 
-def resolution_vs_efficiency(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
-                             ax=None, title: str = "Resolution vs efficiency"):
-    """Resolution of the events kept, against the fraction kept, cutting on sigma.
+def _working_point_labels(working_points) -> list:
+    """[(label, max_sigma)] from a sigma_cut stanza: one dict or a list of them."""
+    cuts = [working_points] if isinstance(working_points, dict) else working_points or []
+    return [(c.get("name") or f"{c['max_sigma']:.0f} ps", float(c["max_sigma"]))
+            for c in cuts if "max_sigma" in c]
 
-    The one plot of the predicted uncertainty that an analysis can act on: it
-    says what a tighter selection buys, and the selection needs no truth, only
-    the number the model already outputs. One line per sample, since the same
-    threshold keeps different fractions of each; the markers are 50% and 80%.
+
+def resolution_vs_efficiency(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
+                             fit: Optional[dict] = None, working_points=None,
+                             ax=None, title: str = "Resolution vs efficiency"):
+    """What every threshold on sigma keeps, and how well those events are measured.
+
+    Each point is one threshold: x is the fraction it keeps (tightest sigma
+    first), y the q68 (solid) and, with ``fit``, the fitted core sigma
+    (dashed) of the kept events -- both in ps, on one axis. The working
+    points are marked where they fall. One colour per sample, since one
+    threshold keeps a different fraction of each.
     """
+    import matplotlib.lines as mlines
+
+    from src.evaluation.summary import efficiency_scan
+
     fig, ax = _ax(ax)
-    colors = series_colors()
-    keep = np.linspace(0.05, 1.0, 96)
+    colors, t = series_colors(), tokens()
+    wps = _working_point_labels(working_points)
+    handles = []
     for i, (name, e) in enumerate(errors.items()):
-        err = np.abs(e[np.argsort(sigma[name])])
-        q68 = np.array([np.percentile(err[:max(int(f * len(err)), 20)], 68) for f in keep])
-        marks = [int(np.argmin(np.abs(keep - f))) for f in (0.5, 0.8)]
-        ax.plot(100 * keep, q68, color=colors[i % len(colors)], linewidth=2.5,
-                marker="o", markevery=marks, markersize=8,
-                label=f"{name}: {q68[marks[0]]:.1f} / {q68[marks[1]]:.1f} / "
-                      f"{q68[-1]:.1f} ps")
+        colour, s = colors[i % len(colors)], sigma[name]
+        scan = efficiency_scan(e, s, np.linspace(0.05, 1.0, 39), fit=fit)
+        ax.plot(100 * scan["efficiency"], scan["q68"], color=colour, linewidth=2.5)
+        if fit:
+            ax.plot(100 * scan["efficiency"], scan["core_sigma"], color=colour,
+                    linewidth=2.0, linestyle="--")
+        for label, cut in wps:
+            keep = s <= cut
+            if keep.sum() < MIN_KEPT:
+                continue
+            x, y = 100 * keep.mean(), np.percentile(np.abs(e[keep]), 68)
+            ax.plot([x], [y], "o", color=colour, markersize=8, zorder=4)
+            if i == 0:                     # one label per working point is enough
+                ax.annotate(f"{label}, {cut:.0f} ps", (x, y), xytext=(-8, 8),
+                            textcoords="offset points", ha="right", fontsize=12,
+                            color=t["primary"])
+        handles.append(mlines.Line2D([], [], color=colour, linewidth=2.5,
+                                     label=f"{name} ({len(e):,})"))
+    handles.append(mlines.Line2D([], [], color=t["primary"], linewidth=2.0, label="q68"))
+    if fit:
+        handles.append(mlines.Line2D([], [], color=t["primary"], linewidth=2.0,
+                                     linestyle="--", label="core $\\sigma$ (fit)"))
     ax.set_xlim(0, 104)
     ax.set_ylim(bottom=0)
     _finish(ax, title, r"events kept, tightest predicted $\sigma$ first [%]",
-            "q68 of the kept events [ps]", legend=False)
-    ax.legend(loc="upper left", title="q68 at 50% / 80% / 100%", handlelength=1.6,
-              borderpad=0.2)
+            "resolution of the kept events [ps]", legend=False)
+    ax.legend(handles=handles, loc="upper left", handlelength=1.8, borderpad=0.2)
     return fig, ax
+
+
+def efficiency_comparison(scans: Dict[str, Dict[str, list]], working_points=None,
+                          title: str = "Resolution vs efficiency, by input"):
+    """Several models on one grid: rows q68 and core sigma, a column per sample.
+
+    ``scans`` is {model: {sample: [efficiency_scan of each seed]}}. Each model
+    is its seeds' mean, with their range shaded -- a gap narrower than that
+    band is not a difference. Reading across at one height gives the
+    efficiency each model reaches at that resolution; reading up at one
+    efficiency, the resolution.
+    """
+    import matplotlib.pyplot as plt
+
+    colors, t = series_colors(), tokens()
+    samples = list(dict.fromkeys(s for per in scans.values() for s in per))
+    fig, axes = plt.subplots(2, len(samples), figsize=(6.4 * len(samples), 9.0),
+                             sharex=True, sharey="row", squeeze=False,
+                             layout="constrained")
+    for row, (key, ylabel) in enumerate((("q68", "q68 of the kept events [ps]"),
+                                         ("core_sigma", r"core $\sigma$ of the kept events [ps]"))):
+        for col, sample in enumerate(samples):
+            ax = axes[row][col]
+            for i, (model, per) in enumerate(scans.items()):
+                runs = per.get(sample)
+                if not runs:
+                    continue
+                x = 100 * runs[0]["efficiency"]
+                y = np.array([r[key] for r in runs])
+                colour = colors[i % len(colors)]
+                ax.fill_between(x, np.nanmin(y, 0), np.nanmax(y, 0), color=colour,
+                                alpha=0.25, linewidth=0)
+                ax.plot(x, np.nanmean(y, 0), color=colour, linewidth=2.5,
+                        label=f"{model} ({len(runs)} seeds)")
+            ax.set_xlim(0, 104)
+            ax.set_ylim(bottom=0)
+            _finish(ax, sample if row == 0 else "",
+                    r"events kept, tightest predicted $\sigma$ first [%]" if row == 1 else "",
+                    ylabel if col == 0 else "", legend=row == 0 and col == 0)
+            if row == 0 and col == 0:
+                ax.get_legend().set_loc("upper left")
+    fig.suptitle(title, x=0.0, ha="left", fontsize=16, fontweight="bold",
+                 color=t["primary"])
+    return fig, axes
 
 
 def sigma_calibration(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
@@ -829,7 +901,11 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
         per_sigma = {n: sigma[ids == i] for i, n in enumerate(names)}
         for fn, fname, args, kw in (
                 (resolution_vs_efficiency, "resolution_vs_efficiency.png",
-                 (per_sample, per_sigma), {"title": f"{name} -- resolution vs efficiency"}),
+                 (per_sample, per_sigma),
+                 {"title": f"{name} -- resolution vs efficiency",
+                  "fit": _evaluation_cfg(model_dir).get("fit"),
+                  "working_points": sigma_cut if sigma_cut is not None
+                  else _evaluation_cfg(model_dir).get("sigma_cut")}),
                 (sigma_calibration, "sigma_calibration.png",
                  (per_sample, per_sigma), {"title": f"{name} -- predicted vs achieved"}),
                 (pull_distribution, "pull.png", (errors, sigma), {"title": f"{name} -- pull"})):

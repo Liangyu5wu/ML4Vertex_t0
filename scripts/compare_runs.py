@@ -144,6 +144,62 @@ def report(runs: list, label: str) -> None:
               f"{100 * f.mean():10.1f}%")
 
 
+def efficiency_plot(run_dirs, out: str, trained_on: str = "ttbar+vbf_hinv") -> None:
+    """Resolution against sigma-cut efficiency, one line per input set.
+
+    Draws plots.efficiency_comparison and prints the two readings of it: the
+    resolution each input set reaches at a given efficiency, and the
+    efficiency it keeps at a given resolution. Only trials trained on
+    ``trained_on`` are used, so every input set is compared on equal terms.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+
+    from src.evaluation import plots
+    from src.evaluation.summary import efficiency_scan
+
+    scans = {}
+    for d in run_dirs:
+        label = os.path.basename(os.path.normpath(d))
+        for t in sorted(glob.glob(os.path.join(d, "trial_*"))):
+            with open(os.path.join(t, "trial_config.yaml")) as fh:
+                cfg = yaml.safe_load(fh)
+            if "+".join(x["name"] for x in cfg["data"]["datasets"]) != trained_on:
+                continue
+            z = np.load(os.path.join(t, "predictions_test.npz"))
+            fit = (cfg.get("evaluation") or {}).get("fit")
+            for i, s in enumerate(str(n) for n in z["dataset_names"]):
+                m = z["dataset_id"] == i
+                scans.setdefault(label, {}).setdefault(s, []).append(
+                    efficiency_scan(z["errors"][m], z["sigma"][m], fit=fit))
+
+    plots.use_style("light")
+    fig, _ = plots.efficiency_comparison(
+        scans, title=f"Resolution vs sigma-cut efficiency, trained on {trained_on}")
+    fig.savefig(out)
+    print(f"wrote {out}")
+
+    def cell(v):
+        return f"{np.nanmean(v):6.1f}+-{(np.nanmax(v) - np.nanmin(v)) / 2:3.1f}"
+
+    samples = list(dict.fromkeys(s for per in scans.values() for s in per))
+    print(f"\nresolution at a given efficiency [ps], mean +- half-range over seeds")
+    for key in ("q68", "core_sigma"):
+        for eff in (0.5, 0.7, 0.9, 1.0):
+            print(f"  {key:10s} at {eff:4.0%}: " + "   ".join(
+                f"{m} {s}: " + cell([np.interp(eff, r['efficiency'], r[key]) for r in per[s]])
+                for m, per in scans.items() for s in samples if s in per))
+    print(f"\nefficiency at a given q68 [%]")
+    for target in (15.0, 20.0, 25.0, 30.0):
+        # q68 rises with efficiency; the running maximum makes it monotone
+        # for the interpolation, and a target never reached gives 0.
+        print(f"  q68 <= {target:4.0f} ps: " + "   ".join(
+            f"{m} {s}: " + cell([100 * np.interp(target, np.maximum.accumulate(r["q68"]),
+                                                  r["efficiency"], left=0.0, right=1.0)
+                                 for r in per[s]])
+            for m, per in scans.items() for s in samples if s in per))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -151,7 +207,14 @@ def main():
     p.add_argument("--match-mm", type=float, default=MATCH_MM)
     p.add_argument("--matrix", action="store_true",
                    help="one table per input set: training samples x scored sample")
+    p.add_argument("--efficiency-plot", metavar="PNG",
+                   help="resolution against sigma-cut efficiency, one line per input set")
+    p.add_argument("--trained-on", default="ttbar+vbf_hinv",
+                   help="with --efficiency-plot, which training to compare")
     args = p.parse_args()
+    if args.efficiency_plot:
+        efficiency_plot(args.run_dirs, args.efficiency_plot, args.trained_on)
+        return
 
     globals()["MATCH_MM"] = args.match_mm
 

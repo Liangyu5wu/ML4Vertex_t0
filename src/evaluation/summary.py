@@ -93,6 +93,31 @@ def sigma_cut(sigma: np.ndarray, max_sigma: Optional[float] = None,
     return sigma <= max_sigma, float(max_sigma)
 
 
+def efficiency_scan(errors: np.ndarray, sigma: np.ndarray,
+                    fractions: np.ndarray = np.linspace(0.1, 1.0, 19),
+                    fit: Optional[dict] = None) -> Dict[str, np.ndarray]:
+    """Resolution of the events kept by every sigma threshold, as a function of
+    the fraction kept.
+
+    Each fraction is a threshold on sigma (its quantile); for the events it
+    keeps this gives the q68 and, with ``fit``, the fitted core sigma. The
+    x-axis of every sigma-cut comparison, whatever the model.
+    """
+    errors, sigma = np.asarray(errors, dtype=np.float64), np.asarray(sigma)
+    out = {k: np.full(len(fractions), np.nan) for k in ("threshold", "q68", "core_sigma")}
+    out["efficiency"] = np.asarray(fractions, dtype=np.float64)
+    for j, f in enumerate(fractions):
+        keep, out["threshold"][j] = sigma_cut(sigma, keep_fraction=f)
+        e = errors[keep]
+        out["q68"][j] = np.percentile(np.abs(e), 68)
+        if fit:
+            try:
+                out["core_sigma"][j] = fit_core_resolution(e, **fit)["sigma"]
+            except RuntimeError:                      # fitting is best-effort
+                pass
+    return out
+
+
 def summarize(y_true: np.ndarray, y_pred: np.ndarray,
               core_window: float = 120.0, sigma: Optional[np.ndarray] = None,
               fit: Optional[dict] = None) -> Dict[str, float]:
