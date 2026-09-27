@@ -161,7 +161,6 @@ sum-pt^2 vertex was right (|dz| < 0.5 mm), ttbar and VBF read the same
 
 ## Rules the process left
 
-
 - **Repeat before believing.** Weight initialisation is unseeded, so one
   setting run twice spreads by 1-2 ps. Sweeps take `repeats:` and report the
   spread; gaps below it are not findings.

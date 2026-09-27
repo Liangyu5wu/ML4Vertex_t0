@@ -120,6 +120,12 @@ python scripts/compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only \
 python scripts/compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only ../runs/lar_only \
     --recovery ../runs/recovery_lar_hgtd.png
 
+# event displays: VBF events HGTD alone gets wrong and LAr+HGTD recovers, both
+# predictions drawn (reads whole blocks per event: run it on a compute node)
+python -m src.evaluation.event_display --config config/blocks/lar_hgtd.yaml --apply-cuts \
+    --model-dir ../runs/lar_hgtd/trial_000 --model-dir ../runs/hgtd_only/trial_000 \
+    --recovered 5 --out ../displays/recovered
+
 # redraw a run's plots, with the sigma working points
 python -m src.evaluation.plots ../runs/lar_hgtd/trial_000 --max-sigma 20 40 60
 
