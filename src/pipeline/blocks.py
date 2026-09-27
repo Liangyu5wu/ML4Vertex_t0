@@ -240,9 +240,9 @@ def _vertices_preset() -> BlockSpec:
     """Reconstructed vertices, most significant first.
 
     The hard-scatter vertex is whichever has the largest sum pt^2, and that
-    choice is wrong in 5% of ttbar and 19% of VBF events -- which is where
-    most of the tail comes from. Giving the network the competing vertices
-    lets it recognise when the anchor it was handed is doubtful.
+    choice is wrong in 5.9% of ttbar and 20.4% of VBF events. event_select
+    removes most of those before training; the competing vertices still let
+    the network recognise when the anchor it was handed is doubtful.
 
     The vertex time, its resolution and its validity flag are auxiliary, not
     features: the vertex time comes from the same HGTD tracks the

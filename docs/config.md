@@ -1,45 +1,17 @@
-# Block pipeline
+# Config reference
 
-Config reference for the data path. Adding an input, a sample or a cut is a
-YAML change, not a code change.
-
-```
-ROOT ntuple  --ingest_root.py-->  event store  --blocks.py-->  selected ragged
-    --assemble.py-->  padded tensors + tf.data  --block_model.py-->  Keras model
-```
+Every key a block config accepts. Adding an input, a sample or a cut is a
+YAML change, not a code change. What each stage does with these settings,
+and the numbers it produces, is in [`data_chain.md`](data_chain.md).
 
 ## 1. Event store
 
-One compressed column per field in a ragged (CSR) layout, so a model that
-reads HGTD tracks alone never pays for the calorimeter cells.
+The blocks a config can name as `source`: `cells`, `tracks`, `jets_emtopo`,
+`jets_pflow`, `reco_vertices`, `truth_vertices`, `truth_hs_jets`. Field names
+are ours, not the ntuple's; each store's `manifest.json` records the
+mapping. Layout, ingest and sizes: [`data_chain.md`, Stage 1](data_chain.md).
 
-```bash
-python -m src.pipeline.ingest_root \
-    --input-dir  /global/cfs/cdirs/m2616/liangyu/vertextiming/root/ttbar \
-    --output-dir /global/cfs/cdirs/m2616/liangyu/vertextiming/store/ttbar \
-    --sample ttbar --shards 8 --workers 8
-```
-
-Layout inside each file:
-
-```
-/events/<field>          (n_events,)      truth_vtx_time, reco_vtx_z, mu, ...
-/blocks/<block>/offsets  (n_events+1,)    CSR offsets
-/blocks/<block>/<field>  (n_items,)       one column per field
-```
-
-Blocks: `cells`, `tracks`, `jets_emtopo`, `jets_pflow`, `reco_vertices`,
-`truth_vertices`.
-
-Field names are ours, not the ntuple's; the mapping and the ingest settings
-fingerprint are recorded in `manifest.json`. Existing stores:
-
-| sample | events | size |
-|---|---|---|
-| ttbar | 199,700 | 15 GB (from 83 GB of ROOT) |
-| vbf_hinv | 112,400 | 7.6 GB (from 55 GB) |
-
-## 2. Config reference
+## 2. Keys
 
 ```yaml
 model_name: my_model
@@ -182,14 +154,4 @@ fitted scaler, so `-999` stays an outlier after normalization. `pad_in: literal`
 writes the number straight into normalized data — the legacy cell behaviour,
 where `0.0` means "the mean" and is harmless because the mask hides it.
 
-## 3. Notes
-
-Each sample is split with its own seed derived from `random_state` and the
-sample name, so a sample's test events are the same whether it was trained
-alone or in a mixture -- that is what makes cross-sample numbers comparable.
-
-Normalization is fitted on the pooled training split only, after truncation to
-`max_items`, i.e. on exactly the objects the model sees. `norm_params.pkl` is
-saved with the model and reused by `evaluate_blocks.py`.
-
-Running, environment and outputs: see the [top-level README](../../README.md).
+Running, environment and outputs: see the [top-level README](../README.md).

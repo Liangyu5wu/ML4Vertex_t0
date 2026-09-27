@@ -3,7 +3,7 @@
 Guidance for Claude Code when working in this repository.
 
 Vertex time (t0) regression for ATLAS from LAr calorimeter and HGTD timing.
-`README.md` has the data chain, layout and commands; `src/pipeline/README.md`
+`README.md` has the data chain, layout and commands; `docs/config.md`
 is the config reference. Read those first — this file is only what is not
 obvious from them.
 

@@ -29,6 +29,7 @@ that produced them: the same config reuses, a changed config rebuilds.
 
 ```
 setup.sh  pyproject.toml  uv.lock        environment, locked
+docs/data_chain.md  docs/config.md       the data chain, and every config key
 config/blocks/*.yaml                     one file per experiment
 calibration_data/*.txt                   per-layer cell time resolutions
 scripts/train_blocks.py                  training entry point
@@ -36,6 +37,7 @@ scripts/evaluate_blocks.py               scoring, including on an unseen sample
 scripts/sweep.py                         hyper-parameter search
 scripts/audit_inputs.py                  one event, stage by stage
 scripts/cell_coverage.py                 what the cell truncation cuts off
+scripts/compare_runs.py                  runs side by side, by sample
 config/sweeps/*.yaml                     search spaces, with what each found
 src/pipeline/
     ingest_root.py                       ROOT ntuple -> event store
@@ -45,7 +47,7 @@ src/pipeline/
     assemble.py                          split, normalize, pad, tf.data, cache
     inspect_root.py                      what is inside a ROOT file
 src/models/block_model.py  layers.py     model built from the same block specs
-src/evaluation/summary.py  plots.py  baseline.py
+src/evaluation/summary.py  plots.py  baseline.py  event_display.py
 src/runtime.py                           CPU / 1 GPU / multi-GPU strategy
 ```
 
@@ -56,7 +58,7 @@ rather than against its name.
 
 Data chain, stage by stage, with the numbers each stage produces:
 [`docs/data_chain.md`](docs/data_chain.md). Config reference:
-[`src/pipeline/README.md`](src/pipeline/README.md).
+[`docs/config.md`](docs/config.md).
 
 ## Environment
 

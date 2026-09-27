@@ -137,20 +137,14 @@ inputs:
     encoder: {units: [256, 128, 64], dropout: 0.0, pooling: attention}
 ```
 
-Five blocks are in use. Their model-visible features, selections and limits:
-
-| block | features | selection | keep | order |
-|---|---|---|---|---|
-| `cells` | eta, phi, region, layer, time, e, significance | region ∈ {EMB, EME}, layer ∈ {1,2,3}, \|significance\| > 4, e > 1 GeV | 120 | (e, significance) ↓ |
-| `jets_emtopo` | pt, eta, phi, width | none | 15 | pt ↓ |
-| `tracks` | pt, eta, phi, d0, z0 | `on_hs_vertex == 1` | 50 | pt ↓ |
-| `hgtd_tracks` | pt, eta, phi, d0, z0, time, time_res | `has_valid_time == 1`, 2.4 < \|eta\| < 4.0, \|dz_hs\| < 2 mm | 55 | pt ↓ |
-| `vertices` | z, sum_pt2, is_hs | none | 10 | sum_pt2 ↓ |
+Five blocks are in use: `cells`, `jets_emtopo`, `tracks`, `hgtd_tracks` and
+`vertices`. Their features, selections and limits are listed once, in the
+[preset table](config.md#presets).
 
 Each preset also loads auxiliary fields — positions, quality flags, truth-match
 counts — that selections may use without them becoming model inputs.
 
-Four points about this stage:
+Five points about this stage:
 
 - **`reco_vertices/is_hs` is a reconstruction flag, not truth.** It was
   checked against the ordering and equals "highest sum_pt²" in 100% of
@@ -232,7 +226,7 @@ default, where `0.0` lands on the mean).
 ### 3.5 Emit the mask
 
 A block emits a boolean mask when its encoder needs one — attention pooling,
-masked average, a transformer or the selection head. Masked pooling excludes
+masked average or a transformer. Masked pooling excludes
 padded slots from both the weights and the denominator.
 
 Padding has been verified inert: perturbing every padded slot of a batch
@@ -310,7 +304,8 @@ vector, concatenated and read out by a single head. Numbers below are for
 - **One encoder per block, not one over everything.** Each collection has its
   own features and its own multiplicity, and an object-level MLP followed by
   a pooling is permutation-invariant by construction. A transformer over the
-  combined set was measured and came out 2.2 ± 0.6 ps worse.
+  combined set was measured and came out 2.2 ± 0.6 ps worse (before the
+  vertex cut).
 - **Pooling is masked everywhere.** Padded slots enter neither the weights nor
   the denominator. Plain averaging over a block that is half padding would let
   the padding set the answer.
@@ -322,7 +317,8 @@ vector, concatenated and read out by a single head. Numbers below are for
   measured on every block; the difference is inside the run-to-run spread, so
   this is a default rather than a finding. A head that scored each HGTD track
   against the calorimeter context and averaged by that probability was also
-  tried, and measured 0.0 +- 0.6 ps against a masked average.
+  tried, and measured 0.0 +- 0.6 ps against a masked average (before the
+  vertex cut).
 - **The head predicts two numbers**, a time and a log-variance, trained with a
   β-weighted Gaussian negative log-likelihood (β = 0.25). σ is clipped to
   [5, 2000] ps and its bias initialised at 100 ps, since a head that starts by
@@ -350,7 +346,7 @@ what that run actually ran.
 | artefact | keyed by | cost | reuse |
 |---|---|---|---|
 | event store | ingest settings fingerprint | hours | per sample, ~forever |
-| prepared tensors | `AssemblySpec.fingerprint()` | ~7 min | every run with the same data config |
+| prepared tensors | `AssemblySpec.fingerprint()` | ~5 min | every run with the same data config |
 
 The assembly fingerprint covers the datasets, every block's fields,
 selections, sort order, limits, padding and mask flag, the event features, the
@@ -388,4 +384,4 @@ python scripts/train_blocks.py --config config/blocks/lar_hgtd.yaml
 python scripts/audit_inputs.py --config config/blocks/lar_hgtd.yaml --event 3
 ```
 
-Config reference: [`../src/pipeline/README.md`](../src/pipeline/README.md).
+Config reference: [`config.md`](config.md).
