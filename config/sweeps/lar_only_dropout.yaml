@@ -1,0 +1,35 @@
+# Does lar_only want the dropout that lar_hgtd does not?
+#
+#   python scripts/sweep.py --space config/sweeps/lar_only_dropout.yaml \
+#       --config config/blocks/lar_only.yaml --out ../runs/lar_only_dropout
+#
+# The question came from a train/val gap -- MAE 72 against 91 -- that
+# turned out to be read at the last epoch, 25 past the best. At the best
+# epoch, which early stopping restores, the gap is 4-9 ps, and lar_hgtd's
+# is the same 3-9: neither config overfits more than the other.
+#
+# Only the new arms: the no-dropout control is ../runs/lar_only trials
+# 000-002, this config trained on the mixture, three seeds already on disk.
+#
+# RESULT (validation q68, ps; seeds that trained / seeds run):
+#
+#   head  cells   ok     all          ttbar        VBF
+#   0.0   0.0     3/3    99.7+-0.6    87.8+-0.1   128.5+-2.5   (control)
+#   0.1   0.0     3/3   100.7+-0.2    88.1+-0.3   132.8+-1.6
+#   0.1   0.1     3/3   100.6+-0.6    88.2+-0.2   130.3+-1.5
+#   0.2   0.0     1/3    99.0         86.7        127.4
+#   0.2   0.1     2/3    99.0+-0.3    87.4+-0.1   128.7+-2.5
+#
+# Null: every arm that trained is within 1 ps of the control. Head dropout
+# 0.2 is worse than useless -- half its seeds collapse to a constant
+# prediction (q68 175 ps, the target's own spread) from the first epoch and
+# never leave it. Keep dropout at 0.
+
+trials: 12
+seed: 21
+epochs: 300
+repeats: 3
+
+space:
+  head.dropout: [0.1, 0.2]
+  data.inputs.cells.encoder.dropout: [0.0, 0.1]

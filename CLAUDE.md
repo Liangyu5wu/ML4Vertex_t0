@@ -86,10 +86,9 @@ about 32 for VBF. Training on the mixture helps VBF, and does not hurt ttbar.
 The old `lar_only` read 53 ps, and was never a calorimeter-only number: its
 `vertices` block carried `RecoVtx_time`, which is built from HGTD tracks.
 Every older statement that leans on it -- the superadditivity figure below
-included -- mixed HGTD timing into the "LAr" arm. `lar_only` also overfits
-(validation MAE 91 against 72 on train, where the oversampled train split
-is the harder mixture); the no-overfitting remark below holds for
-`lar_hgtd` only. `max_items` 60 / 120 / 250 was retested on the cut and is
+included -- mixed HGTD timing into the "LAr" arm. Dropout does nothing
+for `lar_only` either (`config/sweeps/lar_only_dropout.yaml`), and head
+dropout 0.2 collapses half its seeds to a constant prediction. `max_items` 60 / 120 / 250 was retested on the cut and is
 still null (`config/sweeps/cell_count.yaml`).
 
 The predicted sigma still over-claims for VBF after the cut (pull width
