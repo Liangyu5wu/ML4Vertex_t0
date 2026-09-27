@@ -1,27 +1,28 @@
 #!/usr/bin/env python
-"""Summarise a set of trained runs, split by whether the vertex was found.
+"""Compare input sets across their seeds: tables, efficiency curves, migration.
 
-    python scripts/compare_runs.py ../runs/lar_hgtd ../runs/lar_only ...
+    compare_runs.py ../runs/lar_hgtd ../runs/lar_only ...        # tables
+    compare_runs.py <dirs> --matrix                               # train x score
+    compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only --efficiency-plot out.png
+    compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only ../runs/lar_only --recovery out.png
 
-ATLAS takes the highest-sum-pt^2 reconstructed vertex as the hard scatter,
-and it is not the right one in 5.9% of ttbar and 20.4% of VBF events. When
-it is wrong the target is one vertex's time while every input describes
-another, so those events are unpredictable for reasons that have nothing to
-do with timing. Reported together, the ttbar/VBF gap is that rate and not a
-statement about either detector, which is why everything here is split on
-it.
+The tables are split on whether the highest-sum-pt^2 vertex is the true hard
+scatter (|z_reco - z_truth| < --match-mm), joined back to the store on
+(sample, event number): when it is wrong the target is one vertex's time and
+every input describes another. With the event cut in the configs few such
+events remain, but the split still says where a residual comes from.
 
-The split is computed by joining each prediction back to the store on
-(sample, event number) and comparing the reconstructed and true vertex z.
-Runs are grouped by which samples they were trained on, and repeats of one
-setting are reported as a mean and a spread.
+--efficiency-plot draws resolution against sigma-cut efficiency, one line
+per input set, and prints the resolution at an efficiency and the efficiency
+at a resolution. --recovery matches two input sets event by event and shows
+where the second's failures go under the first. Repeats of one setting are
+always reported as a mean and a spread.
 """
 
 from __future__ import annotations
 
 import argparse
 import glob
-import json
 import os
 import sys
 from collections import defaultdict
