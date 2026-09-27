@@ -58,21 +58,43 @@ Five rounds of sweeps took the validation q68 from 39 to about 35 ps. Almost
 none of it came from tuning, and the null results are worth more than the
 wins: do not re-run these.
 
-Everything in this section, and every run in `../runs`, predates two
-changes: the configs now keep only events with `|hs_vtx_dz| <= 3 mm` (a
-truth cut standing in for better vertex identification; it removes 5.2% of
-ttbar and 18.4% of VBF), and the vertex time and resolution are no longer
-inputs. Those runs are not a control arm for anything trained since.
+Everything in this section predates two changes: the configs now keep
+only events with `|hs_vtx_dz| <= 3 mm` (a truth cut standing in for better
+vertex identification; it removes 5.2% of ttbar and 18.4% of VBF), and the
+vertex time and resolution are no longer inputs. The runs it cites -- the
+old `../runs/{lar_hgtd,lar_only,hgtd_only}`, `../sweeps` and `../displays`
+-- are archived in
+`/global/cfs/cdirs/m2616/liangyu/vertextiming/archive/2026-09-26_before_vertex_cut.tar.gz`
+and are not a control arm for anything trained since; `../runs` holds only
+runs made after both changes.
 
-The new baselines (`../runs/cell_count`, validation q68, three seeds):
-`lar_hgtd` 27.3, `hgtd_only` 47.7, `lar_only` 101 ps. `lar_only` was 53
-before, and that was never a calorimeter-only number: its `vertices` block
-carried `RecoVtx_time`, which is built from HGTD tracks. So every older
-statement that leans on `lar_only` -- the superadditivity figure below
-included -- mixed HGTD timing into the "LAr" arm. `max_items` 60 / 120 /
-250 was retested on the new cut and is still null (`config/sweeps/cell_count.yaml`).
-`lar_only` also shows a train/val gap (MAE 72 against 91) that `lar_hgtd`
-does not; the no-overfitting remark below holds for `lar_hgtd` only.
+The baselines on the cut (`../runs/{lar_hgtd,lar_only,hgtd_only}`, test
+q68 in ps, three seeds, trained on the mixture unless noted):
+
+| | ttbar | VBF |
+|---|---|---|
+| `lar_hgtd` | 27.6 +- 1.2 (26.3 trained on ttbar alone) | 25.1 +- 0.9 (28.9 alone) |
+| `hgtd_only` | 50.9 +- 0.9 | 32.8 +- 0.3 (38.7 alone) |
+| `lar_only` | 88.8 +- 0.4 | 125.5 +- 1.7 |
+
+With the wrong-vertex events cut, VBF is no longer the harder sample:
+HGTD carries it (32.8 against 50.9 for ttbar) and the calorimeter carries
+ttbar. The combination is still far better than two independent
+measurements would give -- 27.6 against about 44 for ttbar, 25.1 against
+about 32 for VBF. Training on the mixture helps VBF, and does not hurt ttbar.
+
+The old `lar_only` read 53 ps, and was never a calorimeter-only number: its
+`vertices` block carried `RecoVtx_time`, which is built from HGTD tracks.
+Every older statement that leans on it -- the superadditivity figure below
+included -- mixed HGTD timing into the "LAr" arm. `lar_only` also overfits
+(validation MAE 91 against 72 on train, where the oversampled train split
+is the harder mixture); the no-overfitting remark below holds for
+`lar_hgtd` only. `max_items` 60 / 120 / 250 was retested on the cut and is
+still null (`config/sweeps/cell_count.yaml`).
+
+The predicted sigma still over-claims for VBF after the cut (pull width
+1.21 against 1.08 for ttbar in `lar_hgtd`), so the wrong vertex was not
+the cause.
 
 Where the gain came from:
 

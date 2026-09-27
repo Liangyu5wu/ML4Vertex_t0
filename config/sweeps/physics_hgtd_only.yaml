@@ -7,10 +7,10 @@
 # single number cannot carry a physics claim. Nothing is being searched here;
 # the sweep runner is used for its repeats, its GPU fan-out and its record.
 #
-# Read the results split by whether the sum-pt^2 vertex is the true hard
-# scatter -- it is not, in 5.9% of ttbar and 20.4% of VBF events, and when it
-# is wrong the target belongs to one vertex while every input describes
-# another. Unsplit, the ttbar/VBF gap is that rate and nothing else.
+# The block config's event_select keeps only events whose sum-pt^2 vertex
+# is within 3 mm of the true hard scatter, so the wrong-vertex events that
+# used to set the ttbar/VBF gap are gone before training. Results, and the
+# numbers from before that cut, are in CLAUDE.md.
 
 trials: 9
 seed: 100

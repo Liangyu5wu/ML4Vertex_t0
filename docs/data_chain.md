@@ -162,8 +162,7 @@ Four points about this stage:
   whose sum-pt² vertex is within 3 mm of the true hard scatter
   (`hs_vtx_dz`), standing in for a vertex identification better than
   sum-pt². It removes 5.2% of ttbar and 18.4% of VBF events. The numbers in
-  Stage 3 and 4 below were measured before this cut and before the vertex
-  time left the inputs.
+  Stage 3 and 4 below are with this cut and without the vertex time.
 - **Sorting needs a tie-break.** Cell energies are quantised; about 10% of
   cells share an energy exactly with another cell in the same event, so the
   cell preset sorts on `(e, significance)` rather than energy alone.
@@ -195,9 +194,12 @@ whether it was trained on alone or in a mixture — which is what makes
 
 | split | events | of which ttbar / VBF |
 |---|---|---|
-| train | 218,388 | 139,744 / 78,644 |
-| val | 31,199 | 19,964 / 11,235 |
-| test | 62,397 | 39,927 / 22,470 |
+| train | 196,636 | 132,448 / 64,188 |
+| val | 28,091 | 18,921 / 9,170 |
+| test | 56,182 | 37,842 / 18,340 |
+
+These are `lar_hgtd` after `event_select` and each block's `min_items`;
+312,100 events in the stores, 280,909 kept.
 
 ### 3.2 Equalise the samples
 
@@ -206,7 +208,7 @@ resample: oversample      # none | oversample | undersample
 ```
 
 Applied to the training split only, drawing the smaller samples up to the
-largest: 218,388 → **279,488**, with ttbar and VBF at 139,744 each.
+largest: 196,636 → **264,896**, with ttbar and VBF at 132,448 each.
 
 ### 3.3 Fit scalers, on the training split only
 
@@ -242,14 +244,15 @@ For `lar_hgtd`, the training split:
 
 | tensor | shape | real fraction | mean/limit | events at the limit |
 |---|---|---|---|---|
-| `cells_input` | (279488, 120, 7) | 84.3% | 101.2 / 120 | 42.5% |
-| `jets_emtopo_input` | (279488, 15, 4) | 56.0% | 8.4 / 15 | 4.1% |
-| `tracks_input` | (279488, 50, 5) | 59.4% | 29.7 / 50 | 11.4% |
-| `hgtd_tracks_input` | (279488, 55, 7) | 51.1% | 28.1 / 55 | 3.7% |
-| `vertices_input` | (279488, 10, 6) | 100% | 10.0 / 10 | 100% |
-| `event_input` | (279488, 3) | — | — | — |
+| `cells_input` | (196636, 120, 7) | 86.1% | 103.3 / 120 | 46.2% |
+| `jets_emtopo_input` | (196636, 15, 4) | 58.1% | 8.7 / 15 | 4.5% |
+| `tracks_input` | (196636, 50, 5) | 63.8% | 31.9 / 50 | 14.5% |
+| `hgtd_tracks_input` | (196636, 55, 7) | 50.8% | 27.9 / 55 | 3.5% |
+| `vertices_input` | (196636, 10, 3) | 100% | 10.0 / 10 | 100% |
+| `event_input` | (196636, 3) | — | — | — |
 
-plus one `<block>_mask` of shape (279488, N) per block. `event_input` carries
+plus one `<block>_mask` of shape (196636, N) per block. The table is the
+split as cached, before oversampling; the model trains on 264,896 rows. `event_input` carries
 the reconstructed vertex position `(x, y, z)`. The regression target is
 `truth_vtx_time`, in picoseconds, left unnormalized so the loss and every
 reported number are in physical units.
@@ -287,8 +290,8 @@ vector, concatenated and read out by a single head. Numbers below are for
  hgtd_tracks (55,7) ─▶ MLP 64→32 ──▶ masked average ───────────┤  33
        + mask                              + occupancy         │   2,784 par
                                                                │
- vertices (10,6) ────▶ MLP 32→16 ──▶ masked average ───────────┤  17
-       + mask                              + occupancy         │     848 par
+ vertices (10,3) ────▶ MLP 32→16 ──▶ masked average ───────────┤  17
+       + mask                              + occupancy         │     752 par
                                                                │
  event_input (3,) ─────────────────── passed through ──────────┘   3
        reco vertex x, y, z                                     │
@@ -300,7 +303,7 @@ vector, concatenated and read out by a single head. Numbers below are for
                                      Dense(2) → (t0, log σ²)
 ```
 
-**146,707 parameters, 11 input tensors, output of shape (2,).**
+**146,611 parameters, 11 input tensors, output of shape (2,).**
 
 ### Why it is shaped this way
 
@@ -326,10 +329,11 @@ vector, concatenated and read out by a single head. Numbers below are for
   claiming picosecond precision on 175 ps residuals spends its first epochs
   undoing that.
 
-The predicted σ is honest rather than decorative. Binned by it, the fifth of
-events the model is most confident about have a core width of 12.9 ps against
-a predicted 11.3, and the least confident fifth 65.2 against 109.5 — pulls of
-1.09 and 1.29 across the range.
+The predicted σ is honest where the model is confident and a little
+optimistic where it is not. Binned by it (mixed training, test split, mean
+of three seeds), the fifth of events the model is most confident about have
+a width of 11.5 ps against a predicted 11.2, and the least confident fifth
+95.2 against 88.0. The pull is 1.08 wide for ttbar and 1.21 for VBF.
 
 ### Where the model is defined
 

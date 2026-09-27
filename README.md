@@ -125,9 +125,15 @@ errors. A fitted core width is not used for ranking: the fit finds a narrow
 core in an untrained model's residuals as well, so it scores the worst trials
 best.
 
-For an unattended long run, the same command under `sbatch`:
+Long runs go on interactive nodes, not `sbatch`: allocate two (the
+per-user interactive limit, 8 GPUs) and give each a shard of the same sweep,
 
 ```bash
-sbatch -A m2616_g -C gpu -q shared -N 1 -c 32 --gpus-per-task=1 -t 08:00:00 \
-    --wrap "cd $PWD && source setup.sh && python scripts/train_blocks.py --config <cfg>"
+salloc -A m2616_g -C gpu -q interactive -N 1 -c 128 --gpus-per-node=4 \
+    -t 04:00:00 --no-shell                    # twice; note both job ids
+srun --jobid=<A> --overlap -n1 -c 128 --gpus=4 bash -c \
+    "cd $PWD && source setup.sh && python scripts/sweep.py ... --shard 0/2"
+srun --jobid=<B> ... --shard 1/2
 ```
+
+then rank both with `sweep.py --report-only`.
