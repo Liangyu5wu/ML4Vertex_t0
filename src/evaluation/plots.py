@@ -18,6 +18,8 @@ all-pairs comparison, which is what an overlay of distributions needs. Beyond
 three samples the extra ones fold into a facet rather than inventing hues.
 Continuous density uses a single-hue blue ramp, never a rainbow.
 
+The residual is written $\\Delta t_0 = t_0^{pred} - t_0^{true}$ on every axis.
+
     from src.evaluation import plots
     plots.report("../models/lar_hgtd")           # the standard set
     plots.error_distribution({"ttbar": err}, ax=ax)   # or one at a time
@@ -169,7 +171,7 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
     ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
     if logy:
         ax.set_yscale("log")
-    _finish(ax, title, "predicted - true [ps]", f"events / {width:.0f} ps",
+    _finish(ax, title, r"$\Delta t_0$ [ps]", f"events / {width:.0f} ps",
             legend=True)
     return fig, ax
 
@@ -177,39 +179,52 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
 def resolution_vs(x: np.ndarray, errors: np.ndarray, bins: Sequence[float],
                   labels: Optional[np.ndarray] = None, core_window: float = 120.0,
                   ax=None, title: str = "Resolution", xlabel: str = "",
-                  min_entries: int = 30):
-    """Core resolution in bins of ``x``; one line per sample if ``labels`` given.
+                  min_entries: int = 30, stat: str = "core"):
+    """One statistic of the residual in bins of ``x``; a line per sample if ``labels``.
 
-    The core width (std of residuals within +-``core_window``) is plotted with a
-    bootstrap-free standard error, alongside the fraction of events in the core
-    -- for samples like VBF the fraction moves more than the width does.
+    ``stat`` is ``core`` (std within +-``core_window``), ``q68`` (of the
+    absolute residual) or ``median`` (the bias). The core width hides a bin
+    whose events have all moved out of the window, which is what happens far
+    from t0 = 0, so binned against the truth use ``q68`` and ``median``.
     """
     fig, ax = _ax(ax)
-    colors = series_colors()
+    colors, t = series_colors(), tokens()
     bins = np.asarray(bins, dtype=float)
     centres = 0.5 * (bins[1:] + bins[:-1])
     groups = {"": slice(None)} if labels is None else \
         {str(v): (labels == v) for v in dict.fromkeys(labels)}
 
     for i, (name, sel) in enumerate(groups.items()):
-        colour = colors[i % len(colors)]
         xs, ys, es = [], [], []
         xv, ev = x[sel], errors[sel]
         idx = np.digitize(xv, bins) - 1
         for b in range(len(bins) - 1):
-            in_bin = ev[idx == b]
-            core = in_bin[np.abs(in_bin) < core_window]
-            if len(core) < min_entries:
+            e = ev[idx == b]
+            if stat == "core":
+                e = e[np.abs(e) < core_window]
+            if len(e) < min_entries:
                 continue
-            xs.append(centres[b])
-            ys.append(core.std())
-            es.append(core.std() / np.sqrt(2 * len(core)))
-        ax.errorbar(xs, ys, yerr=es, color=colour, marker="o", markersize=6,
-                    linewidth=2.0, elinewidth=1.0, capsize=0,
+            if stat == "core":
+                y, err = e.std(), e.std() / np.sqrt(2 * len(e))
+            elif stat == "q68":
+                y = np.percentile(np.abs(e), 68)
+                err = y / np.sqrt(2 * len(e))
+            elif stat == "median":
+                y = np.median(e)
+                err = 1.2533 * 0.7413 * np.subtract(*np.percentile(e, [75, 25])) / np.sqrt(len(e))
+            else:
+                raise ValueError(f"resolution_vs: unknown stat {stat!r}")
+            xs.append(centres[b]); ys.append(y); es.append(err)
+        ax.errorbar(xs, ys, yerr=es, color=colors[i % len(colors)], marker="o",
+                    markersize=6, linewidth=2.0, elinewidth=1.0, capsize=0,
                     label=name or None)
 
-    _finish(ax, title, xlabel, f"core width ($|e|$ < {core_window:.0f} ps) [ps]",
-            legend=len(groups) > 1)
+    if stat == "median":
+        ax.axhline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
+    ylabel = {"core": rf"core width ($|\Delta t_0|$ < {core_window:.0f} ps) [ps]",
+              "q68": r"q68 of $|\Delta t_0|$ [ps]",
+              "median": r"median $\Delta t_0$ [ps]"}[stat]
+    _finish(ax, title, xlabel, ylabel, legend=len(groups) > 1)
     return fig, ax
 
 
@@ -259,72 +274,73 @@ def prediction_vs_truth(y_true: np.ndarray, y_pred: np.ndarray, window: float = 
     return fig, ax
 
 
-def resolution_vs_efficiency(errors: np.ndarray, sigma: np.ndarray,
+def resolution_vs_efficiency(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
                              ax=None, title: str = "Resolution vs efficiency"):
     """Resolution of the events kept, against the fraction kept, cutting on sigma.
 
     The one plot of the predicted uncertainty that an analysis can act on: it
     says what a tighter selection buys, and the selection needs no truth, only
-    the number the model already outputs. The horizontal line is what keeping
-    everything gives.
+    the number the model already outputs. One line per sample, since the same
+    threshold keeps different fractions of each; the markers are 50% and 80%.
     """
     fig, ax = _ax(ax)
-    colors, t = series_colors(), tokens()
-    order = np.argsort(sigma)
-    err = np.abs(errors[order])
+    colors = series_colors()
     keep = np.linspace(0.05, 1.0, 96)
-    q68 = [np.percentile(err[:max(int(f * len(err)), 20)], 68) for f in keep]
-
-    ax.plot(100 * keep, q68, color=colors[0], linewidth=2.5)
-    ax.axhline(q68[-1], color=t["axis"], linewidth=1.2, linestyle="--")
-    ax.annotate(f"all events, {q68[-1]:.1f} ps", (8, q68[-1]), va="top",
-                xytext=(0, -6), textcoords="offset points",
-                fontsize=13, color=t["primary"])
-    for f in (0.5, 0.8):
-        i = int(np.argmin(np.abs(keep - f)))
-        ax.plot([100 * keep[i]], [q68[i]], "o", color=colors[1], zorder=4)
-        # Label to the left of the marker: at 80% there is no room to its right.
-        ax.annotate(f"{100 * keep[i]:.0f}%: {q68[i]:.1f} ps",
-                    (100 * keep[i], q68[i]), textcoords="offset points",
-                    xytext=(-10, -20), ha="right",
-                    fontsize=13, color=t["primary"])
+    for i, (name, e) in enumerate(errors.items()):
+        err = np.abs(e[np.argsort(sigma[name])])
+        q68 = np.array([np.percentile(err[:max(int(f * len(err)), 20)], 68) for f in keep])
+        marks = [int(np.argmin(np.abs(keep - f))) for f in (0.5, 0.8)]
+        ax.plot(100 * keep, q68, color=colors[i % len(colors)], linewidth=2.5,
+                marker="o", markevery=marks, markersize=8,
+                label=f"{name}: {q68[marks[0]]:.1f} / {q68[marks[1]]:.1f} / "
+                      f"{q68[-1]:.1f} ps")
     ax.set_xlim(0, 104)
+    ax.set_ylim(bottom=0)
     _finish(ax, title, r"events kept, tightest predicted $\sigma$ first [%]",
             "q68 of the kept events [ps]", legend=False)
+    ax.legend(loc="upper left", title="q68 at 50% / 80% / 100%", handlelength=1.6,
+              borderpad=0.2)
     return fig, ax
 
 
-def sigma_calibration(errors: np.ndarray, sigma: np.ndarray, bins: int = 12,
-                      ax=None, title: str = "Predicted vs achieved resolution"):
+def sigma_calibration(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
+                      bins: int = 12, ax=None,
+                      title: str = "Predicted vs achieved resolution"):
     """Does a predicted sigma mean what it says? Binned, against y = x.
 
     Points on the diagonal mean the width is honest; above it the model is
     overconfident. Ordering can be right while the scale is not, and the two
-    failures want different responses, so they are separated here.
+    failures want different responses, so they are separated here. One series
+    per sample: a single sigma can be honest for one and not the other.
     """
     fig, ax = _ax(ax)
     colors, t = series_colors(), tokens()
-    edges = np.quantile(sigma, np.linspace(0, 1, bins + 1))
-    pred, got, err_got = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        m = (sigma >= lo) & (sigma < hi)
-        if m.sum() < 50:
-            continue
-        e = errors[m]
-        pred.append(np.median(sigma[m]))
-        # A robust width, so a handful of unrecoverable events cannot set it.
-        got.append(0.7413 * (np.percentile(e, 75) - np.percentile(e, 25)))
-        err_got.append(got[-1] / np.sqrt(2 * m.sum()))
+    top = 0.0
+    for i, (name, e_all) in enumerate(errors.items()):
+        s_all = sigma[name]
+        edges = np.quantile(s_all, np.linspace(0, 1, bins + 1))
+        pred, got, err_got = [], [], []
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (s_all >= lo) & (s_all < hi)
+            if m.sum() < 50:
+                continue
+            e = e_all[m]
+            pred.append(np.median(s_all[m]))
+            # A robust width, so a handful of unrecoverable events cannot set it.
+            got.append(0.7413 * (np.percentile(e, 75) - np.percentile(e, 25)))
+            err_got.append(got[-1] / np.sqrt(2 * m.sum()))
+        ax.errorbar(pred, got, yerr=err_got, fmt="o", color=colors[i % len(colors)],
+                    markersize=8, linewidth=1.5, capsize=3, label=name)
+        top = max(top, max(pred), max(got))
 
-    lim = [0, 1.15 * max(max(pred), max(got))]
+    lim = [0, 1.15 * top]
     ax.plot(lim, lim, color=t["axis"], linewidth=1.2, linestyle="--",
-            label="perfectly calibrated")
-    ax.errorbar(pred, got, yerr=err_got, fmt="o", color=colors[0],
-                markersize=8, linewidth=1.5, capsize=3, label="measured")
+            label="perfectly calibrated", zorder=0)
     ax.set_xlim(lim)
     ax.set_ylim(lim)
     _finish(ax, title, r"predicted $\sigma$ [ps]",
-            "achieved width of those events [ps]", legend=True)
+            "achieved width of those events [ps]", legend=False)
+    ax.legend(loc="upper left", handlelength=1.6, borderpad=0.2)
     return fig, ax
 
 
@@ -353,7 +369,7 @@ def pull_distribution(errors: np.ndarray, sigma: np.ndarray, window: float = 5.0
             / np.sqrt(2 * np.pi),
             color=t["axis"], linewidth=1.5, linestyle="--", label="unit Gaussian")
     ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
-    _finish(ax, title, r"(predicted - true) / predicted $\sigma$",
+    _finish(ax, title, r"$\Delta t_0 / \sigma$",
             f"events / {width:.2f}", legend=True)
     return fig, ax
 
@@ -390,7 +406,7 @@ def sigma_vs_residual(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray
                     linestyle="--")
         ax.set_yscale("log")
         ax.set_xlim(-window, window)
-        _finish(ax, f"{name}  ({len(errors[name]):,})", "predicted - true [ps]",
+        _finish(ax, f"{name}  ({len(errors[name]):,})", r"$\Delta t_0$ [ps]",
                 r"predicted $\sigma$ [ps]" if ax is axes[0][0] else "", legend=False)
     cbar = fig.colorbar(mesh, ax=axes[0].tolist())
     cbar.set_label("events", color=t["secondary"])
@@ -480,7 +496,7 @@ def cut_comparison(errors: np.ndarray, keep: np.ndarray, window: float = 600.0,
     axes[1].axhline(100 * keep.mean(), color=t["axis"], linewidth=1.2,
                     linestyle="--")
     axes[1].set_ylim(0, 105)
-    _finish(axes[1], "", "predicted - true [ps]", f"{label} [%]", legend=False)
+    _finish(axes[1], "", r"$\Delta t_0$ [ps]", f"{label} [%]", legend=False)
     return fig, axes
 
 
@@ -721,6 +737,19 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
     fig.savefig(os.path.join(outdir, "pred_vs_true.png")); plt.close(fig)
     written.append("pred_vs_true.png")
 
+    # Where in t0 the model does well: it shrinks the events far from zero,
+    # which a residual summed over all t0 hides.
+    fig, axes = plt.subplots(2, 1, figsize=(7.6, 7.4), sharex=True,
+                             gridspec_kw={"height_ratios": [3, 2], "hspace": 0.08})
+    for ax, stat in zip(axes, ("q68", "median")):
+        resolution_vs(y_true, errors, np.linspace(-600, 600, 25), ax=ax, stat=stat,
+                      labels=np.array(names)[ids],
+                      xlabel=r"$t_0^{true}$ [ps]" if stat == "median" else "",
+                      title=f"{name} -- resolution vs true $t_0$" if stat == "q68" else "")
+    axes[1].get_legend().remove()
+    fig.savefig(os.path.join(outdir, "resolution_vs_truth.png")); plt.close(fig)
+    written.append("resolution_vs_truth.png")
+
     # What the predicted sigma is worth: what a cut on it buys, whether its
     # scale is honest, and the same question in one number.
     if "sigma" in data.files:
@@ -733,13 +762,14 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
                                    title=f"{name} -- predicted uncertainty vs residual")
         fig.savefig(os.path.join(outdir, "sigma_vs_residual.png")); plt.close(fig)
         written.append("sigma_vs_residual.png")
-        for fn, fname, kw in (
+        per_sigma = {n: sigma[ids == i] for i, n in enumerate(names)}
+        for fn, fname, args, kw in (
                 (resolution_vs_efficiency, "resolution_vs_efficiency.png",
-                 {"title": f"{name} -- resolution vs efficiency"}),
+                 (per_sample, per_sigma), {"title": f"{name} -- resolution vs efficiency"}),
                 (sigma_calibration, "sigma_calibration.png",
-                 {"title": f"{name} -- predicted vs achieved"}),
-                (pull_distribution, "pull.png", {"title": f"{name} -- pull"})):
-            fig, _ = fn(errors, sigma, **kw)
+                 (per_sample, per_sigma), {"title": f"{name} -- predicted vs achieved"}),
+                (pull_distribution, "pull.png", (errors, sigma), {"title": f"{name} -- pull"})):
+            fig, _ = fn(*args, **kw)
             fig.savefig(os.path.join(outdir, fname)); plt.close(fig)
             written.append(fname)
         evaluation = _evaluation_cfg(model_dir)

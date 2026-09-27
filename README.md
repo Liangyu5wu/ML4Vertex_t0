@@ -121,9 +121,11 @@ Every run writes its own record into the model directory: `record.md` (one
 readable page — setup, timing, commit, results), `history.csv` and
 `plots/history.png` (loss and RMSE against epoch, train and validation),
 `metrics.json` (validation *and* test, split by sample), the weights,
-`model_spec.json`, `norm_params.pkl`, `config.yaml` and
-`predictions_test.npz`. `--no-plots` skips only the evaluation figures; the
-record and the loss curve are always kept.
+`model_spec.json`, `norm_params.pkl`, `config.yaml`, and
+`predictions_val.npz` / `predictions_test.npz` -- a cut on the predicted
+sigma is chosen from the first and reported on the second. `--no-plots`
+skips only the evaluation figures; the record and the loss curve are always
+kept.
 
 Sweeps rank on the validation `q68` — the half-width holding 68% of the
 errors. A fitted core width is not used for ranking: the fit finds a narrow

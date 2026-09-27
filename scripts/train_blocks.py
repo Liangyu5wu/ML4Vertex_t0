@@ -237,23 +237,21 @@ def main():
                                         sigma=None if sig is None else sig[m],
                                         fit=fit_cfg)
         scored[split] = entry
-        if split == "test":
-            y_pred, sigma, y_true = pred, sig, truth
+        # Validation predictions are what a cut on sigma is chosen from, so
+        # they are kept beside the test ones rather than only summarised.
+        prov = data.provenance[split]
+        np.savez(os.path.join(model_dir, f"predictions_{split}.npz"),
+                 y_true=truth, y_pred=pred, errors=pred - truth,
+                 **({} if sig is None else {"sigma": sig}),
+                 dataset_id=prov["dataset_id"], event_number=prov["event_number"],
+                 file_index=prov["file_index"], dataset_names=np.array(data.dataset_names))
 
     print("\n" + "=" * 74)
     for split in ("val", "test"):
         for name, stats in scored[split].items():
             print(format_summary(f"{split}/{name}", stats))
     print("=" * 74)
-    metrics = scored["test"]
 
-    np.savez(os.path.join(model_dir, "predictions_test.npz"),
-             y_true=y_true, y_pred=y_pred, errors=y_pred - y_true,
-             **({} if sigma is None else {"sigma": sigma}),
-             dataset_id=data.provenance["test"]["dataset_id"],
-             event_number=data.provenance["test"]["event_number"],
-             file_index=data.provenance["test"]["file_index"],
-             dataset_names=np.array(data.dataset_names))
     with open(os.path.join(model_dir, "metrics.json"), "w") as fh:
         json.dump({"val": scored["val"], "test": scored["test"],
                    "epochs_run": len(history.history.get("loss", [])),
