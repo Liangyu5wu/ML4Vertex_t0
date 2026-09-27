@@ -1,0 +1,39 @@
+# Give sum_pt2 and track pt a scale the network can use.
+#
+#   python scripts/sweep.py --space config/sweeps/scale_transforms.yaml \
+#       --config config/blocks/lar_hgtd.yaml --out ../runs/scale_transforms
+#
+# Both are z-scored over a heavy tail. sum_pt2 has a mean of 2.7e4 GeV^2 and
+# a standard deviation of 2.9e7, so the HS vertex (median 1356 GeV^2) and the
+# pile-up ones (median 115) reach the network as -0.00088 and -0.00092: the
+# order survives, the size of the lead does not. Track pt is milder, 1-15
+# GeV spanning 0.15 of a standard deviation. asinh(x / s) is linear below s
+# and logarithmic above it, the fix the cell time already has.
+#
+# sum_pt2 is transformed in every arm; the two track blocks are switched
+# independently. The no-transform control is ../runs/lar_hgtd trials
+# 000-002, this config trained on the mixture.
+#
+# RESULT (q68 in ps, three seeds; asinh on sum_pt2 / track pt / HGTD pt):
+#
+#   sum_pt2 trk hgtd   val all     val ttbar   val VBF     test all
+#     -      -    -    27.1+-1.0   28.0+-1.2   25.2+-0.9   26.7+-1.1  (control)
+#     on     -    -    28.1+-0.4   29.0+-0.3   26.1+-0.4   27.6+-0.5
+#     on     -    on   28.3+-0.3   29.4+-0.2   26.2+-0.4   28.0+-0.3
+#     on     on   -    26.4+-1.1   27.3+-0.9   24.6+-1.3   26.0+-1.2
+#     on     on   on   27.1+-0.8   28.2+-0.9   25.0+-0.8   26.7+-0.7
+#
+# Null: every arm is within 1.2 ps of the control, the same as the spread.
+# Most likely the network does not need the size of the sum_pt2 lead: the
+# order and is_hs already say which vertex is the anchor, and event_select
+# removed most events where that choice was in doubt. Configs unchanged.
+
+trials: 12
+seed: 31
+epochs: 300
+repeats: 3
+
+space:
+  data.inputs.vertices.transform: [{sum_pt2: {asinh: 100.0}}]
+  data.inputs.tracks.transform: [{}, {pt: {asinh: 2.0}}]
+  data.inputs.hgtd_tracks.transform: [{}, {pt: {asinh: 2.0}}]

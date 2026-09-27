@@ -88,8 +88,11 @@ The old `lar_only` read 53 ps, and was never a calorimeter-only number: its
 Every older statement that leans on it -- the superadditivity figure below
 included -- mixed HGTD timing into the "LAr" arm. Dropout does nothing
 for `lar_only` either (`config/sweeps/lar_only_dropout.yaml`), and head
-dropout 0.2 collapses half its seeds to a constant prediction. `max_items` 60 / 120 / 250 was retested on the cut and is
-still null (`config/sweeps/cell_count.yaml`).
+dropout 0.2 collapses half its seeds to a constant prediction. An asinh on
+`sum_pt2` and the track `pt` columns -- both z-scored over a tail that
+leaves them almost no range -- is null too
+(`config/sweeps/scale_transforms.yaml`). `max_items` 60 / 120 / 250 was
+retested on the cut and is still null (`config/sweeps/cell_count.yaml`).
 
 The predicted sigma still over-claims for VBF after the cut (pull width
 1.21 against 1.08 for ttbar in `lar_hgtd`), so the wrong vertex was not

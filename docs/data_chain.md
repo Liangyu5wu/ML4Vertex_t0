@@ -180,7 +180,9 @@ Two features have almost no dynamic range after their z-score. `sum_pt2`
 has a mean of 2.7·10⁴ GeV² and a standard deviation of 2.9·10⁷, so nearly
 every vertex lands on the same value. The two track `pt` columns have means
 of 2-4 GeV and standard deviations of 84-91 GeV. That is the same defect the
-asinh transform fixed for the cell time; it has not been tested here.
+asinh transform fixed for the cell time. Giving them the same transform
+was tested and changed nothing (`config/sweeps/scale_transforms.yaml`), so
+they are left as they are.
 
 Each preset also loads auxiliary fields — positions, quality flags,
 truth-match counts, and for `vertices` the vertex time, which is not an
