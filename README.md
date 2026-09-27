@@ -111,6 +111,10 @@ python scripts/evaluate_blocks.py --model-dir ../models/lar_hgtd \
 python scripts/compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only \
     --efficiency-plot ../runs/efficiency_lar_hgtd_vs_hgtd_only.png
 
+# event by event: where HGTD-only's failures go once LAr is added (LAr-only for reference)
+python scripts/compare_runs.py ../runs/lar_hgtd ../runs/hgtd_only ../runs/lar_only \
+    --recovery ../runs/recovery_lar_hgtd.png
+
 # redraw a run's plots, and again for the events a cut on the predicted sigma keeps
 python -m src.evaluation.plots ../runs/lar_hgtd/trial_000 --max-sigma 40
 

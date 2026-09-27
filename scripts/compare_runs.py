@@ -200,6 +200,52 @@ def efficiency_plot(run_dirs, out: str, trained_on: str = "ttbar+vbf_hinv") -> N
             for m, per in scans.items() for s in samples if s in per))
 
 
+def recovery(combined: str, base: str, reference: str, out: str,
+             trained_on: str = "ttbar+vbf_hinv") -> None:
+    """Match three input sets event by event and draw plots.recovery_plot.
+
+    Trials are paired by index (trial_000 with trial_000, ...), trained on
+    ``trained_on`` in all three, and their events pooled. The test split of
+    each sample is the same whatever the inputs, so an event number names
+    the same event in every run.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+
+    from src.evaluation import plots
+
+    def trials(d):
+        out = []
+        for t in sorted(glob.glob(os.path.join(d, "trial_*"))):
+            with open(os.path.join(t, "trial_config.yaml")) as fh:
+                cfg = yaml.safe_load(fh)
+            if "+".join(x["name"] for x in cfg["data"]["datasets"]) == trained_on:
+                z = np.load(os.path.join(t, "predictions_test.npz"))
+                key = z["dataset_id"].astype(np.int64) * 10 ** 9 + z["event_number"]
+                out.append(dict(zip(key.tolist(), z["errors"].tolist())))
+        return out
+
+    dirs = {os.path.basename(os.path.normpath(d)): d for d in (combined, base, reference)}
+    names = list(dirs)
+    runs = {name: trials(d) for name, d in dirs.items()}
+    # combined and base share one test split (both require an HGTD track);
+    # the reference need not -- lar_only keeps other events, so its split
+    # differs -- and is NaN wherever it did not score the event.
+    pooled = {name: [] for name in names}
+    for rc, rb, rr in zip(*(runs[n] for n in names)):
+        common = sorted(set(rc) & set(rb))
+        for name, r in zip(names, (rc, rb, rr)):
+            pooled[name].extend(r.get(k, np.nan) for k in common)
+    errors = {name: np.array(v) for name, v in pooled.items()}
+    plots.use_style("light")
+    fig, _ = plots.recovery_plot(errors, base=names[1], combined=names[0],
+                                 title=f"{names[1]} -> {names[0]}")
+    fig.savefig(out)
+    print(f"wrote {out}: {len(errors[names[0]]):,} events from "
+          f"{len(runs[names[0]])} seed pairs, {int(np.isfinite(errors[names[2]]).sum()):,} "
+          f"of them also scored by {names[2]}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -211,7 +257,15 @@ def main():
                    help="resolution against sigma-cut efficiency, one line per input set")
     p.add_argument("--trained-on", default="ttbar+vbf_hinv",
                    help="with --efficiency-plot, which training to compare")
+    p.add_argument("--recovery", metavar="PNG",
+                   help="event-by-event: where the second run dir's failures go "
+                        "under the first; the third is drawn for reference")
     args = p.parse_args()
+    if args.recovery:
+        if len(args.run_dirs) != 3:
+            p.error("--recovery takes three run dirs: combined, base, reference")
+        recovery(*args.run_dirs, args.recovery, args.trained_on)
+        return
     if args.efficiency_plot:
         efficiency_plot(args.run_dirs, args.efficiency_plot, args.trained_on)
         return

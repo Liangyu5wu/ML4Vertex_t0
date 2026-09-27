@@ -389,6 +389,69 @@ def efficiency_comparison(scans: Dict[str, Dict[str, list]], working_points=None
     return fig, axes[0]
 
 
+def recovery_plot(errors: Dict[str, np.ndarray], base: str, combined: str,
+                  fail: float = 60.0, good: float = 30.0,
+                  title: str = "What the combination recovers"):
+    """Where one model's failures go under another, event by event.
+
+    ``errors`` is {model: Delta t0 of the same events, in the same order}.
+    Left: |Delta t0| of ``base`` against ``combined``, one entry per event, on
+    log axes; the lower right holds the events ``base`` gets wrong
+    (> ``fail``) and ``combined`` gets right (< ``good``), the upper left the
+    reverse. Right: Delta t0 of every model for the events ``base`` gets
+    wrong -- whether the recovered ones reach the precision of the combined
+    model or only that of a model that never had ``base``'s inputs.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, LogNorm
+
+    colors, t = series_colors(), tokens()
+    a, b = np.abs(errors[base]), np.abs(errors[combined])
+    failed = a > fail
+    recovered = failed & (b < good)
+    broken = (a < good) & (b > fail)
+
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.4, 5.2), layout="constrained",
+                                  gridspec_kw={"width_ratios": [1.0, 1.15]})
+    cmap = LinearSegmentedColormap.from_list("seq_blue", [t["surface"]] + SEQUENTIAL)
+    edges = np.geomspace(0.5, 1000.0, 70)
+    # Below 0.5 ps is off the plot rather than piled into the first bin; the
+    # percentages count every event.
+    h = ax.hist2d(np.minimum(a, 999), np.minimum(b, 999), bins=[edges, edges],
+                  cmap=cmap, norm=LogNorm(vmin=1))
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.plot([0.5, 1000], [0.5, 1000], color=t["axis"], linewidth=1.0, linestyle="--")
+    ax.axvline(fail, color=t["axis"], linewidth=1.0, linestyle=":")
+    ax.axhline(good, color=t["axis"], linewidth=1.0, linestyle=":")
+    ax.text(0.97, 0.04, f"recovered\n{100 * recovered.sum() / failed.sum():.0f}% of "
+            f"{base} failures", transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=12)
+    ax.text(0.03, 0.96, f"broken\n{100 * broken.mean():.1f}% of events",
+            transform=ax.transAxes, ha="left", va="top", fontsize=12)
+    cbar = fig.colorbar(h[3], ax=ax, pad=0.01)
+    cbar.set_label("events", color=t["secondary"])
+    cbar.outline.set_edgecolor(t["axis"])
+    _finish(ax, f"{title} ({len(a):,} events)", rf"$|\Delta t_0|$, {base} [ps]",
+            rf"$|\Delta t_0|$, {combined} [ps]", legend=False)
+
+    window, bins = 300.0, 60
+    e_edges = np.linspace(-window, window, bins + 1)
+    for i, (name, e) in enumerate(errors.items()):
+        sel = e[failed]
+        sel = sel[np.isfinite(sel)]              # a reference may not score every event
+        counts, _ = np.histogram(sel, bins=e_edges)
+        note = (" (selected on)" if name == base else
+                f" ({len(sel):,})" if len(sel) < failed.sum() else "")
+        ax2.stairs(counts, e_edges, color=colors[i % len(colors)], linewidth=2.0,
+                   label=f"{name}{note}: median $|\\Delta t_0|$ {np.median(np.abs(sel)):.0f} ps")
+    ax2.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
+    _finish(ax2, f"events {base} gets wrong ($|\\Delta t_0|$ > {fail:.0f} ps): "
+                 f"{int(failed.sum()):,}",
+            r"$\Delta t_0$ [ps]", f"events / {2 * window / bins:.0f} ps", legend=True)
+    ax2.get_legend().set_loc("upper left")
+    return fig, (ax, ax2)
+
+
 def sigma_calibration(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
                       bins: int = 12, ax=None,
                       title: str = "Predicted vs achieved resolution"):

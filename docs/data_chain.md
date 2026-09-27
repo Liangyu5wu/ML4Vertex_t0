@@ -230,6 +230,14 @@ giving **70 / 10 / 20**. Each sample is split with its own seed, derived from
 whether it was trained on alone or in a mixture — which is what makes
 "train on A, score on B" comparable across runs.
 
+That holds for one set of selections. The split is drawn after
+`event_select` and every block's `min_items`, so configs that keep
+different events split them differently: `lar_hgtd` and `hgtd_only` both
+require an HGTD track and share a test split exactly, while `lar_only`
+does not, and only about a fifth of its test events are in theirs.
+Per-event comparisons match on event number for that reason
+(`compare_runs.py --recovery`).
+
 | split | events | of which ttbar / VBF |
 |---|---|---|
 | train | 196,636 | 132,448 / 64,188 |
