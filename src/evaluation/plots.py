@@ -390,65 +390,69 @@ def efficiency_comparison(scans: Dict[str, Dict[str, list]], working_points=None
 
 
 def recovery_plot(errors: Dict[str, np.ndarray], base: str, combined: str,
-                  fail: float = 60.0, good: float = 30.0,
+                  fail: float = 60.0, bands: Sequence[float] = (20.0, 60.0, 150.0),
                   title: str = "What the combination recovers"):
-    """Where one model's failures go under another, event by event.
+    """Where one model's events go under another, and what it does to its failures.
 
     ``errors`` is {model: Delta t0 of the same events, in the same order}.
-    Left: |Delta t0| of ``base`` against ``combined``, one entry per event, on
-    log axes; the lower right holds the events ``base`` gets wrong
-    (> ``fail``) and ``combined`` gets right (< ``good``), the upper left the
-    reverse. Right: Delta t0 of every model for the events ``base`` gets
-    wrong -- whether the recovered ones reach the precision of the combined
-    model or only that of a model that never had ``base``'s inputs.
+    Left: a migration matrix -- rows are ``base``'s |Delta t0| band, columns
+    ``combined``'s, each cell the share of its row -- so the events made
+    better sit below the diagonal and those made worse above it, counted in
+    the title. Right: Delta t0 of every model for the events ``base`` gets
+    wrong (> ``fail``), which shows whether the recovered ones reach the
+    precision of the combined model or only that of a model without
+    ``base``'s inputs.
     """
     import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap, LogNorm
+    from matplotlib.colors import LinearSegmentedColormap
 
     colors, t = series_colors(), tokens()
     a, b = np.abs(errors[base]), np.abs(errors[combined])
     failed = a > fail
-    recovered = failed & (b < good)
-    broken = (a < good) & (b > fail)
+    edges = np.array([0.0, *bands, np.inf])
+    ra, rb = np.digitize(a, edges) - 1, np.digitize(b, edges) - 1
+    n = len(edges) - 1
+    counts = np.array([[np.sum((ra == i) & (rb == j)) for j in range(n)] for i in range(n)])
+    share = counts / np.maximum(counts.sum(1, keepdims=True), 1)
+    better, worse = np.mean(rb < ra), np.mean(rb > ra)
+    names = [f"< {bands[0]:.0f}"] + [f"{lo:.0f}-{hi:.0f}" for lo, hi in
+                                      zip(bands[:-1], bands[1:])] + [f"> {bands[-1]:.0f}"]
 
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.4, 5.2), layout="constrained",
-                                  gridspec_kw={"width_ratios": [1.0, 1.15]})
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.4, 5.4), layout="constrained",
+                                  gridspec_kw={"width_ratios": [1.0, 1.2]})
     cmap = LinearSegmentedColormap.from_list("seq_blue", [t["surface"]] + SEQUENTIAL)
-    edges = np.geomspace(0.5, 1000.0, 70)
-    # Below 0.5 ps is off the plot rather than piled into the first bin; the
-    # percentages count every event.
-    h = ax.hist2d(np.minimum(a, 999), np.minimum(b, 999), bins=[edges, edges],
-                  cmap=cmap, norm=LogNorm(vmin=1))
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.plot([0.5, 1000], [0.5, 1000], color=t["axis"], linewidth=1.0, linestyle="--")
-    ax.axvline(fail, color=t["axis"], linewidth=1.0, linestyle=":")
-    ax.axhline(good, color=t["axis"], linewidth=1.0, linestyle=":")
-    ax.text(0.97, 0.04, f"recovered\n{100 * recovered.sum() / failed.sum():.0f}% of "
-            f"{base} failures", transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=12)
-    ax.text(0.03, 0.96, f"broken\n{100 * broken.mean():.1f}% of events",
-            transform=ax.transAxes, ha="left", va="top", fontsize=12)
-    cbar = fig.colorbar(h[3], ax=ax, pad=0.01)
-    cbar.set_label("events", color=t["secondary"])
-    cbar.outline.set_edgecolor(t["axis"])
-    _finish(ax, f"{title} ({len(a):,} events)", rf"$|\Delta t_0|$, {base} [ps]",
-            rf"$|\Delta t_0|$, {combined} [ps]", legend=False)
+    ax.imshow(share, cmap=cmap, vmin=0, vmax=1, origin="upper")
+    for i in range(n):
+        for j in range(n):
+            ax.text(j, i, f"{100 * share[i, j]:.0f}%\n{counts[i, j]:,}", ha="center",
+                    va="center", fontsize=11,
+                    color=t["surface"] if share[i, j] > 0.55 else t["primary"])
+    ax.set_xticks(range(n), names)
+    ax.set_yticks(range(n), names)
+    ax.minorticks_off()
+    ax.tick_params(top=False, right=False)
+    _finish(ax, f"{len(a):,} events: {100 * better:.0f}% better, {100 * worse:.0f}% worse",
+            rf"$|\Delta t_0|$, {combined} [ps]", rf"$|\Delta t_0|$, {base} [ps]",
+            legend=False)
 
     window, bins = 300.0, 60
     e_edges = np.linspace(-window, window, bins + 1)
+    top = 0
     for i, (name, e) in enumerate(errors.items()):
         sel = e[failed]
         sel = sel[np.isfinite(sel)]              # a reference may not score every event
         counts, _ = np.histogram(sel, bins=e_edges)
-        note = (" (selected on)" if name == base else
-                f" ({len(sel):,})" if len(sel) < failed.sum() else "")
+        top = max(top, counts.max())
+        note = (" (selection)" if name == base else
+                f" ({len(sel):,} ev.)" if len(sel) < failed.sum() else "")
         ax2.stairs(counts, e_edges, color=colors[i % len(colors)], linewidth=2.0,
-                   label=f"{name}{note}: median $|\\Delta t_0|$ {np.median(np.abs(sel)):.0f} ps")
+                   label=f"{name}{note}: {np.median(np.abs(sel)):.0f} ps")
+    ax2.set_ylim(0, 1.45 * top)                  # room for the legend above the data
     ax2.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
-    _finish(ax2, f"events {base} gets wrong ($|\\Delta t_0|$ > {fail:.0f} ps): "
-                 f"{int(failed.sum()):,}",
+    _finish(ax2, f"{base} $|\\Delta t_0|$ > {fail:.0f} ps: {int(failed.sum()):,} events",
             r"$\Delta t_0$ [ps]", f"events / {2 * window / bins:.0f} ps", legend=True)
-    ax2.get_legend().set_loc("upper left")
+    ax2.legend(loc="upper left", title=r"median $|\Delta t_0|$", handlelength=1.6,
+               borderpad=0.2)
     return fig, (ax, ax2)
 
 
