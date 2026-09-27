@@ -94,6 +94,15 @@ leaves them almost no range -- is null too
 (`config/sweeps/scale_transforms.yaml`). `max_items` 60 / 120 / 250 was
 retested on the cut and is still null (`config/sweeps/cell_count.yaml`).
 
+`head.norm: layer` bounds the prediction: the head ends in Dense ->
+LayerNorm -> Dense(2), so the output is a linear map of a fixed-length
+vector, and every model saturates near +-500 ps against a truth reaching
++-770 (the two flat lines in `pred_vs_true.png`). It touches the 1% of
+events past 450 ps. `none` removes the bound but costs 1-3 ps in every
+config and does not predict those events any better; `batch` is best for
+`lar_hgtd` and unstable elsewhere (`config/sweeps/head_norm.yaml`). So
+`layer` stays, and "head.norm is null" below is no longer true.
+
 The predicted sigma still over-claims for VBF after the cut (pull width
 1.21 against 1.08 for ttbar in `lar_hgtd`), so the wrong vertex was not
 the cause.

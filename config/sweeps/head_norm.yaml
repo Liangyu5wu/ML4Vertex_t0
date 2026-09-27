@@ -1,0 +1,44 @@
+# Take the LayerNorm off the head, so the prediction is not bounded.
+#
+#   python scripts/sweep.py --space config/sweeps/head_norm.yaml \
+#       --config config/blocks/lar_hgtd.yaml --out ../runs/head_norm/lar_hgtd
+#   (and the same for lar_only and hgtd_only)
+#
+# Every model saturates near +-500 ps while the truth reaches +-770: the
+# head ends in Dense -> LayerNorm -> Dense(2), and a LayerNorm'd vector has
+# a fixed length, so the output is bounded by the weights. Computed from
+# each run's weights the bound is [-530, 533] for lar_hgtd trial 0, against
+# an observed [-507, 474]; all nine runs sit just inside theirs. It touches
+# the 1% of events with |t0| > 450 ps, which is why q68 never showed it
+# and head.norm read as null before.
+#
+# none removes the bound outright; batch keeps a normalisation that is a
+# fixed affine map at inference, so it bounds nothing either. The layer
+# control is ../runs/<config> trials 000-002, trained on the mixture.
+#
+# RESULT (validation q68 in ps, three seeds; test events with |t0| > 400 ps):
+#
+#              norm    val all      ttbar  VBF    pred range    tail pred/true  tail q68
+#   lar_hgtd   layer   27.1+-1.0    28.0   25.2   [-498, 490]   0.95            57
+#              none    28.0+-1.0    28.9   26.2   [-633, 686]   0.94            68
+#              batch   25.9+-0.5    26.7   24.2   [-628, 667]   0.94            54
+#   lar_only   layer   99.7+-0.6    87.8  128.5   [-427, 433]   0.62           270
+#              none   101.0+-0.5    88.6  130.2   [-626, 646]   0.59           283
+#              batch  102.6+-3.4    92.0  127.9   [-535, 477]   0.48           326
+#   hgtd_only  layer   45.5+-1.0    52.6   32.9   [-492, 472]   0.85           186
+#              none    48.3+-1.2    55.2   35.4   [-642, 615]   0.82           199
+#              batch   47.6+-3.5    54.4   35.8   [-609, 631]   0.81           203
+#
+# none removes the bound, and the horizontal lines in pred_vs_true go with
+# it, but costs 1-3 ps in all three configs. Nor does it help the events
+# the bound was clipping: their prediction/truth ratio is unchanged, since
+# what shrinks them is how few training events sit out there. batch is best
+# for lar_hgtd and unstable elsewhere. Keep layer.
+
+trials: 6
+seed: 41
+epochs: 300
+repeats: 3
+
+space:
+  head.norm: [none, batch]
