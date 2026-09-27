@@ -146,9 +146,11 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
     centres = 0.5 * (edges[1:] + edges[:-1])
     width = float(edges[1] - edges[0])
 
+    top = 1.0
     for i, (name, err) in enumerate(errors.items()):
         colour = colors[i % len(colors)]
         counts, _ = np.histogram(err, bins=edges)
+        top = max(top, counts.max())
         ax.stairs(counts, edges, color=colour, linewidth=2.0,
                   label=f"{name}  ({len(err):,})")
 
@@ -171,6 +173,9 @@ def error_distribution(errors: Dict[str, np.ndarray], fits: Optional[Dict[str, d
     ax.axvline(0.0, color=t["axis"], linewidth=1.0, zorder=0)
     if logy:
         ax.set_yscale("log")
+        # Below one event is nothing; a single-Gaussian curve would otherwise
+        # drag the axis to 1e-300 and its margins to 1e20.
+        ax.set_ylim(0.5, 20 * top)
     _finish(ax, title, r"$\Delta t_0$ [ps]", f"events / {width:.0f} ps",
             legend=True)
     return fig, ax
@@ -644,14 +649,15 @@ def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
     """The standard residual plots again, for the events a sigma cut keeps.
 
     Writes, into ``outdir/sigma_cut_<N>ps``: the residual (linear and log,
-    refitted on the kept events), predicted against true, one kept/removed
+    refitted on the kept events, and again with one Gaussian over the whole
+    distribution to show how Gaussian it is), predicted against true, one kept/removed
     comparison per sample, and ``cut_metrics.json`` with the threshold, where
     it came from, each sample's efficiency and its summary after the cut.
     ``cut`` may carry a ``name`` (a working point) and a ``from``.
     """
     import matplotlib.pyplot as plt
 
-    from src.evaluation.summary import sigma_cut, summarize
+    from src.evaluation.summary import fit_core_resolution, sigma_cut, summarize
 
     cut = dict(cut)
     label, origin = cut.pop("name", None), cut.pop("from", None)
@@ -676,6 +682,21 @@ def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
             **(summarize(y_true[m & keep], y_pred[m & keep], sigma=sigma[m & keep], fit=fit)
                if (m & keep).sum() >= MIN_KEPT else {})}
         for n, m in groups.items()}}
+    # How Gaussian the kept events are: one Gaussian over the whole
+    # distribution, not the core, and the share beyond 3 sigma of it, which is
+    # 0.27% for a Gaussian.
+    gauss = {}
+    for n, m in groups.items():
+        e = errors[m & keep]
+        if n == "all" or len(e) < MIN_KEPT:
+            continue
+        try:
+            f = fit_core_resolution(e, method="single_gaussian", fit_range=np.inf)
+        except RuntimeError:                          # fitting is best-effort
+            continue
+        f["beyond_3sigma"] = float(np.mean(np.abs(e - f["mu"]) > 3 * f["sigma"]))
+        gauss[n] = f
+    stats["single_gaussian"] = gauss
     with open(os.path.join(out, "cut_metrics.json"), "w") as fh:
         json.dump(stats, fh, indent=2)
 
@@ -690,6 +711,14 @@ def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
                                                        title=f"{name}, {tag}")[0]),
                ("pred_vs_true.png", prediction_vs_truth(y_true[keep], y_pred[keep],
                                                         title=f"{name}, {tag}")[0])]
+    for logy in (False, True):
+        # Linear, close in, for the shape of the core; log, wide, for the tails.
+        fig, ax = error_distribution(kept, gauss, logy=logy, window=600.0 if logy else 150.0,
+                                     title=f"{name}, {tag}: single Gaussian")
+        ax.text(0.03, 0.97, "\n".join(
+            f"{n}: {100 * f['beyond_3sigma']:.1f}% beyond 3$\\sigma$" for n, f in gauss.items())
+            + "\n(Gaussian: 0.27%)", transform=ax.transAxes, va="top", fontsize=13)
+        figures.append((f"residual_gauss{'_log' if logy else ''}.png", fig))
     figures += [(f"cut_{n}.png", cut_comparison(errors[m], keep[m],
                                                 title=f"{name}, {n}: {tag}")[0])
                 for n, m in groups.items() if n != "all"]
