@@ -404,13 +404,13 @@ def display(store: EventStore, index: int, out_base: str,
 
 
 def pick_events(model_dir: str, how: str, n: int,
-                eligible: Optional[Dict[str, set]] = None) -> Dict[str, list]:
+                eligible: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, list]:
     """Events to open, chosen from a model's own predictions.
 
     ``worst`` and ``best`` rank on the residual, ``unsure`` on the predicted
     sigma -- the three reasons to open an event one at a time. ``eligible``
-    restricts the ranking to a set of event numbers per sample, which is how
-    a selection is applied before the ranking rather than after it.
+    restricts the ranking to given event numbers per sample, which is how a
+    selection is applied before the ranking rather than after it.
     """
     z = np.load(os.path.join(model_dir, "predictions_test.npz"))
     names = [str(s) for s in z["dataset_names"]]
@@ -423,8 +423,7 @@ def pick_events(model_dir: str, how: str, n: int,
     for s in names:
         rows = np.flatnonzero(sample == s)
         if eligible is not None:
-            allowed = eligible.get(s, set())
-            rows = rows[[int(e) in allowed for e in z["event_number"][rows]]]
+            rows = rows[np.isin(z["event_number"][rows], eligible.get(s, []))]
         chosen = rows[np.argsort(key[rows])[:n]]
         out[s] = [(int(z["event_number"][i]), float(z["y_pred"][i]),
                    float(z["sigma"][i])) for i in chosen]
@@ -454,6 +453,11 @@ def main():
                    help="drop the valid-time requirement on tracks")
     p.add_argument("--apply-cuts", action="store_true",
                    help="require the VBF H->inv event selection")
+    p.add_argument("--min-abs-truth", type=float, default=None, metavar="PS",
+                   help="only events with |truth t0| above this. Ranking on "
+                        "the residual alone favours events near zero, which "
+                        "a regressor finds easy; this asks what it does when "
+                        "the answer is far from the mean")
     args = p.parse_args()
 
     global IDEAL_EFF
@@ -465,15 +469,21 @@ def main():
     index = {n: {int(e): i for i, e in enumerate(s.event_column("event_number"))}
              for n, s in stores.items()}
 
-    eligible = None
-    if args.apply_cuts:
-        eligible = {n: set(s.event_column("event_number")[passes_vbf(s)].tolist())
-                    for n, s in stores.items()}
-
     how = next((h for h in ("worst", "best", "unsure") if getattr(args, h)), None)
+    if args.min_abs_truth is not None and not how:
+        p.error("--min-abs-truth selects what is ranked; give --worst/--best/--unsure")
     if how:
         if not args.model_dir:
             p.error(f"--{how} needs --model-dir")
+        # Select before ranking; display() applies --apply-cuts to --event itself.
+        eligible = None
+        if args.apply_cuts or args.min_abs_truth is not None:
+            eligible = {}
+            for n, s in stores.items():
+                m = passes_vbf(s) if args.apply_cuts else np.ones(s.n_events, bool)
+                if args.min_abs_truth is not None:
+                    m &= np.abs(s.event_column("truth_vtx_time")) >= args.min_abs_truth
+                eligible[n] = s.event_column("event_number")[m]
         wanted = pick_events(args.model_dir, how, getattr(args, how), eligible)
     elif args.event:
         pred = {}
