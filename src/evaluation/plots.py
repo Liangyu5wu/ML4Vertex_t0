@@ -635,21 +635,33 @@ def _evaluation_cfg(model_dir: str) -> dict:
         return (yaml.safe_load(fh) or {}).get("evaluation") or {}
 
 
+MIN_KEPT = 50      # fewer kept events than this and a working point is not drawn
+
+
 def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
                sigma: np.ndarray, ids: np.ndarray, names: Sequence[str],
-               cut: dict, outdir: str, fit: Optional[dict] = None) -> str:
+               cut: dict, outdir: str, fit: Optional[dict] = None) -> Optional[str]:
     """The standard residual plots again, for the events a sigma cut keeps.
 
     Writes, into ``outdir/sigma_cut_<N>ps``: the residual (linear and log,
     refitted on the kept events), predicted against true, one kept/removed
-    comparison per sample, and ``cut_metrics.json`` with the threshold, each
-    sample's efficiency and its summary after the cut.
+    comparison per sample, and ``cut_metrics.json`` with the threshold, where
+    it came from, each sample's efficiency and its summary after the cut.
+    ``cut`` may carry a ``name`` (a working point) and a ``from``.
     """
     import matplotlib.pyplot as plt
 
     from src.evaluation.summary import sigma_cut, summarize
 
+    cut = dict(cut)
+    label, origin = cut.pop("name", None), cut.pop("from", None)
     keep, threshold = sigma_cut(sigma, **cut)
+    if keep.sum() < MIN_KEPT:
+        # lar_only has no event below 20 ps: an empty working point is a
+        # result, not an error.
+        print(f"{label or 'sigma cut'} at {threshold:.1f} ps keeps {int(keep.sum())} "
+              f"event(s); not drawn")
+        return None
     errors = y_pred - y_true
     out = os.path.join(outdir, f"sigma_cut_{threshold:.0f}ps")
     os.makedirs(out, exist_ok=True)
@@ -657,16 +669,20 @@ def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
     groups = {n: ids == i for i, n in enumerate(names)}
     if len(names) > 1:
         groups["all"] = np.ones(len(ids), dtype=bool)
-    stats = {"cut": dict(cut), "max_sigma": threshold, "samples": {
+    stats = {"name": label, "cut": cut, "max_sigma": threshold,
+             "threshold_from": origin or ("fixed" if "max_sigma" in cut
+                                          else "the evaluated sample"), "samples": {
         n: {"efficiency": float(keep[m].mean()),
-            **summarize(y_true[m & keep], y_pred[m & keep], sigma=sigma[m & keep], fit=fit)}
+            **(summarize(y_true[m & keep], y_pred[m & keep], sigma=sigma[m & keep], fit=fit)
+               if (m & keep).sum() >= MIN_KEPT else {})}
         for n, m in groups.items()}}
     with open(os.path.join(out, "cut_metrics.json"), "w") as fh:
         json.dump(stats, fh, indent=2)
 
     name = os.path.basename(os.path.normpath(model_dir))
-    tag = rf"$\sigma_{{pred}}$ $\leq$ {threshold:.0f} ps"
-    kept = {n: errors[m & keep] for n, m in groups.items() if n != "all"}
+    tag = (f"{label}, " if label else "") + rf"$\sigma_{{pred}}$ $\leq$ {threshold:.0f} ps"
+    kept = {n: errors[m & keep] for n, m in groups.items()
+            if n != "all" and (m & keep).sum() >= MIN_KEPT}
     fits = {n: s["fit"] for n, s in stats["samples"].items()
             if isinstance(s.get("fit"), dict) and "sigma" in s["fit"]}
     figures = [("residual.png", error_distribution(kept, fits, title=f"{name}, {tag}")[0]),
@@ -680,21 +696,39 @@ def cut_report(model_dir: str, y_true: np.ndarray, y_pred: np.ndarray,
     for fname, fig in figures:
         fig.savefig(os.path.join(out, fname))
         plt.close(fig)
-    print(f"sigma cut at {threshold:.1f} ps: "
-          + ", ".join(f"{n} keeps {100 * s['efficiency']:.0f}% (q68 {s['q68']:.1f})"
+    print(f"{label or 'sigma cut'} at {threshold:.1f} ps: "
+          + ", ".join(f"{n} keeps {100 * s['efficiency']:.0f}%"
+                      + (f" (q68 {s['q68']:.1f})" if "q68" in s else "")
                       for n, s in stats["samples"].items())
           + f"; plots in {out}")
     return out
 
 
+def _threshold_from_validation(model_dir: str, predictions: str, cut: dict) -> dict:
+    """Turn a ``keep_fraction`` into a ``max_sigma`` fitted on the validation split.
+
+    A threshold chosen on the sample it is then reported on is tuned on that
+    sample. The validation predictions are the model's own, so the same
+    threshold applies whichever sample is being scored.
+    """
+    val = os.path.join(model_dir, "predictions_val.npz")
+    if ("keep_fraction" not in cut or predictions == "predictions_val.npz"
+            or not os.path.exists(val)):
+        return cut
+    cut = dict(cut)
+    fraction = cut.pop("keep_fraction")
+    return {**cut, "max_sigma": float(np.quantile(np.load(val)["sigma"], fraction)),
+            "from": f"keep_fraction {fraction} of predictions_val.npz"}
+
+
 def report(model_dir: str, predictions: str = "predictions_test.npz",
            mode: str = "light", outdir: Optional[str] = None,
-           sigma_cut: Optional[dict] = None) -> str:
+           sigma_cut=None) -> str:
     """Write the standard plot set for a trained model. Returns the directory.
 
     With a sigma cut -- ``sigma_cut`` here, or ``evaluation.sigma_cut`` in the
-    model's config -- the residual plots are drawn again for the kept events,
-    by :func:`cut_report`.
+    model's config, one cut or a list of working points -- the residual plots
+    are drawn again for the kept events, by :func:`cut_report`.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -746,7 +780,8 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
                       labels=np.array(names)[ids],
                       xlabel=r"$t_0^{true}$ [ps]" if stat == "median" else "",
                       title=f"{name} -- resolution vs true $t_0$" if stat == "q68" else "")
-    axes[1].get_legend().remove()
+    if axes[1].get_legend():         # one legend is enough; a single sample has none
+        axes[1].get_legend().remove()
     fig.savefig(os.path.join(outdir, "resolution_vs_truth.png")); plt.close(fig)
     written.append("resolution_vs_truth.png")
 
@@ -773,11 +808,13 @@ def report(model_dir: str, predictions: str = "predictions_test.npz",
             fig.savefig(os.path.join(outdir, fname)); plt.close(fig)
             written.append(fname)
         evaluation = _evaluation_cfg(model_dir)
-        cut = sigma_cut if sigma_cut is not None else evaluation.get("sigma_cut")
-        if cut:
-            written.append(os.path.basename(cut_report(
-                model_dir, y_true, y_pred, sigma, ids, names, cut, outdir,
-                fit=evaluation.get("fit"))) + "/")
+        cuts = sigma_cut if sigma_cut is not None else evaluation.get("sigma_cut")
+        for cut in [cuts] if isinstance(cuts, dict) else cuts or []:
+            out = cut_report(model_dir, y_true, y_pred, sigma, ids, names,
+                             _threshold_from_validation(model_dir, predictions, cut),
+                             outdir, fit=evaluation.get("fit"))
+            if out:
+                written.append(os.path.basename(out) + "/")
 
     if save_training_history(model_dir, mode=mode, outdir=outdir):
         written.append("history.png")
@@ -819,13 +856,15 @@ def main():
     p.add_argument("model_dir")
     p.add_argument("--predictions", default="predictions_test.npz")
     cut = p.add_mutually_exclusive_group()
-    cut.add_argument("--max-sigma", type=float, metavar="PS",
-                     help="keep events with a predicted sigma at most this")
+    cut.add_argument("--max-sigma", type=float, nargs="+", metavar="PS",
+                     help="keep events with a predicted sigma at most this; "
+                          "several values draw several working points")
     cut.add_argument("--keep-fraction", type=float, metavar="F",
-                     help="keep the fraction F with the smallest predicted sigma")
+                     help="keep the fraction F with the smallest predicted sigma, "
+                          "threshold taken from predictions_val.npz when present")
     a = p.parse_args()
     report(a.model_dir, predictions=a.predictions,
-           sigma_cut={"max_sigma": a.max_sigma} if a.max_sigma is not None else
+           sigma_cut=[{"max_sigma": v} for v in a.max_sigma] if a.max_sigma else
                      {"keep_fraction": a.keep_fraction} if a.keep_fraction is not None
                      else None)
 

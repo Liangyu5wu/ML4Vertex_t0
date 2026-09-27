@@ -95,3 +95,11 @@ evaluation:
     method: double_gaussian
     pileup_sigma: 175.74
     fix_pileup_sigma: true
+  # Working points on the predicted sigma, fixed in ps -- the form a cut in
+  # data takes -- and the same in every config, so each reads as an expected
+  # resolution. On validation here: 0 / 6 / 24% kept (no event reaches
+  # 20 ps), q68 of the kept - / 36.5 / 50.3 ps.
+  sigma_cut:
+  - {name: tight, max_sigma: 20.0}
+  - {name: medium, max_sigma: 40.0}
+  - {name: loose, max_sigma: 60.0}

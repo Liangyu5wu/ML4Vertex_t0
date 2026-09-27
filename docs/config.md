@@ -60,16 +60,37 @@ training: {epochs: 300, batch_size: 1024, early_stopping_patience: 25,
            warmup_epochs: 5}
 evaluation:
   fit: {method: double_gaussian, pileup_sigma: 175.74, fix_pileup_sigma: true}
-  sigma_cut: {max_sigma: 40.0}   # or {keep_fraction: 0.8}; optional
+  sigma_cut:                     # one cut or a list of working points
+  - {name: tight, max_sigma: 20.0}
+  - {name: medium, max_sigma: 40.0}
+  - {name: loose, max_sigma: 60.0}
 ```
 
 `evaluation.sigma_cut` redraws the residual plots for the events whose
-predicted sigma passes, into `plots/sigma_cut_<N>ps/`, with a kept/removed
-comparison per sample and `cut_metrics.json`. `max_sigma` is a fixed
-threshold in ps, the form a cut in data takes; `keep_fraction` sets it at
-that quantile of the sample's own sigma and records the value. Neither
-reads the truth. For an existing run:
-`python -m src.evaluation.plots <run> --max-sigma 40`.
+predicted sigma passes, one directory per working point
+(`plots/sigma_cut_<N>ps/`), with a kept/removed comparison per sample and
+`cut_metrics.json`: the threshold, where it came from, and each sample's
+efficiency and resolution after the cut.
+
+The rules the working points follow, and why:
+
+- **A fixed `max_sigma` in ps**, the only form a cut in data can take, and
+  the same in every config so each reads as an expected resolution. It is
+  stable: across three seeds of `lar_hgtd` the medium point keeps 69-73% and
+  its q68 moves by 0.2 ps. `lar_only` has no event below 20 ps, so its tight
+  point is empty and not drawn (fewer than 50 kept events never are).
+- **Raw sigma, not recalibrated.** On the mixture it is honest to within 5%.
+  What is off is the split between samples -- ttbar 0.92-1.03, VBF 1.03-1.27
+  in q68(|Delta t0| / sigma) -- and a map from sigma alone cannot tell the
+  two apart, any more than data can.
+- **Chosen on validation, reported on test.** `keep_fraction: F` is turned
+  into a `max_sigma` from `predictions_val.npz` when the run has one, and
+  `cut_metrics.json` records it; the threshold is then the model's, whichever
+  sample is scored.
+- **Always reported per sample.** One threshold keeps 3-15 points more of
+  VBF than of ttbar.
+
+For an existing run: `python -m src.evaluation.plots <run> --max-sigma 20 40 60`.
 
 ### Presets
 
