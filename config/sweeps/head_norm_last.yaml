@@ -27,8 +27,10 @@
 #              norm_last=F  51.2+-2.2    57.3   38.7   [-508, 467]   0.80
 #
 # Free for lar_hgtd and lar_only, 5.7 ps worse for hgtd_only, and no help to
-# the clipped events anywhere. Not adopted; the head.norm_last switch was
-# removed again (git log -S norm_last finds it).
+# the clipped events anywhere. Not adopted, and the switch was never
+# committed: it was a head.norm_last option read by _mlp in block_model.py,
+# skipping the norm after the last Dense (norm = norm_all if norm_last or
+# i < len(units) - 1 else None). Re-running this space needs it back.
 
 trials: 3
 seed: 51
