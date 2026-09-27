@@ -35,6 +35,7 @@ scripts/train_blocks.py                  training entry point
 scripts/evaluate_blocks.py               scoring, including on an unseen sample
 scripts/sweep.py                         hyper-parameter search
 scripts/audit_inputs.py                  one event, stage by stage
+scripts/cell_coverage.py                 what the cell truncation cuts off
 config/sweeps/*.yaml                     search spaces, with what each found
 src/pipeline/
     ingest_root.py                       ROOT ntuple -> event store

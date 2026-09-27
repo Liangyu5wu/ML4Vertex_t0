@@ -64,6 +64,16 @@ truth cut standing in for better vertex identification; it removes 5.2% of
 ttbar and 18.4% of VBF), and the vertex time and resolution are no longer
 inputs. Those runs are not a control arm for anything trained since.
 
+The new baselines (`../runs/cell_count`, validation q68, three seeds):
+`lar_hgtd` 27.3, `hgtd_only` 47.7, `lar_only` 101 ps. `lar_only` was 53
+before, and that was never a calorimeter-only number: its `vertices` block
+carried `RecoVtx_time`, which is built from HGTD tracks. So every older
+statement that leans on `lar_only` -- the superadditivity figure below
+included -- mixed HGTD timing into the "LAr" arm. `max_items` 60 / 120 /
+250 was retested on the new cut and is still null (`config/sweeps/cell_count.yaml`).
+`lar_only` also shows a train/val gap (MAE 72 against 91) that `lar_hgtd`
+does not; the no-overfitting remark below holds for `lar_hgtd` only.
+
 Where the gain came from:
 
 - **4.6 ps** from a data bug, not a setting. The splits were concatenated by

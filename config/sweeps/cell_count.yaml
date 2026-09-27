@@ -1,0 +1,47 @@
+# Does a larger cell block pay once the events are vertex-correct?
+#
+#   python scripts/sweep.py --space config/sweeps/cell_count.yaml \
+#       --config config/blocks/lar_hgtd.yaml --out ../runs/cell_count/lar_hgtd
+#   python scripts/sweep.py --space config/sweeps/cell_count.yaml \
+#       --config config/blocks/lar_only.yaml --out ../runs/cell_count/lar_only
+#
+# max_items 250 against 120 was null before, but measured on every event,
+# 20% of VBF with the wrong vertex, where no cell count can help, and before
+# the batch-mixing fix. With event_select keeping |hs_vtx_dz| <= 3 mm that
+# dilution is gone, so the question is open again. lar_only is the clean
+# test: there the cells are the only timing input.
+#
+# cell_coverage.py on ttbar after the cut: 120 truncates 52% of events and
+# 14% of the HS-matched cells, 250 truncates 1.5% (p99 is 264 cells), so 400
+# would be 250 again. 60 asks the opposite question -- whether the model is
+# already saturated by the leading cells. The HS-matched cells past rank 120
+# have a single-cell q68 of 1775 ps against 1661 for unmatched ones, so the
+# expectation is that 250 buys nothing.
+#
+# All three arms run: nothing in ../runs was trained with the event cut, so
+# there is no existing control. scripts/cell_coverage.py says what each
+# limit leaves out.
+#
+# RESULT (validation q68, three seeds, mean +- sd; all / ttbar / VBF):
+#
+#   lar_hgtd   60   28.2+-0.7   29.2+-0.7   26.1+-0.6
+#             120   27.3+-1.4   28.3+-1.5   25.1+-1.2
+#             250   27.8+-0.7   28.8+-0.7   25.7+-0.7
+#   lar_only   60  103.1+-1.5   90.2+-0.7  133.9+-4.7
+#             120  101.1+-1.4   88.6+-0.4  132.3+-4.0
+#             250  100.5+-0.6   88.4+-0.6  130.0+-1.5
+#
+# Null again: 120 -> 250 moves nothing beyond the spread in either config,
+# and 60 -> 120 is at most 1.6 ps (lar_only ttbar). The cells past 120 are
+# the ~1 GeV ones whose single-cell time is no better than a pile-up cell's.
+# Keep 120.
+#
+# hgtd_only on the same cut, for reference: 47.7 ps (44.9, 47.4, 50.8).
+
+trials: 9
+seed: 7
+epochs: 300
+repeats: 3
+
+space:
+  data.inputs.cells.max_items: [60, 120, 250]
