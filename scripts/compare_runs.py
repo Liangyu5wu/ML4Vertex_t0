@@ -175,7 +175,7 @@ def efficiency_plot(run_dirs, out: str, trained_on: str = "ttbar+vbf_hinv") -> N
 
     plots.use_style("light")
     fig, _ = plots.efficiency_comparison(
-        scans, title=f"Resolution vs sigma-cut efficiency, trained on {trained_on}")
+        scans, title=f"Resolution vs $\\sigma$-cut efficiency (trained on {trained_on})")
     fig.savefig(out)
     print(f"wrote {out}")
 

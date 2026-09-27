@@ -338,46 +338,55 @@ def resolution_vs_efficiency(errors: Dict[str, np.ndarray], sigma: Dict[str, np.
 
 def efficiency_comparison(scans: Dict[str, Dict[str, list]], working_points=None,
                           title: str = "Resolution vs efficiency, by input"):
-    """Several models on one grid: rows q68 and core sigma, a column per sample.
+    """Several models, one panel per sample: q68 solid, core sigma dashed.
 
-    ``scans`` is {model: {sample: [efficiency_scan of each seed]}}. Each model
-    is its seeds' mean, with their range shaded -- a gap narrower than that
-    band is not a difference. Reading across at one height gives the
-    efficiency each model reaches at that resolution; reading up at one
-    efficiency, the resolution.
+    ``scans`` is {model: {sample: [efficiency_scan of each seed]}}. Both
+    statistics are in ps, so they share one axis rather than two; colour is
+    the model and line style the statistic. Each line is its seeds' mean with
+    their range shaded -- a gap narrower than the band is not a difference --
+    and the q68 at full efficiency is labelled where the models differ most.
     """
+    import matplotlib.lines as mlines
     import matplotlib.pyplot as plt
 
     colors, t = series_colors(), tokens()
     samples = list(dict.fromkeys(s for per in scans.values() for s in per))
-    fig, axes = plt.subplots(2, len(samples), figsize=(6.4 * len(samples), 9.0),
-                             sharex=True, sharey="row", squeeze=False,
-                             layout="constrained")
-    for row, (key, ylabel) in enumerate((("q68", "q68 of the kept events [ps]"),
-                                         ("core_sigma", r"core $\sigma$ of the kept events [ps]"))):
-        for col, sample in enumerate(samples):
-            ax = axes[row][col]
-            for i, (model, per) in enumerate(scans.items()):
-                runs = per.get(sample)
-                if not runs:
-                    continue
-                x = 100 * runs[0]["efficiency"]
+    fig, axes = plt.subplots(1, len(samples), figsize=(5.6 * len(samples), 5.0),
+                             sharey=True, squeeze=False, layout="constrained")
+    for ax, sample in zip(axes[0], samples):
+        ends = {}
+        for i, (model, per) in enumerate(scans.items()):
+            runs, colour = per.get(sample), colors[i % len(colors)]
+            if not runs:
+                continue
+            x = 100 * runs[0]["efficiency"]
+            for key, style in (("q68", "-"), ("core_sigma", "--")):
                 y = np.array([r[key] for r in runs])
-                colour = colors[i % len(colors)]
                 ax.fill_between(x, np.nanmin(y, 0), np.nanmax(y, 0), color=colour,
-                                alpha=0.25, linewidth=0)
-                ax.plot(x, np.nanmean(y, 0), color=colour, linewidth=2.5,
-                        label=f"{model} ({len(runs)} seeds)")
-            ax.set_xlim(0, 104)
-            ax.set_ylim(bottom=0)
-            _finish(ax, sample if row == 0 else "",
-                    r"events kept, tightest predicted $\sigma$ first [%]" if row == 1 else "",
-                    ylabel if col == 0 else "", legend=row == 0 and col == 0)
-            if row == 0 and col == 0:
-                ax.get_legend().set_loc("upper left")
+                                alpha=0.22, linewidth=0)
+                ax.plot(x, np.nanmean(y, 0), color=colour, linewidth=2.2, linestyle=style)
+            ends[model] = (x[-1], np.nanmean([r["q68"][-1] for r in runs]))
+        for xe, v in ends.values():
+            # past the end of the line, where nothing else is drawn
+            ax.annotate(f"{v:.1f}", (xe, v), xytext=(5, 0), textcoords="offset points",
+                        ha="left", va="center", fontsize=12, color=t["primary"])
+        ax.set_xlim(0, 116)
+        ax.set_xticks(range(0, 101, 20))
+        ax.set_ylim(bottom=0)
+        _finish(ax, sample, r"kept, tightest $\sigma$ first [%]",
+                "resolution of the kept events [ps]" if ax is axes[0][0] else "",
+                legend=False)
+    handles = [mlines.Line2D([], [], color=colors[i % len(colors)], linewidth=2.2,
+                             label=f"{m} ({len(next(iter(per.values())))} seeds)")
+               for i, (m, per) in enumerate(scans.items())]
+    handles += [mlines.Line2D([], [], color=t["primary"], linewidth=2.2, label="q68"),
+                mlines.Line2D([], [], color=t["primary"], linewidth=2.2, linestyle="--",
+                              label=r"core $\sigma$ (fit)")]
+    axes[0][0].legend(handles=handles, loc="upper left", handlelength=1.8,
+                      borderpad=0.2, fontsize=13)
     fig.suptitle(title, x=0.0, ha="left", fontsize=16, fontweight="bold",
                  color=t["primary"])
-    return fig, axes
+    return fig, axes[0]
 
 
 def sigma_calibration(errors: Dict[str, np.ndarray], sigma: Dict[str, np.ndarray],
