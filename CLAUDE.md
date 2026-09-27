@@ -33,9 +33,9 @@ adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
 - Anything expensive that depends only on settings gets a fingerprint and is
   reused — the event store and the tensor cache both work this way. Extend
   that pattern rather than adding a workflow engine.
-- All figures go through `src/evaluation/plots.py`, in the ATLAS house style
-  it sets: closed black frame, ticks inward on all four sides with minors, no
-  grid, type at 15-17pt. Read the `dataviz` skill before adding a plot type.
+- All figures go through `src/evaluation/plots/` (`style.py` sets the ATLAS
+  house style: closed black frame, ticks inward on all four sides with minors,
+  no grid, type at 15-17pt). Read the `dataviz` skill before adding a plot type.
 - **Histograms report event counts, never a density.** Label the axis
   `events / <bin width>` and put each sample's count in the legend; do not
   normalise so that two samples overlay neatly.
@@ -47,29 +47,28 @@ adds the CUDA wheels when a GPU is visible, and sizes the thread pools.
   than a fitted core width — a double-Gaussian fit finds a narrow core in an
   untrained model's residuals too, so it rewards models that learned nothing
   (measured: identical degenerate runs fitted anywhere from 5.7 to 46 ps).
+- A cut on the predicted sigma is chosen on validation (`predictions_val.npz`)
+  and reported on test, as a fixed `max_sigma` in ps, per sample.
 - Models are saved as weights + `model_spec.json` and rebuilt on load; do not
   reintroduce whole-model serialization.
+- Long runs go on two interactive nodes with `sweep.py --shard`, never
+  `sbatch` (README, "Running").
 - Store files are written to a temporary name and renamed, so an interrupted
   run never leaves a half-written store that still opens.
 
-## What tuning found
+## Where things stand
 
-Five rounds of sweeps took the validation q68 from 39 to about 35 ps. Almost
-none of it came from tuning, and the null results are worth more than the
-wins: do not re-run these.
-
-Everything in this section predates two changes: the configs now keep
+Two changes separate current runs from everything earlier: the configs keep
 only events with `|hs_vtx_dz| <= 3 mm` (a truth cut standing in for better
 vertex identification; it removes 5.2% of ttbar and 18.4% of VBF), and the
-vertex time and resolution are no longer inputs. The runs it cites -- the
-old `../runs/{lar_hgtd,lar_only,hgtd_only}`, `../sweeps` and `../displays`
--- are archived in
+vertex time is no longer an input. Earlier runs, `../sweeps` and
+`../displays` are archived in
 `/global/cfs/cdirs/m2616/liangyu/vertextiming/archive/2026-09-26_before_vertex_cut.tar.gz`
-and are not a control arm for anything trained since; `../runs` holds only
-runs made after both changes.
+and are no control arm for anything since; `../runs` holds only runs made
+after both.
 
-The baselines on the cut (`../runs/{lar_hgtd,lar_only,hgtd_only}`, test
-q68 in ps, three seeds, trained on the mixture unless noted):
+Baselines (`../runs/<config>`, test q68 in ps, three seeds, mixed training
+unless noted):
 
 | | ttbar | VBF |
 |---|---|---|
@@ -77,109 +76,91 @@ q68 in ps, three seeds, trained on the mixture unless noted):
 | `hgtd_only` | 50.9 +- 0.9 | 32.8 +- 0.3 (38.7 alone) |
 | `lar_only` | 88.8 +- 0.4 | 125.5 +- 1.7 |
 
-With the wrong-vertex events cut, VBF is no longer the harder sample:
-HGTD carries it (32.8 against 50.9 for ttbar) and the calorimeter carries
-ttbar. The combination is still far better than two independent
-measurements would give -- 27.6 against about 44 for ttbar, 25.1 against
-about 32 for VBF. Training on the mixture helps VBF, and does not hurt ttbar.
+- **VBF is no longer the harder sample.** HGTD carries it (32.8 against 50.9
+  for ttbar), the calorimeter carries ttbar. Mixed training helps VBF and does
+  not hurt ttbar.
+- **The combination is the result, and core sigma hides it.** At full
+  efficiency LAr+HGTD reads 27.6 against 50.9 ps (ttbar); at q68 <= 20 ps it
+  keeps 81% of ttbar against 62%. The fitted core is the same (16.4 against
+  16.3 ps): the gain is events moved out of the tails, so quote q68 or the
+  efficiency at a fixed q68 (`compare_runs.py --efficiency-plot`).
+- **How it works.** HGTD alone is off by more than 60 ps in 26% of events;
+  in 92% of those it sits on a pile-up track cluster while a hard-scatter
+  track is there too (98%). With LAr, 36% of them come back under 30 ps and
+  1.8% of all events get worse; the recovered reach 13 ps where LAr alone
+  reaches 40. LAr picks the cluster, HGTD sets the resolution. What makes a
+  failure recoverable is open: recovery falls from 43% to 26% as HGTD's error
+  grows from 60-100 to past 300 ps, the opposite of "far-apart clusters are
+  easy" (`compare_runs.py --recovery`).
+- **The old `lar_only` (53 ps) was never calorimeter-only**: its `vertices`
+  block carried `RecoVtx_time`, which is built from HGTD tracks, so every
+  older statement leaning on it mixed HGTD timing into the "LAr" arm.
+- **`lar_only` does not share the others' test split.** The split is drawn
+  after `min_items`, and it keeps events with no HGTD track; about a fifth of
+  its test events are in theirs. Per-event comparisons match on event number.
 
-The old `lar_only` read 53 ps, and was never a calorimeter-only number: its
-`vertices` block carried `RecoVtx_time`, which is built from HGTD tracks.
-Every older statement that leans on it -- the superadditivity figure below
-included -- mixed HGTD timing into the "LAr" arm. Dropout does nothing
-for `lar_only` either (`config/sweeps/lar_only_dropout.yaml`), and head
-dropout 0.2 collapses half its seeds to a constant prediction. An asinh on
-`sum_pt2` and the track `pt` columns -- both z-scored over a tail that
-leaves them almost no range -- is null too
-(`config/sweeps/scale_transforms.yaml`). `max_items` 60 / 120 / 250 was
-retested on the cut and is still null (`config/sweeps/cell_count.yaml`).
+The predicted sigma is honest to 5% on the mixture, but ttbar's is slightly
+conservative and VBF's 5-25% optimistic, varying by seed. The cut did not
+change that, so the wrong vertex was not the cause, and no map from sigma
+alone can undo a split between samples. The working points (20 / 40 / 60 ps,
+in the configs, rules in `docs/config.md`) leave the kept events far more
+Gaussian, but even the tight one keeps ten times a Gaussian's tail beyond 3
+sigma (2.7% against 0.27%).
 
-`head.norm: layer` bounds the prediction: the head ends in Dense ->
-LayerNorm -> Dense(2), so the output is a linear map of a fixed-length
-vector, and every model saturates near +-500 ps against a truth reaching
-+-770 (the two flat lines in `pred_vs_true.png`). It touches the 1% of
-events past 450 ps. `none` removes the bound but costs 1-3 ps in every
-config and does not predict those events any better; `batch` is best for
-`lar_hgtd` and unstable elsewhere (`config/sweeps/head_norm.yaml`).
-Dropping only the last LayerNorm is free for `lar_hgtd` and `lar_only` but
-costs `hgtd_only` 5.7 ps (`config/sweeps/head_norm_last.yaml`). So `layer`
-stays, and "head.norm is null" below is no longer true.
+Two known limits of the prediction. It shrinks towards zero across the whole
+range -- the median Delta t0 is +18 ps at t0 = -300 and -8 at +200
+(`resolution_vs_truth.png`) -- because events far from zero are rare in
+training. And `head.norm: layer` bounds it near +-500 ps (the flat lines in
+`pred_vs_true.png`, 1% of events): the last LayerNorm fixes the length of
+what the read-out sees. Removing it costs 1-3 ps (`none`) or 5.7 ps for
+`hgtd_only` (the last one only) and predicts those events no better, so
+`layer` stays (`config/sweeps/head_norm*.yaml`).
 
-The predicted sigma still over-claims for VBF after the cut (pull width
-1.21 against 1.08 for ttbar in `lar_hgtd`), so the wrong vertex was not
-the cause.
+Null on the cut, within the run-to-run spread: `max_items` 60 / 120 / 250
+(`cell_count.yaml`); dropout for `lar_only`, where head dropout 0.2 collapses
+half the seeds to a constant (`lar_only_dropout.yaml`); an asinh on `sum_pt2`
+and track `pt`, whose z-scores leave them almost no range
+(`scale_transforms.yaml`).
 
-Where the gain came from:
+Open: the double-Gaussian fit fixes its wide term at 175.74 ps, the spread of
+wrong-vertex events. Those are now cut, the tails are narrower, and the core
+sigma the fit reports depends on that choice; `fix_pileup_sigma: false` is
+undecided.
 
-- **4.6 ps** from a data bug, not a setting. The splits were concatenated by
-  sample and the shuffle buffer held 10k of 194k rows, so every batch was
-  pure ttbar or pure VBF. Fixed by permuting the training split in
-  `prepare()`.
-- **3.8 ps** from `loss.beta`: 0.25 and 0.5 tie, 0.0 costs 5.5 ps and 1.0
-  costs 3.8. The one hyper-parameter that matters.
-- **~2 ps** from removing dropout everywhere. At 194k events against 52k
-  parameters there is no train/val gap to close; dropout was regularising a
-  model that does not overfit.
+## Before the vertex cut
 
-Measured and found to do nothing, each within the 1-2 ps run-to-run spread:
-pooling (attention against masked average), encoder and head widths beyond [256,128,64] and [256,128,64,32] (wider heads
-are *worse*), `head.norm` (layer, batch and none are identical), the event
-encoder, batch size, learning rate over 2e-4 to 6e-3, warmup, LR patience,
-the cell time-quality cut, the `significance` threshold at 2 against 4,
-`max_items` at 120 against 250, and the cell sort key.
+Five rounds of sweeps took the validation q68 from 39 to about 35 ps, and
+almost none of it came from tuning:
 
-Also null: rescaling the time features. Cell time is heavy-tailed enough
-that a z-score left the signal region spanning 0.087 sigma, and nine of ten
-vertices carry a sentinel resolution that flattened the one real value into
-a hundredth of a sigma. Both were fixed -- `transform: {time: {asinh: 100}}`
-and `valid_when` -- and the 27 physics runs were repeated: every change fell
-between -1.3 and +1.1 ps, while `hgtd_only`, which contains no cells and
-should not have moved at all, moved by +3.6. The fixes are kept because
-they are right, not because they pay: a first Dense layer can learn a large
-weight, and nothing here is optimisation-limited.
+- **4.6 ps** from a data bug: the splits were concatenated by sample and the
+  shuffle buffer held 10k of 194k rows, so every batch was one sample. Fixed
+  by permuting the training split in `prepare()`.
+- **3.8 ps** from `loss.beta`: 0.25 and 0.5 tie, 0.0 costs 5.5 ps and 1.0 3.8.
+- **~2 ps** from removing dropout everywhere.
 
-Two things were measurably worse. A transformer over the cell set, 37.4 +-
-0.3 against 35.2 +- 0.5 for MLP plus attention pooling. And promoting
-`reco_vtx_time` and its resolution to event features, +2.0 ps on
-vertex-correct events, worse in every bin.
+Null, within the 1-2 ps spread: pooling (attention against masked average),
+encoder and head widths beyond [256,128,64] and [256,128,64,32] (wider heads
+are worse), the event encoder, batch size, learning rate over 2e-4 to 6e-3,
+warmup, LR patience, the cell time-quality cut, `significance` 2 against 4,
+the cell sort key; rescaling the time features (`transform`, `valid_when`,
+kept because they are right); and a head that weighted HGTD tracks by a
+probability scored against the calorimeter (0.0 +- 0.6 ps against a masked
+average; removed, do not rebuild -- `git log --diff-filter=D`). All but the
+last two were measured before the batch-mixing fix, so treat them as
+provisional; `head.norm`, once on this list, is not null (above).
 
-That second one came from a single event opened in the display, where the
-reconstructed vertex time was right to 2 ps and the model missed by 450,
-and from the pattern behind it: on the 24,608 test events where the vertex
-time is itself good to 20 ps the model reads 16.6 ps against its 11.7. It
-is not that the model cannot reach the input -- the `vertices` block
-carries it -- it is that the same input is wrong by more than 20 ps in 41%
-of events, and declining to follow it is what turns 452 ps into 135 in the
-worst bin. The 5 ps is the price of that trade, not a bug.
+Worse: a transformer over the cells (37.4 +- 0.3 against 35.2 +- 0.5), and
+`reco_vtx_time` as an event feature (+2.0 ps). The model already reached
+the vertex time and declined to follow it, because it is wrong by more than
+20 ps in 41% of events; that is what turned 452 ps into 135 in the worst bin.
 
-That `max_items` 250 does not beat 120, and that admitting every cell down to
-significance 2 does not either, says truncation and selection are not the
-constraint -- what the calorimeter can say has saturated. The open lead is
-vertex identification. Measured on 27 runs, three seeds each: with the
-mixed lar_hgtd training, ttbar reads 32.8 ps and VBF 46.5, but split on
-whether the highest-sum-pt^2 vertex is the true hard scatter (|dz| < 0.5 mm,
-which fails for 5.9% of ttbar and 20.4% of VBF events) they are 29.5 and
-28.4 -- identical. The entire ttbar/VBF gap is that rate. On the events
-where the vertex is wrong, q68 is 140-168 ps against a target spread of
-175, i.e. nothing is recoverable there, because the target belongs to one
-vertex and every input describes another.
+Vertex identification was then the open lead: split on whether the
+sum-pt^2 vertex was right (|dz| < 0.5 mm), ttbar and VBF read the same
+(29.5 and 28.4 ps), so the whole gap between them was the wrong-vertex rate
+-- which is what the cut above removes.
 
-A head that scored each HGTD track against a context containing the
-calorimeter, and averaged their times by that probability, was built and
-removed. It had the best physics argument of anything tried -- the LAr and
-HGTD combination is superadditive, 29.5 ps against the 35.8 that two
-independent measurements would give, so the calorimeter really is helping
-pick HGTD tracks -- and it measured 0.0 +- 0.6 ps against a masked average
-on identical tensors. An ordinary encoder already learns that; writing the
-mechanism out as a fixed formula added neither capacity nor a useful prior.
-Do not rebuild it (`git log --diff-filter=D` finds it).
+## Rules the process left
 
-One caveat on the rest of the null list: everything on it except the
-transform and this head was measured before the batch-mixing bug was fixed,
-and head normalization was retested afterwards and flipped. Treat the
-others as provisional if one of them starts to matter.
-
-Three rules that came out of the process:
 
 - **Repeat before believing.** Weight initialisation is unseeded, so one
   setting run twice spreads by 1-2 ps. Sweeps take `repeats:` and report the
